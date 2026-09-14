@@ -1,4 +1,5 @@
 import { ApiError, readJsonBody } from '../api/client'
+import { apiUrl } from '../api/baseUrl.ts'
 import type {
   AdminCategory,
   AdminCredentials,
@@ -30,8 +31,6 @@ import type {
   StartCluster,
 } from './types'
 
-const API_ROOT = import.meta.env?.VITE_API_ROOT ?? '/api'
-
 function basicAuthorization(credentials: AdminCredentials): string {
   return `Basic ${btoa(`${credentials.username}:${credentials.password}`)}`
 }
@@ -61,7 +60,7 @@ async function adminRequest<T>(
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
   headers.set('Authorization', basicAuthorization(credentials))
-  const response = await fetch(`${API_ROOT}${path}`, { ...init, headers })
+  const response = await fetch(apiUrl(path), { ...init, headers })
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as {
       code?: unknown
@@ -83,7 +82,7 @@ async function adminRequest<T>(
 }
 
 async function adminBlob(credentials: AdminCredentials, path: string): Promise<Blob> {
-  const response = await fetch(`${API_ROOT}${path}`, {
+  const response = await fetch(apiUrl(path), {
     headers: { Authorization: basicAuthorization(credentials) },
   })
   if (!response.ok) {
@@ -304,7 +303,7 @@ export function createAdminApi(credentials: AdminCredentials) {
       shareLifetimeDays: number | null,
       noExpiry: boolean,
     ): Promise<AdminExportArtifact> => {
-      const response = await fetch(`${API_ROOT}/admin/result-issue-requests/export/xlsx`, {
+      const response = await fetch(apiUrl('/admin/result-issue-requests/export/xlsx'), {
         method: 'POST',
         headers: {
           Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

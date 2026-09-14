@@ -19,8 +19,7 @@ import type {
   ResultQuery,
   VerifyResultInquiryRequest,
 } from './types'
-
-const API_ROOT = import.meta.env?.VITE_API_ROOT ?? '/api'
+import { apiUrl } from './baseUrl.ts'
 
 export class ApiError extends Error {
   readonly status: number
@@ -59,7 +58,7 @@ export async function readJsonBody<T>(response: Response, allowEmpty = false): P
 }
 
 async function request<T>(path: string, signal?: AbortSignal, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_ROOT}${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers: { Accept: 'application/json', ...init?.headers },
     signal,

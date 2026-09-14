@@ -17,6 +17,8 @@ cd backend
 
 Defaults from `compose.yaml` can be overridden with `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`. HikariCP defaults to 12 maximum and 2 idle connections; use `DB_POOL_MAX_SIZE`, `DB_POOL_MIN_IDLE`, and `DB_POOL_CONNECTION_TIMEOUT_MS` to tune measured deployments. `ADMIN_PASSWORD` is mandatory. Administrative routes use stateless HTTP Basic; public routes require no authentication.
 
+Browser CORS is restricted to the comma-separated exact origins in `CORS_ALLOWED_ORIGINS`; the local default is `http://127.0.0.1:5173,http://localhost:5173`, and wildcard origins are rejected. A deployed frontend must add its stable Cloudflare Pages/custom-domain origin. This API policy is separate from the object-storage bucket CORS required for direct attachment uploads.
+
 Flyway applies V1–V24 automatically. V4 enables PostgreSQL `pg_trgm`, so the migration user needs permission to create that extension. Hibernate validates rather than creates the schema.
 
 - API documentation: <http://localhost:8080/swagger-ui.html>

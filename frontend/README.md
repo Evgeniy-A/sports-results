@@ -1,6 +1,6 @@
 # Sports Results Frontend
 
-React/TypeScript interface for the public event catalog, Race-scoped protocols, and the organizer admin workspace. Vite proxies `/api` to the local backend at `http://localhost:8080`.
+React/TypeScript interface for the public event catalog, Race-scoped protocols, and the organizer admin workspace.
 
 ## Commands
 
@@ -12,6 +12,18 @@ pnpm lint          # Oxlint checks
 pnpm build         # TypeScript check and production bundle
 pnpm preview       # serve the built bundle locally
 ```
+
+## API configuration
+
+Without environment variables, the application calls same-origin `/api`; during `pnpm dev`, Vite proxies it to `http://localhost:8080`. Override the local proxy target with `VITE_API_PROXY_TARGET` when needed.
+
+Cloudflare Pages must define the backend origin at build time:
+
+```text
+VITE_API_BASE_URL=https://sports-results-api.onrender.com
+```
+
+The shared URL builder appends `/api` and is used by public, admin, document, import, and XLSX requests. Direct attachment upload/download URLs are short-lived URLs returned by the backend or object storage and are not rewritten by the frontend.
 
 Start PostgreSQL and the backend before browser testing. The public routes are:
 

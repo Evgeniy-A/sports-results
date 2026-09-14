@@ -157,6 +157,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
@@ -248,6 +249,7 @@ class BackendIntegrationTest {
                         "--app.result-issues.attachments.scanner-provider=fake",
                         "--app.result-issues.attachments.fake-scanner.result=CLEAN",
                         "--app.public-base-url=https://results.test",
+                        "--app.cors.allowed-origins=https://sports-results.pages.dev",
                         "--logging.level.root=WARN"
                 );
 
@@ -326,6 +328,33 @@ class BackendIntegrationTest {
                 RESTART IDENTITY CASCADE
                 """);
         attachmentObjectStorage.clear();
+    }
+
+    @Test
+    void corsAllowsOnlyTheConfiguredFrontendAndKeepsAdminAuthenticationRequired() throws Exception {
+        String allowedOrigin = "https://sports-results.pages.dev";
+
+        mockMvc.perform(options("/api/admin/events")
+                        .header("Origin", allowedOrigin)
+                        .header("Access-Control-Request-Method", "GET")
+                        .header("Access-Control-Request-Headers", "Authorization"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Access-Control-Allow-Origin", allowedOrigin))
+                .andExpect(header().string("Access-Control-Allow-Credentials", "true"))
+                .andExpect(header().string(
+                        "Access-Control-Allow-Headers",
+                        org.hamcrest.Matchers.containsString("Authorization")
+                ));
+
+        mockMvc.perform(get("/api/admin/events").header("Origin", allowedOrigin))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("Access-Control-Allow-Origin", allowedOrigin));
+
+        mockMvc.perform(options("/api/admin/events")
+                        .header("Origin", "https://untrusted.example")
+                        .header("Access-Control-Request-Method", "GET"))
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
     }
 
     @Test
