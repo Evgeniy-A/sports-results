@@ -1,0 +1,150 @@
+ALTER TABLE result_issue_requests
+    ADD COLUMN queue_archived_at TIMESTAMPTZ,
+    ADD COLUMN queue_archived_by VARCHAR(160),
+    ADD COLUMN queue_archive_reason VARCHAR(32),
+    ADD COLUMN queue_archived_import_operation_id UUID REFERENCES import_operations(id),
+    ADD COLUMN snapshot_origin VARCHAR(40),
+    ADD COLUMN snapshot_event_name VARCHAR(255),
+    ADD COLUMN snapshot_event_location VARCHAR(255),
+    ADD COLUMN snapshot_event_starts_at TIMESTAMPTZ,
+    ADD COLUMN snapshot_sport_format_id BIGINT,
+    ADD COLUMN snapshot_sport_format_name VARCHAR(255),
+    ADD COLUMN snapshot_sport_format_code VARCHAR(100),
+    ADD COLUMN snapshot_race_id BIGINT,
+    ADD COLUMN snapshot_race_name VARCHAR(255),
+    ADD COLUMN snapshot_race_code VARCHAR(255),
+    ADD COLUMN snapshot_race_distance_meters NUMERIC(12, 3),
+    ADD COLUMN snapshot_bib VARCHAR(64),
+    ADD COLUMN snapshot_display_name VARCHAR(320),
+    ADD COLUMN snapshot_effective_category_name VARCHAR(255),
+    ADD COLUMN snapshot_source_category VARCHAR(255),
+    ADD COLUMN snapshot_category_publicly_enabled BOOLEAN,
+    ADD COLUMN snapshot_ranking JSONB,
+    ADD COLUMN snapshot_import_batch_id BIGINT,
+    ADD COLUMN snapshot_source_row_number INTEGER;
+
+UPDATE result_issue_requests issue
+SET snapshot_origin = 'LEGACY_BACKFILL_CURRENT_STATE',
+    snapshot_event_name = event.name,
+    snapshot_event_location = event.location,
+    snapshot_event_starts_at = event.starts_at,
+    snapshot_sport_format_id = format.id,
+    snapshot_sport_format_name = format.display_name,
+    snapshot_sport_format_code = format.code,
+    snapshot_race_id = race.id,
+    snapshot_race_name = race.name,
+    snapshot_race_code = race.source_code,
+    snapshot_race_distance_meters = race.distance_meters,
+    snapshot_bib = registration.bib,
+    snapshot_display_name = registration.display_name,
+    snapshot_effective_category_name = category.display_name,
+    snapshot_source_category = registration.source_category,
+    snapshot_category_publicly_enabled = policy.category_enabled,
+    snapshot_import_batch_id = registration.import_batch_id,
+    snapshot_source_row_number = registration.source_row_number
+FROM registrations registration
+JOIN races race ON race.id = registration.race_id
+JOIN sport_formats format ON format.id = race.sport_format_id
+JOIN events event ON event.id = race.event_id
+LEFT JOIN categories category ON category.id = registration.category_id
+LEFT JOIN award_policies policy ON policy.race_id = race.id
+WHERE issue.registration_id = registration.id
+  AND issue.event_id = event.id;
+
+ALTER TABLE result_issue_requests
+    ALTER COLUMN snapshot_origin SET NOT NULL,
+    ADD CONSTRAINT ck_result_issue_queue_archive_reason
+        CHECK (queue_archive_reason IS NULL OR queue_archive_reason IN (
+            'MANUAL', 'EMERGENCY_REPLACEMENT', 'OTHER'
+        )),
+    ADD CONSTRAINT ck_result_issue_queue_archive_metadata
+        CHECK (
+            (
+                queue_archived_at IS NULL
+                AND queue_archived_by IS NULL
+                AND queue_archive_reason IS NULL
+                AND queue_archived_import_operation_id IS NULL
+            )
+            OR
+            (
+                queue_archived_at IS NOT NULL
+                AND queue_archived_by IS NOT NULL
+                AND btrim(queue_archived_by) <> ''
+                AND queue_archive_reason IS NOT NULL
+            )
+        ),
+    ADD CONSTRAINT ck_result_issue_snapshot_origin
+        CHECK (snapshot_origin IN ('CAPTURED_AT_CREATION', 'LEGACY_BACKFILL_CURRENT_STATE')),
+    ADD CONSTRAINT ck_result_issue_snapshot_ranking
+        CHECK (snapshot_ranking IS NULL OR jsonb_typeof(snapshot_ranking) = 'array'),
+    ADD CONSTRAINT ck_result_issue_snapshot_source_row
+        CHECK (snapshot_source_row_number IS NULL OR snapshot_source_row_number > 0);
+
+DO $$
+DECLARE
+    conflicting_registrations TEXT;
+BEGIN
+    SELECT string_agg(registration_id::TEXT || ' (' || active_count || ')', ', ' ORDER BY registration_id)
+    INTO conflicting_registrations
+    FROM (
+        SELECT registration_id, count(*) AS active_count
+        FROM result_issue_requests
+        WHERE status IN ('NEW', 'IN_PROGRESS')
+          AND queue_archived_at IS NULL
+        GROUP BY registration_id
+        HAVING count(*) > 1
+    ) conflicts;
+
+    IF conflicting_registrations IS NOT NULL THEN
+        RAISE EXCEPTION
+            'Cannot enforce one non-archived active result issue per registration. Conflicts: %',
+            conflicting_registrations;
+    END IF;
+END $$;
+
+DROP INDEX uk_result_issue_active_registration;
+
+CREATE UNIQUE INDEX uk_result_issue_active_registration
+    ON result_issue_requests(registration_id)
+    WHERE status IN ('NEW', 'IN_PROGRESS')
+      AND queue_archived_at IS NULL;
+
+CREATE INDEX ix_result_issue_event_queue_status_id
+    ON result_issue_requests(event_id, queue_archived_at, status, id);
+
+CREATE TABLE result_issue_history (
+    id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    issue_request_id BIGINT NOT NULL REFERENCES result_issue_requests(id),
+    action VARCHAR(32) NOT NULL,
+    from_status VARCHAR(32),
+    to_status VARCHAR(32),
+    actor VARCHAR(160) NOT NULL,
+    reason VARCHAR(1000),
+    created_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT ck_result_issue_history_action
+        CHECK (action IN ('CREATED', 'STATUS_CHANGED', 'QUEUE_ARCHIVED')),
+    CONSTRAINT ck_result_issue_history_from_status
+        CHECK (from_status IS NULL OR from_status IN ('NEW', 'IN_PROGRESS', 'RESOLVED', 'REJECTED')),
+    CONSTRAINT ck_result_issue_history_to_status
+        CHECK (to_status IS NULL OR to_status IN ('NEW', 'IN_PROGRESS', 'RESOLVED', 'REJECTED')),
+    CONSTRAINT ck_result_issue_history_actor
+        CHECK (btrim(actor) <> ''),
+    CONSTRAINT ck_result_issue_history_reason
+        CHECK (reason IS NULL OR char_length(reason) <= 1000),
+    CONSTRAINT ck_result_issue_history_shape
+        CHECK (
+            (action = 'CREATED' AND from_status IS NULL AND to_status = 'NEW')
+            OR
+            (
+                action = 'STATUS_CHANGED'
+                AND from_status IS NOT NULL
+                AND to_status IS NOT NULL
+                AND from_status <> to_status
+            )
+            OR
+            (action = 'QUEUE_ARCHIVED' AND from_status IS NULL AND to_status IS NULL)
+        )
+);
+
+CREATE INDEX ix_result_issue_history_issue_created
+    ON result_issue_history(issue_request_id, created_at, id);

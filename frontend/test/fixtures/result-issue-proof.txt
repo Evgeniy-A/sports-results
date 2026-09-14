@@ -1,0 +1,1 @@
+Isolated browser E2E attachment for bib 103.

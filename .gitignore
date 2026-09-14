@@ -1,0 +1,11 @@
+backend/target/
+backend/.maven-bin/
+.pnpm-store/
+.tools/
+.idea/
+.vscode/
+*.iml
+.env
+local-storage/
+backups/
+local-dev/

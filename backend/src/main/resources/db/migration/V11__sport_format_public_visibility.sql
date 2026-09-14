@@ -1,0 +1,5 @@
+ALTER TABLE sport_formats
+    ADD COLUMN public_visible BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE races
+    ADD COLUMN public_visible BOOLEAN NOT NULL DEFAULT TRUE;

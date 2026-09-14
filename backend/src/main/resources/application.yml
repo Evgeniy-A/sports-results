@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: sports-results-backend
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/sports_results}
+    username: ${DB_USERNAME:sports_results}
+    password: ${DB_PASSWORD:sports_results}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:12}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: ${DB_POOL_CONNECTION_TIMEOUT_MS:30000}
+  flyway:
+    enabled: true
+  servlet:
+    multipart:
+      max-file-size: ${MAX_IMPORT_FILE_SIZE:50MB}
+      max-request-size: ${MAX_IMPORT_REQUEST_SIZE:50MB}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+          batch_size: 100
+        order_inserts: true
+        order_updates: true
+
+server:
+  port: ${SERVER_PORT:8080}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+app:
+  public-base-url: ${PUBLIC_BASE_URL:http://localhost:8080}
+  admin:
+    username: ${ADMIN_USERNAME:admin}
+    password: ${ADMIN_PASSWORD:}
+  documents:
+    storage-root: ${DOCUMENT_STORAGE_ROOT:./data/uploads/events}
+    max-size-bytes: ${DOCUMENT_MAX_SIZE_BYTES:10485760}
+  result-issues:
+    attachments:
+      storage-provider: ${RESULT_ISSUE_ATTACHMENT_STORAGE_PROVIDER:memory}
+      scanner-provider: ${RESULT_ISSUE_ATTACHMENT_SCANNER_PROVIDER:none}
+      max-file-size-bytes: ${RESULT_ISSUE_ATTACHMENT_MAX_FILE_SIZE_BYTES:10737418240}
+      max-attachments-per-issue: ${RESULT_ISSUE_ATTACHMENT_MAX_COUNT:10}
+      issue-token-ttl: ${RESULT_ISSUE_ATTACHMENT_TOKEN_TTL:PT1H}
+      upload-authorization-ttl: ${RESULT_ISSUE_ATTACHMENT_UPLOAD_TTL:PT15M}
+      download-authorization-ttl: ${RESULT_ISSUE_ATTACHMENT_DOWNLOAD_TTL:PT5M}
+      retention-days: ${RESULT_ISSUE_ATTACHMENT_RETENTION_DAYS:90}
+      s3:
+        endpoint: ${RESULT_ISSUE_ATTACHMENT_S3_ENDPOINT:}
+        region: ${RESULT_ISSUE_ATTACHMENT_S3_REGION:}
+        bucket: ${RESULT_ISSUE_ATTACHMENT_S3_BUCKET:}
+        access-key: ${RESULT_ISSUE_ATTACHMENT_S3_ACCESS_KEY:}
+        secret-key: ${RESULT_ISSUE_ATTACHMENT_S3_SECRET_KEY:}
+        path-style-access: ${RESULT_ISSUE_ATTACHMENT_S3_PATH_STYLE_ACCESS:false}
+      fake-scanner:
+        result: ${RESULT_ISSUE_ATTACHMENT_FAKE_SCAN_RESULT:CLEAN}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html

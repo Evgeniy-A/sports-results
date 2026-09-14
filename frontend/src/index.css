@@ -1,0 +1,13 @@
+:root {
+  font-family: Inter, Manrope, "Segoe UI", Arial, sans-serif;
+  color: #16231d;
+  background: #edf2ed;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+button, input, select, textarea { font: inherit; }
+button, select { cursor: pointer; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(194, 249, 72, .65); outline-offset: 2px; }
