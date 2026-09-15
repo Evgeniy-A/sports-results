@@ -138,7 +138,8 @@ test('race or Event change invalidates the previous search identity and its load
   gate.invalidate()
   assert.equal(gate.isCurrent(raceBRequest), false)
   assert.match(eventResultsSource, /if \(isCurrentRequest\(\)\) \{\s*setLoading\(false\)/)
-  assert.match(eventResultsSource, /event\.id, sportFormatId, raceId/)
+  assert.match(eventResultsSource, /event\.id, raceId/)
+  assert.doesNotMatch(eventResultsSource, /sportFormatId/)
 })
 
 test('cancellation is silent while real and partial failures remain distinguishable', () => {
@@ -209,7 +210,7 @@ test('CLOSED, NOT_OPEN_YET and DISABLED never expose the CTA', () => {
   assert.equal(disabled.explanation, null)
 })
 
-test('email templates contain markers and Event, Race and bib facts', () => {
+test('email templates contain markers and Event, Start and bib facts', () => {
   const [missing, question] = createInquiryEmailTemplates('Контрольный забег', 'Индивидуальный · 5 км', '1100')
   assert.match(missing.subject, /^\[RESULT_MISSING\]/)
   assert.match(question.subject, /^\[RESULT_QUESTION\]/)
@@ -218,7 +219,7 @@ test('email templates contain markers and Event, Race and bib facts', () => {
     assert.match(template.subject, /Индивидуальный · 5 км/)
     assert.match(template.subject, /№1100/)
     assert.match(template.body, /Мероприятие: Контрольный забег/)
-    assert.match(template.body, /Формат \/ старт \/ дистанция: Индивидуальный · 5 км/)
+    assert.match(template.body, /Старт: Индивидуальный · 5 км/)
     assert.match(template.body, /Стартовый номер: 1100/)
     assert.match(template.body, /Дата рождения:\n/)
     assert.doesNotMatch(template.body, /10\.01\.1990|1990-01-10/)

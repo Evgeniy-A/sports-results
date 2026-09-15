@@ -11,11 +11,12 @@ interface Props {
   resultId: number
   eventName: string
   eventTimeZone: string
+  startName: string
   categoryEnabled: boolean
   onClose: () => void
 }
 
-export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, categoryEnabled, onClose }: Props) {
+export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startName, categoryEnabled, onClose }: Props) {
   const dialogRef = useRef<HTMLElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const [result, setResult] = useState<ResultDetails | null>(null)
@@ -104,7 +105,7 @@ export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, catego
           <div className="detail-badges"><span className="bib">№ {result.bib ?? '—'}</span><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></div>
           {result.rankingBasis !== 'NONE' && <div className="detail-ranking"><h3>Официальный зачёт</h3><RankingAchievements achievements={result.rankingAchievements} /></div>}
           <dl className="detail-grid">
-            <div><dt>Дистанция</dt><dd>{result.raceName}</dd></div>
+            <div><dt>Старт</dt><dd>{startName}</dd></div>
             <div><dt>Пол</dt><dd>{formatGender(result.gender)}</dd></div>
             {categoryName && <div><dt>Категория</dt><dd>{categoryName}</dd></div>}
             <div><dt>Официальное время {result.rankingBasis === 'GUN_TIME' && <span className="standing-badge">Зачёт</span>}</dt><dd className={`time ${result.rankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.gunTimeMs)}</dd></div>

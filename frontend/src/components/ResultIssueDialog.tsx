@@ -379,8 +379,7 @@ export function ResultIssueDialog(props: Props) {
   }
 
   const availabilityMessage = resultIssueAvailabilityMessage(inquiry.inquiryAvailability)
-  const contextRace = [inquiry.sportFormatDisplayName, inquiry.raceDisplayName]
-    .filter(Boolean).join(' · ')
+  const contextRace = inquiry.startDisplayName ?? inquiry.raceDisplayName
 
   return <div className="modal-backdrop" role="presentation" onMouseDown={closeDialog}>
     <section
@@ -431,7 +430,7 @@ export function ResultIssueDialog(props: Props) {
       {!availabilityMessage && dialogState === 'FORM' && <form className="issue-form" onSubmit={submitIssue}>
         <dl className="issue-context">
           <div><dt>Мероприятие</dt><dd>{eventName}</dd></div>
-          <div><dt>Формат / старт / дистанция</dt><dd>{contextRace || '—'}</dd></div>
+          <div><dt>Старт</dt><dd>{contextRace || '—'}</dd></div>
           <div><dt>Стартовый номер</dt><dd>№ {inquiry.bib}</dd></div>
           <div><dt>Участник</dt><dd>{inquiry.participantDisplayName ?? (props.kind === 'RESULT_CORRECTION' ? props.result.displayName : '—')}</dd></div>
         </dl>

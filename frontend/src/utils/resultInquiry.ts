@@ -171,7 +171,7 @@ export function availabilityView(
 }
 
 export function inquiryRaceLabel(inquiry: ResultInquiryLookup): string {
-  return [inquiry.sportFormatDisplayName, inquiry.raceDisplayName].filter(Boolean).join(' · ')
+  return inquiry.startDisplayName ?? inquiry.raceDisplayName ?? ''
 }
 
 export function createInquiryEmailTemplates(
@@ -189,7 +189,7 @@ export function createInquiryEmailTemplates(
 Я принимал участие в мероприятии, но мой результат не отображается на сайте.
 
 Мероприятие: ${eventName}
-Формат / старт / дистанция: ${raceLabel}
+Старт: ${raceLabel}
 Стартовый номер: ${bib}
 
 ФИО:
@@ -210,7 +210,7 @@ export function createInquiryEmailTemplates(
 Прошу уточнить информацию по моему результату.
 
 Мероприятие: ${eventName}
-Формат / старт / дистанция: ${raceLabel}
+Старт: ${raceLabel}
 Стартовый номер: ${bib}
 
 ФИО:

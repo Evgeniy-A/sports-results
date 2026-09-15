@@ -44,7 +44,8 @@ test('result detail category follows race policy without rendering an empty plac
   assert.match(details, /publicCategoryName\(categoryEnabled, result\.category\)/)
   assert.match(details, /\{categoryName && <div><dt>Категория<\/dt><dd>\{categoryName\}<\/dd><\/div>\}/)
   assert.doesNotMatch(details, /result\.category\?\.name \?\? '—'/)
-  assert.match(details, /<dt>Дистанция<\/dt>/)
+  assert.match(details, /<dt>Старт<\/dt>/)
+  assert.match(details, /<dd>\{startName\}<\/dd>/)
   assert.match(details, /<dt>Пол<\/dt>/)
   assert.match(details, /<dt>Официальное время/)
   assert.match(details, /<dt>Чистое время/)
@@ -64,15 +65,14 @@ test('public results always send a concrete race and never offer all starts', ()
   assert.doesNotMatch(page, /Все старты/)
 })
 
-test('sport format selector is hidden for one format and scopes the race selector', () => {
-  assert.match(page, /publicFormats\.length > 1/)
-  assert.match(page, /selectedFormat && races\.length > 1/)
-  assert.match(page, /useMemo\(\(\) => selectedFormat\?\.races \?\? \[\]/)
-  assert.match(page, /selectionForSportFormat\(publicFormats, nextFormatId\)/)
-  assert.match(page, /publicResultFormats\(event\.sportFormats\)/)
-  assert.match(page, /initialProtocolSelection\(initialFormats\)/)
-  assert.match(page, /publicFormats\.length === 0 \? 'Результаты ещё не опубликованы\.'/)
-  assert.doesNotMatch(page, /Все старты/)
+test('public results use only the flat Race-only contract and one Start selector', () => {
+  assert.match(page, /publicResultRaces\(event\.races\)/)
+  assert.match(page, /initialRaceSelection\(initialRaces\)/)
+  assert.match(page, /races\.length > 1/)
+  assert.match(page, /<span>Старт<\/span>/)
+  assert.match(page, /className="selection-buttons" role="group" aria-label="Старт"/)
+  assert.match(page, /races\.length === 0 \? 'Результаты ещё не опубликованы\.'/)
+  assert.doesNotMatch(page, /event\.sportFormats|sportFormatId|format-select|Все старты/)
 })
 
 test('one public protocol embeds official achievements without a second award view', () => {

@@ -4,7 +4,7 @@ import type { FormEvent } from 'react'
 import type { AdminApi } from '../api'
 import type { EventSeries, EventSummary, PageResponse } from '../types'
 import { AdminLink, navigateAdmin } from '../router'
-import { adminErrorMessage, slugify } from '../utils'
+import { adminErrorMessage } from '../utils'
 import { localDateTimeToIso } from '../time'
 import { AdminNotice, AdminPagination, Drawer, Field, Loadable, StatusBadge } from '../components/AdminUi'
 import { TimeZoneCombobox } from '../components/TimeZoneCombobox'
@@ -27,7 +27,6 @@ export function AdminEventsPage({ api }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
-  const [seriesOpen, setSeriesOpen] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -89,19 +88,28 @@ export function AdminEventsPage({ api }: Props) {
       <AdminPagination page={events.page} totalPages={events.totalPages} onChange={setPage} />
     </Loadable>
 
-    {createOpen && <CreateEventDrawer api={api} series={series} onClose={() => setCreateOpen(false)} />}
-    {seriesOpen && <CreateSeriesDrawer api={api} onClose={() => { setSeriesOpen(false); void load() }} />}
-
-    <div className="admin-secondary-action">
-      <button type="button" className="admin-link-button" onClick={() => setSeriesOpen(true)}>Создать EventSeries</button>
-    </div>
+    {createOpen && <CreateEventDrawer
+      api={api}
+      series={series}
+      onSeriesCreated={(created) => setSeries((current) => [...current, created]
+        .sort((left, right) => left.name.localeCompare(right.name, 'ru')))}
+      onClose={() => setCreateOpen(false)}
+    />}
   </>
 }
 
-function CreateEventDrawer({ api, series, onClose }: { api: AdminApi; series: EventSeries[]; onClose: () => void }) {
+function CreateEventDrawer({ api, series, onSeriesCreated, onClose }: {
+  api: AdminApi
+  series: EventSeries[]
+  onSeriesCreated: (series: EventSeries) => void
+  onClose: () => void
+}) {
   const [name, setName] = useState('')
-  const [slug, setSlug] = useState('')
   const [seriesId, setSeriesId] = useState(series[0]?.id ? String(series[0].id) : '')
+  const [seriesCreatorOpen, setSeriesCreatorOpen] = useState(series.length === 0)
+  const [newSeriesName, setNewSeriesName] = useState('')
+  const [seriesBusy, setSeriesBusy] = useState(false)
+  const [seriesError, setSeriesError] = useState<string | null>(null)
   const [startsAt, setStartsAt] = useState('')
   const [endsAt, setEndsAt] = useState('')
   const [location, setLocation] = useState('')
@@ -117,11 +125,11 @@ function CreateEventDrawer({ api, series, onClose }: { api: AdminApi; series: Ev
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!seriesId) { setError('Сначала выберите или создайте EventSeries.'); return }
+    if (!seriesId) { setError('Сначала выберите или создайте серию мероприятий.'); return }
     setBusy(true); setError(null)
     try {
       const created = await api.createEvent({
-        eventSeriesId: Number(seriesId), name, slug,
+        eventSeriesId: Number(seriesId), name,
         startsAt: localDateTimeToIso(startsAt, timeZone), endsAt: localDateTimeToIso(endsAt, timeZone),
         location: location || null, timeZone, publicationStatus: 'DRAFT',
       })
@@ -133,39 +141,55 @@ function CreateEventDrawer({ api, series, onClose }: { api: AdminApi; series: Ev
     }
   }
 
+  const createSeries = async () => {
+    if (!newSeriesName.trim()) { setSeriesError('Укажите название серии.'); return }
+    setSeriesBusy(true); setSeriesError(null)
+    try {
+      const created = await api.createEventSeries({
+        name: newSeriesName.trim(), description: null, active: true,
+      })
+      onSeriesCreated(created)
+      setSeriesId(String(created.id))
+      setNewSeriesName('')
+      setSeriesCreatorOpen(false)
+    } catch (reason) {
+      setSeriesError(adminErrorMessage(reason))
+    } finally {
+      setSeriesBusy(false)
+    }
+  }
+
   return <Drawer title="Новое мероприятие" onClose={onClose}>
     <form className="admin-form" onSubmit={submit}>
       {error && <AdminNotice tone="danger">{error}</AdminNotice>}
-      <Field label="Название"><input required maxLength={255} value={name} onChange={(event) => { setName(event.target.value); if (!slug) setSlug(slugify(event.target.value)) }} /></Field>
-      <Field label="Адрес в URL" hint="Латинские строчные буквы, цифры и дефисы"><input required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></Field>
-      <Field label="EventSeries"><select required value={seriesId} onChange={(event) => setSeriesId(event.target.value)}><option value="">Выберите серию</option>{series.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <Field label="Название"><input required maxLength={255} value={name} onChange={(event) => setName(event.target.value)} /></Field>
+      <Field label="Серия мероприятий" hint="Выберите бренд или цикл, к которому относится мероприятие."><select required value={seriesId} onChange={(event) => setSeriesId(event.target.value)}><option value="">Выберите серию</option>{series.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <button
+        type="button"
+        className="admin-link-button admin-create-series-toggle"
+        aria-expanded={seriesCreatorOpen}
+        onClick={() => { setSeriesCreatorOpen((open) => !open); setSeriesError(null) }}
+      >+ Создать новую серию</button>
+      {seriesCreatorOpen && <section className="admin-inline-create" aria-label="Создание серии мероприятий">
+        <Field label="Название серии"><input
+          maxLength={255}
+          value={newSeriesName}
+          onChange={(event) => setNewSeriesName(event.target.value)}
+          onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void createSeries() } }}
+          placeholder="Например, Гонка Героев"
+        /></Field>
+        {seriesError && <AdminNotice tone="danger">{seriesError}</AdminNotice>}
+        <div className="admin-form-actions">
+          <button className="admin-button-secondary" type="button" disabled={seriesBusy || !newSeriesName.trim()} onClick={() => void createSeries()}>{seriesBusy ? 'Создаём…' : 'Создать серию'}</button>
+          <button className="admin-link-button" type="button" disabled={seriesBusy} onClick={() => { setSeriesCreatorOpen(false); setSeriesError(null) }}>Отмена</button>
+        </div>
+      </section>}
       <div className="admin-form-grid"><Field label="Начало"><input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} /></Field><Field label="Окончание"><input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} /></Field></div>
       <Field label="Город / место"><input maxLength={255} value={location} onChange={(event) => setLocation(event.target.value)} /></Field>
       <Field label="Часовой пояс" hint="Выберите город с подходящим местным временем">
         <TimeZoneCombobox value={timeZone} location={location} onChange={setTimeZone} />
       </Field>
-      <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy} type="submit">{busy ? 'Создаём…' : 'Создать'}</button><button className="admin-button-secondary" type="button" onClick={onClose}>Отмена</button></div>
+      <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy || seriesBusy} type="submit">{busy ? 'Создаём…' : 'Создать'}</button><button className="admin-button-secondary" type="button" onClick={onClose}>Отмена</button></div>
     </form>
   </Drawer>
-}
-
-function CreateSeriesDrawer({ api, onClose }: { api: AdminApi; onClose: () => void }) {
-  const [name, setName] = useState('')
-  const [slug, setSlug] = useState('')
-  const [description, setDescription] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const submit = async (event: FormEvent) => {
-    event.preventDefault(); setBusy(true); setError(null)
-    try { await api.createEventSeries({ name, slug, description: description || null, active: true }); onClose() }
-    catch (reason) { setError(adminErrorMessage(reason)) }
-    finally { setBusy(false) }
-  }
-  return <Drawer title="Новая серия мероприятий" onClose={onClose}><form className="admin-form" onSubmit={submit}>
-    {error && <AdminNotice tone="danger">{error}</AdminNotice>}
-    <Field label="Название"><input required value={name} onChange={(event) => { setName(event.target.value); if (!slug) setSlug(slugify(event.target.value)) }} /></Field>
-    <Field label="Адрес в URL"><input required pattern="[a-z0-9]+(?:-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></Field>
-    <Field label="Описание"><textarea value={description} onChange={(event) => setDescription(event.target.value)} /></Field>
-    <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy}>Создать</button><button className="admin-button-secondary" type="button" onClick={onClose}>Отмена</button></div>
-  </form></Drawer>
 }

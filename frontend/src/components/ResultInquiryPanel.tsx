@@ -114,7 +114,7 @@ export function ResultInquiryPanel({
     <section className="inquiry-result-row" aria-label="Результат не установлен">
       <div><span>Стартовый номер</span><strong className="bib">{inquiry.bib}</strong></div>
       <div><span>Участник</span><strong>{inquiry.participantDisplayName}</strong></div>
-      <div><span>Формат / старт / дистанция</span><strong>{inquiryRaceLabel(inquiry)}</strong></div>
+      <div><span>Старт</span><strong>{inquiryRaceLabel(inquiry)}</strong></div>
       <div><span>Статус</span><strong className="inquiry-status">{availability.statusText}</strong></div>
       {(availability.explanation || availability.deadlineText || canContact) && <div className="inquiry-result-actions">
         <span>{availability.explanation ?? availability.deadlineText}</span>

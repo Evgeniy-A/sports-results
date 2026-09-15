@@ -1,11 +1,11 @@
 /* oxlint-disable react/set-state-in-effect -- remote server state is loaded from effects */
 import { useCallback, useEffect, useState } from 'react'
 import type { AdminApi } from '../api'
-import type { EventSeries, EventSummary, Race, SportFormat } from '../types'
+import type { EventSeries, EventSummary, Race } from '../types'
 import { AdminLink, navigateAdmin } from '../router'
 import { adminErrorMessage } from '../utils'
 import { Loadable, StatusBadge } from '../components/AdminUi'
-import { EventGeneralTab, FormatsRacesTab } from './EventCoreTabs'
+import { EventGeneralTab, StartsTab } from './EventCoreTabs'
 import { CategoriesClustersTab } from './EventCategoriesTab'
 import { EventResultsAdminTab } from './EventResultsAdminTab'
 import { EventImportTab } from './EventImportTab'
@@ -14,24 +14,24 @@ import { EventIssuesTab } from './EventIssuesTab'
 
 const TABS = [
   ['main', 'Основное'],
-  ['formats', 'Форматы и старты'],
-  ['categories', 'Категории и кластеры'],
+  ['starts', 'Старты'],
+  ['categories', 'Категории и стартовые волны'],
   ['participants', 'Участники'],
   ['results', 'Результаты'],
-  ['import', 'Импорт'],
+  ['import', 'Загрузка результатов'],
   ['issues', 'Обращения'],
   ['award', 'Зачёт и награждение'],
   ['publication', 'Публикация'],
 ] as const
 
-export function AdminEventPage({ api, eventId, requestedTab }: {
+export function AdminEventPage({ api, eventId, requestedTab, requestedRaceId }: {
   api: AdminApi
   eventId: number
   requestedTab: string | null
+  requestedRaceId: string | null
 }) {
   const [event, setEvent] = useState<EventSummary | null>(null)
   const [races, setRaces] = useState<Race[]>([])
-  const [formats, setFormats] = useState<SportFormat[]>([])
   const [series, setSeries] = useState<EventSeries[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -40,10 +40,10 @@ export function AdminEventPage({ api, eventId, requestedTab }: {
   const reload = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const [eventValue, raceValues, formatValues, seriesValues] = await Promise.all([
-        api.event(eventId), api.races(eventId), api.sportFormats(eventId), api.eventSeries(),
+      const [eventValue, raceValues, seriesValues] = await Promise.all([
+        api.event(eventId), api.races(eventId), api.eventSeries(),
       ])
-      setEvent(eventValue); setRaces(raceValues); setFormats(formatValues); setSeries(seriesValues)
+      setEvent(eventValue); setRaces(raceValues); setSeries(seriesValues)
     } catch (reason) {
       setError(adminErrorMessage(reason))
     } finally { setLoading(false) }
@@ -67,14 +67,14 @@ export function AdminEventPage({ api, eventId, requestedTab }: {
       </nav>
       <section className="admin-tab-content">
         {tab === 'main' && <EventGeneralTab api={api} event={event} series={series} races={races} onChanged={reload} />}
-        {tab === 'formats' && <FormatsRacesTab api={api} event={event} formats={formats} races={races} onChanged={reload} />}
-        {tab === 'categories' && <CategoriesClustersTab api={api} event={event} races={races} />}
-        {tab === 'participants' && <EventResultsAdminTab api={api} event={event} races={races} formats={formats} mode="participants" />}
-        {tab === 'results' && <EventResultsAdminTab api={api} event={event} races={races} formats={formats} mode="results" />}
+        {tab === 'starts' && <StartsTab api={api} event={event} races={races} onChanged={reload} onOpen={(raceId) => navigateAdmin(`/admin/events/${eventId}?tab=categories&raceId=${raceId}`)} />}
+        {tab === 'categories' && <CategoriesClustersTab api={api} event={event} races={races} initialRaceId={Number(requestedRaceId) || undefined} />}
+        {tab === 'participants' && <EventResultsAdminTab api={api} event={event} races={races} mode="participants" />}
+        {tab === 'results' && <EventResultsAdminTab api={api} event={event} races={races} mode="results" />}
         {tab === 'import' && <EventImportTab api={api} event={event} races={races} />}
         {tab === 'issues' && <EventIssuesTab api={api} event={event} />}
         {tab === 'award' && <EventAwardTab api={api} event={event} races={races} onChanged={reload} />}
-        {tab === 'publication' && <EventPublicationTab api={api} event={event} races={races} formats={formats} onChanged={reload} />}
+        {tab === 'publication' && <EventPublicationTab api={api} event={event} races={races} onChanged={reload} />}
       </section>
     </>}
   </Loadable>

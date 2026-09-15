@@ -71,6 +71,8 @@
 .admin-section-toolbar { align-items: end; }
 .admin-section-toolbar h2 { font-size: 26px; letter-spacing: -.03em; }
 .admin-secondary-action { margin-top: 16px; }
+.admin-create-series-toggle { justify-self: start; margin-top: -7px; }
+.admin-inline-create { display: grid; gap: 12px; padding: 14px; border: 1px solid #d9deed; border-radius: 10px; background: #f7f8fc; }
 .admin-table-wrap { overflow-x: auto; border: 1px solid #dde1ec; border-radius: 12px; background: white; }
 .admin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .admin-table th { padding: 11px 13px; color: #697186; background: #f6f7fb; font-size: 9px; font-weight: 900; letter-spacing: .06em; text-align: left; text-transform: uppercase; white-space: nowrap; }

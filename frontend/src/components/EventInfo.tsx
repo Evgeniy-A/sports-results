@@ -43,16 +43,13 @@ export function EventInfo({ event }: { event: EventDetails }) {
       </article>)}</div>
     </section>}
 
-    {event.sportFormats.some((format) => format.races.length > 0) && <section className="detail-section">
+    {event.races.length > 0 && <section className="detail-section">
       <p className="eyebrow">Спортивная программа</p><h2>Старты и правила</h2>
-      {event.sportFormats.map((format) => format.races.length > 0 && <div className="sport-format-program" key={format.id}>
-        {event.sportFormats.length > 1 && <h3 className="sport-format-title">{format.displayName}</h3>}
-        <div className="race-rule-list">{format.races.map((race) => <article className="race-rule-card" key={race.id}>
+      <div className="race-rule-list">{event.races.map((race) => <article className="race-rule-card" key={race.id}>
           <h3>{race.name}</h3>{!race.resultsPublished && <p className="muted-copy">Результаты ещё не опубликованы.</p>}
-          {race.clusters.length > 0 && <div className="cluster-list"><strong>Стартовые кластеры:</strong>{race.clusters.map((cluster) => <span key={cluster.id}>{cluster.displayName}{cluster.startsAt ? ` · ${formatLocalScheduleTime(cluster.startsAt)}` : ''}</span>)}</div>}
+          {race.clusters.length > 0 && <div className="cluster-list"><strong>Стартовые волны:</strong>{race.clusters.map((cluster) => <span key={cluster.id}>{cluster.displayName}{cluster.startsAt ? ` · ${formatLocalScheduleTime(cluster.startsAt)}` : ''}</span>)}</div>}
           <Rules rules={race.rules} />
         </article>)}</div>
-      </div>)}
     </section>}
 
     {event.documents.length > 0 && <section className="detail-section">

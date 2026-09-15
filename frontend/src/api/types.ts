@@ -57,6 +57,8 @@ export interface Race {
   resultsPublicationStatus: 'DRAFT' | 'PUBLISHED'
   resultsPublished: boolean
   resultRecalculationRequired: boolean
+  effectiveName: string
+  effectivePublicVisible: boolean
 }
 
 export interface StartCluster {
@@ -112,6 +114,20 @@ export interface PublicSportFormat {
   races: PublicRaceDetails[]
 }
 
+export interface PublicRace {
+  id: number
+  name: string
+  slug: string
+  distanceMeters: number | null
+  startsAt: string | null
+  displayOrder: number
+  publicVisible: boolean
+  clusters: StartCluster[]
+  rules: RaceRules | null
+  resultsPublicationStatus: 'DRAFT' | 'PUBLISHED'
+  resultsPublished: boolean
+}
+
 export interface EventParticipantInfo {
   id: number
   shortDescription: string | null
@@ -154,6 +170,7 @@ export interface EventDetails extends Omit<EventSummary, 'shortDescription' | 'v
   infoBlocks: EventInfoBlock[]
   documents: EventDocument[]
   sportFormats: PublicSportFormat[]
+  races: PublicRace[]
 }
 
 export interface Category {
@@ -262,6 +279,7 @@ export interface ResultInquiryLookup {
   raceId?: number
   raceDisplayName?: string
   sportFormatDisplayName?: string
+  startDisplayName?: string
   publicResultId?: number
   missingResultActionAvailable: boolean
   deadline?: string

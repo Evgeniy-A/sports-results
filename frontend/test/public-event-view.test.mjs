@@ -3,14 +3,12 @@ import test from 'node:test'
 import {
   defaultPublicResultSort,
   defaultPublicEventSection,
-  initialProtocolSelection,
+  initialRaceSelection,
   publicCategoryName,
-  publicResultFormats,
-  selectionForSportFormat,
+  publicResultRaces,
 } from '../src/utils/publicEventView.ts'
 
-const race = (id, name) => ({ id, name })
-const format = (id, displayName, races) => ({ id, displayName, races })
+const race = (id, name, resultsPublished = true) => ({ id, name, resultsPublished })
 
 test('published results open results-first and draft opens event-info-first', () => {
   assert.equal(defaultPublicEventSection('PUBLISHED'), 'results')
@@ -23,57 +21,31 @@ test('default result ordering follows the configured sport time without inventin
   assert.equal(defaultPublicResultSort('NONE'), 'gunTime')
 })
 
-test('one format is selected without an extra choice and its first race opens immediately', () => {
-  assert.deepEqual(
-    initialProtocolSelection([format(7, 'Основной формат', [race(11, '10 км'), race(12, '42.2 км')])]),
-    { sportFormatId: '7', raceId: '11' },
-  )
+test('one published start opens immediately without an extra selection', () => {
+  assert.equal(initialRaceSelection([race(11, 'Масс-старт 10 км')]), '11')
 })
 
-test('one backend-visible race opens directly after hidden races are omitted', () => {
-  const formatsAfterVisibility = [format(7, 'Индивидуальный', [race(11, '10 км')])]
-
-  assert.deepEqual(initialProtocolSelection(formatsAfterVisibility), { sportFormatId: '7', raceId: '11' })
-  assert.equal(formatsAfterVisibility[0].races.length, 1)
+test('multiple published starts require one explicit start selection', () => {
+  assert.equal(initialRaceSelection([
+    race(11, 'Масс-старт 10 км'),
+    race(12, 'Чемпионат'),
+  ]), '')
 })
 
-test('multiple formats require a format choice and selecting one stays inside its races', () => {
-  const formats = [
-    format(7, 'Индивидуальный', [race(11, '10 км'), race(12, '20 км')]),
-    format(8, 'Командный', [race(13, 'Командная гонка')]),
-  ]
+test('draft starts are excluded without changing the source event program', () => {
+  const sourceRaces = [race(11, '10 км', true), race(12, '42.2 км', false)]
+  const resultRaces = publicResultRaces(sourceRaces)
 
-  assert.deepEqual(initialProtocolSelection(formats), { sportFormatId: '', raceId: '' })
-  assert.deepEqual(selectionForSportFormat(formats, '8'), { sportFormatId: '8', raceId: '13' })
-  assert.deepEqual(selectionForSportFormat(formats, '7'), { sportFormatId: '7', raceId: '11' })
+  assert.equal(sourceRaces.length, 2)
+  assert.deepEqual(resultRaces, [race(11, '10 км', true)])
+  assert.equal(initialRaceSelection(resultRaces), '11')
 })
 
-test('draft races are excluded from result selectors without hiding published event-program races', () => {
-  const sourceFormats = [
-    format(7, 'Индивидуальный', [
-      { ...race(11, '10 км'), resultsPublished: true },
-      { ...race(12, '42.2 км'), resultsPublished: false },
-    ]),
-    format(8, 'Командный', [
-      { ...race(13, 'Эстафета'), resultsPublished: false },
-    ]),
-  ]
+test('all-draft start set produces no public result selection', () => {
+  const resultRaces = publicResultRaces([race(11, '10 км', false)])
 
-  const resultFormats = publicResultFormats(sourceFormats)
-  assert.equal(sourceFormats[0].races.length, 2)
-  assert.deepEqual(resultFormats, [
-    format(7, 'Индивидуальный', [{ ...race(11, '10 км'), resultsPublished: true }]),
-  ])
-  assert.deepEqual(initialProtocolSelection(resultFormats), { sportFormatId: '7', raceId: '11' })
-})
-
-test('all-draft race set produces no public result selection', () => {
-  const resultFormats = publicResultFormats([
-    format(7, 'Индивидуальный', [{ ...race(11, '10 км'), resultsPublished: false }]),
-  ])
-
-  assert.deepEqual(resultFormats, [])
-  assert.deepEqual(initialProtocolSelection(resultFormats), { sportFormatId: '', raceId: '' })
+  assert.deepEqual(resultRaces, [])
+  assert.equal(initialRaceSelection(resultRaces), '')
 })
 
 test('public category requires both race policy and participant category data', () => {

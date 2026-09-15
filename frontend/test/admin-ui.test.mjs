@@ -25,6 +25,7 @@ const [app, adminApp, api, utils, events, eventPage, core, content, categories, 
   source('../src/admin/components/TimeZoneCombobox.tsx'),
   source('../src/admin/admin.css'),
 ])
+const eventGeneralTab = core.split('export function StartsTab')[0]
 
 test('admin route is isolated from the public application', () => {
   assert.match(app, /pathname === '\/admin'/)
@@ -45,6 +46,23 @@ test('event list, create and edit use protected typed APIs', () => {
   assert.match(api, /updateEvent:/)
   assert.match(events, /Создать мероприятие/)
   assert.match(core, /Настройка влияет на итоговый протокол/)
+})
+
+test('event creation keeps series selection and creation in one business flow', () => {
+  assert.match(events, /label="Серия мероприятий"/)
+  assert.match(events, /\+ Создать новую серию/)
+  assert.match(events, /label="Название серии"/)
+  assert.match(events, /api\.createEventSeries/)
+  assert.match(events, /onSeriesCreated\(created\)/)
+  assert.match(events, /setSeriesId\(String\(created\.id\)\)/)
+  assert.doesNotMatch(events, /Создать EventSeries/)
+})
+
+test('ordinary Event and series forms do not ask for a URL or submit a slug', () => {
+  assert.doesNotMatch(events, /Адрес в URL|name, slug|setSlug/)
+  assert.match(events, /eventSeriesId: Number\(seriesId\), name,/)
+  assert.doesNotMatch(eventGeneralTab, /Адрес в URL|slug: form\.slug|set\('slug'/)
+  assert.match(eventGeneralTab, /label="Серия мероприятий"/)
 })
 
 test('event content CRUD uses protected APIs and FileStorage-backed document downloads', () => {
@@ -88,40 +106,47 @@ test('an unambiguous Event location suggests a timezone without locking the sele
 })
 
 test('event page exposes the complete operator tab model', () => {
-  for (const label of ['Основное', 'Форматы и старты', 'Категории и кластеры', 'Участники', 'Результаты', 'Импорт', 'Обращения', 'Зачёт и награждение', 'Публикация']) {
+  for (const label of ['Основное', 'Старты', 'Категории и стартовые волны', 'Участники', 'Результаты', 'Загрузка результатов', 'Обращения', 'Зачёт и награждение', 'Публикация']) {
     assert.match(eventPage, new RegExp(label))
   }
 })
 
-test('SportFormat and Race stay data-driven with explicit Draft and Publish', () => {
-  assert.match(core, /createSportFormat/)
+test('Start UI hides compatibility SportFormat and Race entry mode while preserving explicit publication', () => {
   assert.match(core, /createRace/)
+  assert.match(core, /Добавить старт/)
+  assert.match(core, /Создать старт/)
+  assert.doesNotMatch(core, /Добавить формат|Добавить Race|Спортивный формат|Тип участия|entryMode/)
+  assert.doesNotMatch(core, /Адрес в URL|slug: form\.slug|sportFormatId:/)
   assert.match(core, /Вернуть в черновик/)
   assert.match(core, /Опубликовать/)
   assert.doesNotMatch(core, /auto-?draft/i)
+  assert.match(api, /sportFormats:/)
+  assert.match(api, /createSportFormat:/)
 })
 
-test('category and StartCluster CRUD preserve their distinct meanings', () => {
+test('category and start-wave CRUD preserve their distinct meanings', () => {
   assert.match(categories, /Добавить категорию/)
   assert.match(categories, /CATEGORY_IN_USE|Категория используется|историческими данными/)
-  assert.match(categories, /StartCluster/)
-  assert.match(categories, /кластер не рассчитывается/)
+  assert.match(categories, /Стартовые волны/)
+  assert.match(categories, /стартовая волна не рассчитывается/)
+  assert.match(categories, /Field label="Старт"/)
+  assert.match(categories, /item\.effectiveName/)
   assert.match(categories, /младше 18 лет/)
 })
 
 test('participants are an Event-wide admin view without a fabricated Event place', () => {
-  assert.match(results, /Текущие Registration по всем форматам и Race/)
-  assert.match(results, /Общего места по Event не вычисляется/)
-  assert.match(results, /SportFormat/)
-  assert.match(results, /StartCluster/)
-  assert.match(results, /sportFormatId: filters\.sportFormatId/)
+  assert.match(results, /Текущие участники по всем стартам/)
+  assert.match(results, /Общее место по мероприятию не вычисляется/)
+  assert.match(results, /Field label="Старт"/)
+  assert.match(results, /race\.effectiveName/)
+  assert.doesNotMatch(results, /sportFormatId: filters\.sportFormatId|Field label="SportFormat"/)
 })
 
 test('registration and result correction round-trip through backend', () => {
   assert.match(results, /updateRegistration/)
   assert.match(results, /updateResult/)
-  assert.match(results, /Frontend не пересчитывает ranking/)
-  assert.match(results, /Race опубликован.*сразу изменит текущие публичные данные/s)
+  assert.match(results, /Frontend не пересчитывает официальный зачёт/)
+  assert.match(results, /Старт опубликован.*сразу изменит текущие публичные данные/s)
 })
 
 test('import exposes three explicit modes and never auto-syncs them', () => {
@@ -131,6 +156,9 @@ test('import exposes three explicit modes and never auto-syncs them', () => {
   assert.match(imports, /Добавить новые/)
   assert.match(imports, /Обновить существующие/)
   assert.match(imports, /Экстренно заменить данные/)
+  assert.match(imports, /Загрузка результатов/)
+  assert.match(imports, /race\.effectiveName/)
+  assert.doesNotMatch(imports, /race\.sportFormatName/)
   assert.doesNotMatch(imports, /Синхронизировать всё/)
 })
 
@@ -150,12 +178,14 @@ test('recalculation pending, Preview and Apply remain explicit', () => {
   assert.match(policy, /Применить пересчёт/)
 })
 
-test('AwardPolicy stays backend-owned and published Race is never auto-drafted', () => {
-  assert.match(policy, /AwardPolicy — единственный источник/)
+test('AwardPolicy stays backend-owned and published Start is never auto-drafted', () => {
+  assert.match(policy, /единственный источник правил официального протокола/)
   assert.match(policy, /GUN_TIME/)
   assert.match(policy, /CHIP_TIME/)
   assert.match(policy, /NONE/)
-  assert.match(policy, /Admin UI не делает auto-Draft/)
+  assert.match(policy, /Сохранение настроек не меняет статус публикации автоматически/)
+  assert.match(policy, /Field label="Старт"/)
+  assert.match(policy, /item\.effectiveName/)
 })
 
 test('admin result sorting sends only backend-supported contract values', () => {

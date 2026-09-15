@@ -3,7 +3,7 @@ import { api } from '../api/client'
 import type { EventDetails, PageResponse, ResultInquiryLookup, ResultListItem } from '../api/types'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { formatDuration, statusLabel } from '../utils/format'
-import { defaultPublicResultSort, initialProtocolSelection, publicResultFormats, selectionForSportFormat } from '../utils/publicEventView'
+import { defaultPublicResultSort, initialRaceSelection, publicResultRaces } from '../utils/publicEventView'
 import {
   LatestRequestGate,
   isRequestCancellation,
@@ -21,13 +21,11 @@ const EMPTY_PAGE: PageResponse<ResultListItem> = {
 }
 
 export function EventResults({ event }: { event: EventDetails }) {
-  const initialFormats = publicResultFormats(event.sportFormats)
-  const initialSelection = initialProtocolSelection(initialFormats)
-  const initialRace = initialFormats.flatMap((format) => format.races)
-    .find((race) => String(race.id) === initialSelection.raceId)
+  const initialRaces = publicResultRaces(event.races)
+  const initialRaceId = initialRaceSelection(initialRaces)
+  const initialRace = initialRaces.find((race) => String(race.id) === initialRaceId)
   const [protocol, setProtocol] = useState<PageResponse<ResultListItem>>(EMPTY_PAGE)
-  const [sportFormatId, setSportFormatId] = useState(initialSelection.sportFormatId)
-  const [raceId, setRaceId] = useState(initialSelection.raceId)
+  const [raceId, setRaceId] = useState(initialRaceId)
   const [gender, setGender] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [clusterId, setClusterId] = useState('')
@@ -37,7 +35,7 @@ export function EventResults({ event }: { event: EventDetails }) {
   const [sort, setSort] = useState<string>(defaultPublicResultSort(initialRace?.rules?.rankingBasis))
   const [direction, setDirection] = useState<'asc' | 'desc'>('asc')
   const [page, setPage] = useState(0)
-  const [loading, setLoading] = useState(Boolean(initialSelection.raceId))
+  const [loading, setLoading] = useState(Boolean(initialRaceId))
   const [error, setError] = useState<string | null>(null)
   const [inquiryError, setInquiryError] = useState<string | null>(null)
   const [selectedResultId, setSelectedResultId] = useState<number | null>(null)
@@ -51,15 +49,7 @@ export function EventResults({ event }: { event: EventDetails }) {
   const [protocolRequestGate] = useState(() => new LatestRequestGate())
   const debouncedName = useDebouncedValue(name, 350)
   const debouncedBib = useDebouncedValue(bib, 350)
-  const publicFormats = useMemo(
-    () => publicResultFormats(event.sportFormats),
-    [event.sportFormats],
-  )
-  const selectedFormat = useMemo(
-    () => publicFormats.find((format) => String(format.id) === sportFormatId),
-    [publicFormats, sportFormatId],
-  )
-  const races = useMemo(() => selectedFormat?.races ?? [], [selectedFormat])
+  const races = useMemo(() => publicResultRaces(event.races), [event.races])
   const selectedRace = useMemo(() => races.find((race) => String(race.id) === raceId), [races, raceId])
   const categories = selectedRace?.rules?.categoryEnabled
     ? selectedRace.rules.categories.map((category) => ({ id: category.id, name: category.name }))
@@ -84,10 +74,8 @@ export function EventResults({ event }: { event: EventDetails }) {
   const selectPublicResultRace = useCallback((lookup: ResultInquiryLookup) => {
     if (!lookup.raceId) return
     if (String(lookup.raceId) === raceId) return
-    const targetFormat = publicFormats.find((format) => format.races.some((race) => race.id === lookup.raceId))
-    const targetRace = targetFormat?.races.find((race) => race.id === lookup.raceId)
-    if (!targetFormat || !targetRace) return
-    setSportFormatId(String(targetFormat.id))
+    const targetRace = races.find((race) => race.id === lookup.raceId)
+    if (!targetRace) return
     setRaceId(String(targetRace.id))
     setProtocol(EMPTY_PAGE)
     setCategoryId('')
@@ -98,7 +86,7 @@ export function EventResults({ event }: { event: EventDetails }) {
     setDirection('asc')
     setPage(0)
   }, [
-    publicFormats,
+    races,
     raceId,
     setCategoryId,
     setClusterId,
@@ -108,7 +96,6 @@ export function EventResults({ event }: { event: EventDetails }) {
     setProtocol,
     setRaceId,
     setSort,
-    setSportFormatId,
     setStatus,
   ])
 
@@ -200,7 +187,7 @@ export function EventResults({ event }: { event: EventDetails }) {
       controller.abort()
       if (protocolRequestRef.current === controller) protocolRequestRef.current = null
     }
-  }, [event.id, sportFormatId, raceId, debouncedName, debouncedBib, gender, categoryId, clusterId, status, sort, direction, page, protocolRequestGate, selectPublicResultRace])
+  }, [event.id, raceId, debouncedName, debouncedBib, gender, categoryId, clusterId, status, sort, direction, page, protocolRequestGate, selectPublicResultRace])
 
   const verifyBirthDate = async (birthDate: string) => {
     if (!inquiry) return
@@ -248,20 +235,6 @@ export function EventResults({ event }: { event: EventDetails }) {
     setDirection('asc')
     resetPage()
   }
-  const changeSportFormat = (nextFormatId: string) => {
-    clearInquiryState()
-    const nextSelection = selectionForSportFormat(publicFormats, nextFormatId)
-    setSportFormatId(nextSelection.sportFormatId)
-    setRaceId(nextSelection.raceId)
-    setProtocol(EMPTY_PAGE)
-    setCategoryId('')
-    setClusterId('')
-    const nextRace = publicFormats.flatMap((format) => format.races)
-      .find((race) => String(race.id) === nextSelection.raceId)
-    setSort(defaultPublicResultSort(nextRace?.rules?.rankingBasis))
-    setDirection('asc')
-    resetPage()
-  }
   const resetFilters = () => {
     clearInquiryState()
     setGender('')
@@ -280,26 +253,20 @@ export function EventResults({ event }: { event: EventDetails }) {
     </div>
 
     <section className="protocol-selection" aria-label={hasOfficialStanding ? 'Выбор официального протокола' : 'Выбор таблицы результатов'}>
-      {publicFormats.length > 1 && <div className="selection-group">
-        <span>Спортивный формат</span>
-        <div className="selection-buttons" role="group" aria-label="Спортивный формат">
-          {publicFormats.map((format) => <button type="button" key={format.id} aria-pressed={String(format.id) === sportFormatId} onClick={() => changeSportFormat(String(format.id))}>{format.displayName}</button>)}
-        </div>
-      </div>}
-      {selectedFormat && races.length > 1 && <div className="selection-group">
-        <span>Старт / дистанция</span>
-        <div className="selection-buttons" role="group" aria-label="Старт / дистанция">
+      {races.length > 1 && <div className="selection-group">
+        <span>Старт</span>
+        <div className="selection-buttons" role="group" aria-label="Старт">
           {races.map((race) => <button type="button" key={race.id} aria-pressed={String(race.id) === raceId} onClick={() => changeRace(String(race.id))}>{race.name}</button>)}
         </div>
       </div>}
-      {selectedRace && <p><span>{hasOfficialStanding ? 'Официальный протокол' : 'Таблица результатов'}</span><strong>{selectedFormat?.displayName} · {selectedRace.name}</strong></p>}
+      {selectedRace && <p><span>{hasOfficialStanding ? 'Официальный протокол' : 'Таблица результатов'}</span><strong>{selectedRace.name}</strong></p>}
     </section>
 
     {selectedRace && <div className="protocol-controls">
       <section className="control-section" aria-labelledby="filters-title">
         <div className="control-heading"><h3 id="filters-title">Фильтры</h3><button className="filter-reset" type="button" onClick={resetFilters}>Сбросить фильтры</button></div>
         <div className="result-filters" aria-label={hasOfficialStanding ? 'Фильтры протокола' : 'Фильтры результатов'}>
-          {selectedRace.clusters.length >= 2 && <label><span>Кластер</span><select aria-label="Кластер" value={clusterId} onChange={(changeEvent) => { clearInquiryState(); setClusterId(changeEvent.target.value); resetPage() }}><option value="">Все кластеры</option>{selectedRace.clusters.map((cluster) => <option key={cluster.id} value={cluster.id}>{cluster.displayName}</option>)}</select></label>}
+          {selectedRace.clusters.length >= 2 && <label><span>Стартовая волна</span><select aria-label="Стартовая волна" value={clusterId} onChange={(changeEvent) => { clearInquiryState(); setClusterId(changeEvent.target.value); resetPage() }}><option value="">Все стартовые волны</option>{selectedRace.clusters.map((cluster) => <option key={cluster.id} value={cluster.id}>{cluster.displayName}</option>)}</select></label>}
           <label><span>ФИО</span><input aria-label="Поиск по ФИО" value={name} onChange={(changeEvent) => { clearInquiryState(); setName(changeEvent.target.value); resetPage() }} placeholder="Начните вводить имя" /></label>
           <label><span>Стартовый номер</span><input aria-label="Точный стартовый номер" value={bib} onChange={(changeEvent) => { clearInquiryState(); setBib(changeEvent.target.value); resetPage() }} placeholder="Например, 00123" /></label>
           <label><span>Пол</span><select aria-label="Пол" value={gender} onChange={(changeEvent) => { clearInquiryState(); setGender(changeEvent.target.value); resetPage() }}><option value="">Все</option><option value="female">Женщины</option><option value="male">Мужчины</option></select></label>
@@ -321,7 +288,7 @@ export function EventResults({ event }: { event: EventDetails }) {
       : <div className="context-note"><strong>Место</strong> — позиция в текущей таблице результатов. Она меняется вместе с фильтрами и сортировкой и не является официальным спортивным местом.</div>)}
     {error && <div className="state-message error" role="alert">{error}</div>}
     {!error && inquiryError && <div className="state-message" role="status">{inquiryError}</div>}
-    {!error && !selectedRace && !loading && <div className="state-message">{publicFormats.length === 0 ? 'Результаты ещё не опубликованы.' : publicFormats.length > 1 && !selectedFormat ? 'Выберите спортивный формат.' : 'Выберите старт или дистанцию.'}</div>}
+    {!error && !selectedRace && !loading && <div className="state-message">{races.length === 0 ? 'Результаты ещё не опубликованы.' : 'Выберите старт.'}</div>}
     {selectedRace && loading && <div className="state-message" aria-live="polite">{inquiryLoading ? 'Проверяем стартовый номер…' : hasOfficialStanding ? 'Загружаем протокол…' : 'Загружаем результаты…'}</div>}
     {selectedRace && !loading && !error && protocol.content.length === 0 && !inquiry && <div className="state-message">По выбранным условиям результатов нет.</div>}
     {selectedRace && !loading && !error && inquiry && !hasPublicResultRows && <ResultInquiryPanel
@@ -341,10 +308,10 @@ export function EventResults({ event }: { event: EventDetails }) {
     {selectedRace && !loading && !error && protocol.content.length > 0 && <>
       <div className="table-wrap desktop-results"><table><thead><tr><th>{hasOfficialStanding ? 'Официальный зачёт' : 'Место'}</th><th>Стартовый №</th><th>Участник</th><th>Старт / дистанция</th><th>Статус</th><th><span className="time-heading">Официальное время{rankingBasis === 'GUN_TIME' && <b className="standing-badge">Зачёт</b>}</span></th><th><span className="time-heading">Чистое время{rankingBasis === 'CHIP_TIME' && <b className="standing-badge">Зачёт</b>}</span></th>{showCategoryColumn && <th>Категория</th>}</tr></thead><tbody>{protocol.content.map((result) => (
         <tr key={result.resultId} tabIndex={0} onClick={() => setSelectedResultId(result.resultId)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === 'Enter') setSelectedResultId(result.resultId) }}>
-          <td className={hasOfficialStanding ? 'ranking-cell' : 'display-place-cell'}>{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} /> : <span className="display-place">{result.displayPosition ?? '—'}</span>}</td><td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td>{result.raceName}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${result.rankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.gunTimeMs)}</td><td className={`time ${result.rankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.chipTimeMs)}</td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
+          <td className={hasOfficialStanding ? 'ranking-cell' : 'display-place-cell'}>{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} /> : <span className="display-place">{result.displayPosition ?? '—'}</span>}</td><td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td>{selectedRace.name}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${result.rankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.gunTimeMs)}</td><td className={`time ${result.rankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.chipTimeMs)}</td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
         </tr>
       ))}</tbody></table></div>
-      <div className="mobile-results">{protocol.content.map((result) => <button className="result-card" type="button" key={result.resultId} onClick={() => setSelectedResultId(result.resultId)}><span><strong>{result.displayName}</strong><small>№ {result.bib ?? '—'} · {result.raceName}{showCategoryColumn && result.category ? ` · ${result.category.name}` : ''}</small></span><span className={`time ${hasOfficialStanding ? 'time-primary' : ''}`}>{formatDuration(result.rankingBasis === 'CHIP_TIME' || (result.rankingBasis === 'NONE' && sort === 'chipTime') ? result.chipTimeMs : result.gunTimeMs)}</span><span className="card-achievements">{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} /> : <span className="display-place">Место {result.displayPosition ?? '—'}</span>}</span></button>)}</div>
+      <div className="mobile-results">{protocol.content.map((result) => <button className="result-card" type="button" key={result.resultId} onClick={() => setSelectedResultId(result.resultId)}><span><strong>{result.displayName}</strong><small>№ {result.bib ?? '—'} · {selectedRace.name}{showCategoryColumn && result.category ? ` · ${result.category.name}` : ''}</small></span><span className={`time ${hasOfficialStanding ? 'time-primary' : ''}`}>{formatDuration(result.rankingBasis === 'CHIP_TIME' || (result.rankingBasis === 'NONE' && sort === 'chipTime') ? result.chipTimeMs : result.gunTimeMs)}</span><span className="card-achievements">{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} /> : <span className="display-place">Место {result.displayPosition ?? '—'}</span>}</span></button>)}</div>
     </>}
 
     {selectedRace && !loading && !error && inquiry && hasPublicResultRows
@@ -363,10 +330,11 @@ export function EventResults({ event }: { event: EventDetails }) {
       />}
 
     {selectedRace && <Pagination page={protocol.page} totalPages={protocol.totalPages} onChange={setPage} />}
-    {selectedResultId !== null && <ResultDetailsDialog
+    {selectedResultId !== null && selectedRace && <ResultDetailsDialog
       resultId={selectedResultId}
       eventName={event.name}
       eventTimeZone={event.timeZone}
+      startName={selectedRace.name}
       categoryEnabled={showCategoryColumn}
       onClose={() => setSelectedResultId(null)}
     />}

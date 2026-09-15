@@ -42,7 +42,7 @@ function AuthenticatedAdmin({ credentials, onLogout }: { credentials: AdminCrede
   } else if (location.pathname === '/admin/support/issues' || location.pathname === '/admin/support/issues/') {
     content = <AdminJournalPage api={api} />
   } else if (eventMatch) {
-    content = <AdminEventPage api={api} eventId={Number(eventMatch[1])} requestedTab={location.search.get('tab')} />
+    content = <AdminEventPage api={api} eventId={Number(eventMatch[1])} requestedTab={location.search.get('tab')} requestedRaceId={location.search.get('raceId')} />
   } else {
     content = <section className="admin-empty"><h1>Страница не найдена</h1><button className="admin-button-primary" onClick={() => navigateAdmin('/admin/events')}>К мероприятиям</button></section>
   }

@@ -188,6 +188,7 @@ export interface ImportRaceRef {
   raceName: string
   sportFormatId: number
   sportFormatName: string
+  effectiveName: string
 }
 
 export interface ImportPreviewRow {

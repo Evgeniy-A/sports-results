@@ -64,7 +64,7 @@ test('failed DOB prevents issue creation and presents organizer support guidance
 
 test('MISSING_RESULT form sends known context and only user-editable facts', () => {
   assert.match(dialogSource, /Мероприятие/)
-  assert.match(dialogSource, /Формат \/ старт \/ дистанция/)
+  assert.match(dialogSource, /<dt>Старт<\/dt>/)
   assert.match(dialogSource, /Стартовый номер/)
   assert.match(dialogSource, /participantDisplayName/)
   assert.match(dialogSource, /estimatedStartAt/)
