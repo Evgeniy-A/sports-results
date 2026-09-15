@@ -43,7 +43,7 @@ export function CategoriesClustersTab({ api, event, races, initialRaceId }: { ap
 
   if (!races.length) return <div className="admin-empty">Сначала создайте старт.</div>
   return <div className="admin-stack">
-    <div className="admin-section-toolbar"><div><h2>Категории и стартовые волны</h2><p>Эти справочники всегда принадлежат конкретному старту.</p></div><Field label="Старт"><select value={raceId} onChange={(change) => setRaceId(Number(change.target.value))}>{races.map((item) => <option key={item.id} value={item.id}>{item.effectiveName}</option>)}</select></Field></div>
+    <div className="admin-section-toolbar"><div><h2>Категории и стартовые волны</h2><p>Эти справочники всегда принадлежат конкретному старту.</p></div><Field label="Старт"><select value={raceId} onChange={(change) => setRaceId(Number(change.target.value))}>{races.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
     {race?.resultsPublicationStatus === 'PUBLISHED' && <AdminNotice tone="warning">Результаты старта опубликованы. Изменения, влияющие на протокол, требуют сначала вернуть старт в черновик.</AdminNotice>}
     <AdminNotice tone="info">Для участников младше 18 лет на дату мероприятия категория берётся из исходных данных регистрации. Для взрослых применяется настроенный способ расчёта — на дату мероприятия или на конец года.</AdminNotice>
     <Loadable loading={loading} error={error}>

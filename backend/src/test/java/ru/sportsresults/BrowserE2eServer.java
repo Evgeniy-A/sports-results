@@ -9,7 +9,6 @@ import ru.sportsresults.domain.Event;
 import ru.sportsresults.domain.AgeCalculationMode;
 import ru.sportsresults.domain.EventPublicationStatus;
 import ru.sportsresults.domain.ResultsPublicationStatus;
-import ru.sportsresults.domain.RaceEntryMode;
 import ru.sportsresults.domain.EventDocumentType;
 import ru.sportsresults.domain.EventSeries;
 import ru.sportsresults.domain.ImportBatchStatus;
@@ -21,7 +20,6 @@ import ru.sportsresults.repository.EventSeriesRepository;
 import ru.sportsresults.repository.RaceRepository;
 import ru.sportsresults.repository.RegistrationRepository;
 import ru.sportsresults.repository.ResultRepository;
-import ru.sportsresults.repository.SportFormatRepository;
 import ru.sportsresults.service.AwardPolicyService;
 import ru.sportsresults.service.ImportService;
 import ru.sportsresults.service.EventContentService;
@@ -30,7 +28,6 @@ import ru.sportsresults.service.EventService;
 import ru.sportsresults.service.RaceAdminService;
 import ru.sportsresults.service.RaceResultsPublicationService;
 import ru.sportsresults.service.StartClusterService;
-import ru.sportsresults.service.SportFormatService;
 import ru.sportsresults.api.dto.*;
 
 import javax.sql.DataSource;
@@ -103,8 +100,6 @@ class BrowserE2eServer {
         RaceResultsPublicationService raceResultsPublicationService =
                 context.getBean(RaceResultsPublicationService.class);
         StartClusterService clusterService = context.getBean(StartClusterService.class);
-        SportFormatService sportFormatService = context.getBean(SportFormatService.class);
-        SportFormatRepository sportFormatRepository = context.getBean(SportFormatRepository.class);
         RegistrationRepository registrationRepository = context.getBean(RegistrationRepository.class);
         ResultRepository resultRepository = context.getBean(ResultRepository.class);
         EventService eventService = context.getBean(EventService.class);
@@ -177,23 +172,11 @@ class BrowserE2eServer {
         assertThat(importService.importEvent(
                 hero.getId(), "browser-hero-config.csv", heroConfigurationCsv().getBytes(StandardCharsets.UTF_8)
         ).status()).isEqualTo(ImportBatchStatus.SUCCEEDED);
-        var heroDefault = sportFormatRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(hero.getId()).getFirst();
-        var massFormat = sportFormatService.update(hero.getId(), heroDefault.getId(),
-                new UpsertSportFormatRequest("mass", "mass", "mass", 1, true), "e2e-admin");
-        var teamsFormat = sportFormatService.create(hero.getId(),
-                new UpsertSportFormatRequest("teams", "teams", "teams", 2, true), "e2e-admin");
-        var champFormat = sportFormatService.create(hero.getId(),
-                new UpsertSportFormatRequest("champ", "champ", "champ", 3, true), "e2e-admin");
-        var corpFormat = sportFormatService.create(hero.getId(),
-                new UpsertSportFormatRequest("corp", "corp", "corp", 4, false), "e2e-admin");
         var massRace = raceRepository.findByEventIdAndSourceCode(hero.getId(), "mass").orElseThrow();
         var teamsRace = raceRepository.findByEventIdAndSourceCode(hero.getId(), "teams").orElseThrow();
         var champRace = raceRepository.findByEventIdAndSourceCode(hero.getId(), "champ").orElseThrow();
         var corpRace = raceRepository.findByEventIdAndSourceCode(hero.getId(), "corp").orElseThrow();
-        moveRace(raceAdminService, hero.getId(), massRace, massFormat.id());
-        moveRace(raceAdminService, hero.getId(), teamsRace, teamsFormat.id());
-        moveRace(raceAdminService, hero.getId(), champRace, champFormat.id());
-        moveRace(raceAdminService, hero.getId(), corpRace, corpFormat.id());
+        updateRaceVisibility(raceAdminService, hero.getId(), corpRace, false);
         awardPolicyService.upsert(massRace.getId(), noStandingPolicy(), "e2e-admin");
         awardPolicyService.upsert(teamsRace.getId(), noStandingPolicy(), "e2e-admin");
         awardPolicyService.upsert(champRace.getId(), new UpdateAwardPolicyRequest(
@@ -251,7 +234,7 @@ class BrowserE2eServer {
         ), "e2e-admin");
         RaceDto futureRace = raceAdminService.create(future.getId(), new UpsertRaceRequest(
                 "10 km", "10 км", "10-km", new BigDecimal("10000"),
-                Instant.parse("2027-06-15T06:30:00Z"), RaceEntryMode.INDIVIDUAL, 1, null, true
+                Instant.parse("2027-06-15T06:30:00Z"), 1, true
         ), "e2e-admin");
         awardPolicyService.upsert(futureRace.id(), new UpdateAwardPolicyRequest(
                 RankingBasis.GUN_TIME, PrimaryStandingMode.BY_GENDER, 3, false,
@@ -273,28 +256,18 @@ class BrowserE2eServer {
         Event separated = event(series, "Раздельные протоколы 2027", "razdelnye-protokoly-2027", "Казань");
         separated.setStartsAt(Instant.parse("2027-08-10T06:00:00Z"));
         separated = eventRepository.saveAndFlush(separated);
-        var individual = sportFormatService.create(separated.getId(), new UpsertSportFormatRequest(
-                "individual", "Individual", "Индивидуальный", 1, true), "e2e-admin");
         assertThat(importService.importEvent(
                 separated.getId(), "browser-formats.csv", separatedFormatsCsv().getBytes(StandardCharsets.UTF_8)
         ).status()).isEqualTo(ImportBatchStatus.SUCCEEDED);
-        var team = sportFormatService.create(separated.getId(), new UpsertSportFormatRequest(
-                "team", "Team", "Командный", 2, true), "e2e-admin");
         var raceA = raceRepository.findByEventIdAndSourceCode(separated.getId(), "Race A").orElseThrow();
         var raceB = raceRepository.findByEventIdAndSourceCode(separated.getId(), "Race B").orElseThrow();
         var raceC = raceRepository.findByEventIdAndSourceCode(separated.getId(), "Race C").orElseThrow();
-        raceAdminService.update(separated.getId(), raceC.getId(), new UpsertRaceRequest(
-                raceC.getSourceCode(), raceC.getName(), raceC.getSlug(), raceC.getDistanceMeters(), raceC.getStartsAt(),
-                raceC.getEntryMode(), raceC.getDisplayOrder(), team.id(), true), "e2e-admin");
-        assertThat(individual.id()).isNotEqualTo(team.id());
         for (var scopedRace : java.util.List.of(raceA, raceB, raceC)) {
             awardPolicyService.upsert(scopedRace.getId(), new UpdateAwardPolicyRequest(
                     RankingBasis.CHIP_TIME, PrimaryStandingMode.ALL, 1, false,
                     AgeCalculationMode.EVENT_DATE, 0, false), "e2e-admin");
         }
-        raceAdminService.update(separated.getId(), raceB.getId(), new UpsertRaceRequest(
-                raceB.getSourceCode(), raceB.getName(), raceB.getSlug(), raceB.getDistanceMeters(), raceB.getStartsAt(),
-                raceB.getEntryMode(), raceB.getDisplayOrder(), individual.id(), false), "e2e-admin");
+        updateRaceVisibility(raceAdminService, separated.getId(), raceB, false);
 
         Event mixedPublication = event(
                 series, "Частично опубликованные протоколы", "mixed-race-publication", "Пермь");
@@ -332,11 +305,15 @@ class BrowserE2eServer {
         return event;
     }
 
-    private static void moveRace(RaceAdminService service, Long eventId, ru.sportsresults.domain.Race race,
-                                 Long formatId) {
+    private static void updateRaceVisibility(
+            RaceAdminService service,
+            Long eventId,
+            ru.sportsresults.domain.Race race,
+            boolean publicVisible
+    ) {
         service.update(eventId, race.getId(), new UpsertRaceRequest(
                 race.getSourceCode(), race.getName(), race.getSlug(), null, race.getStartsAt(),
-                race.getEntryMode(), race.getDisplayOrder(), formatId, true), "e2e-admin");
+                race.getDisplayOrder(), publicVisible), "e2e-admin");
     }
 
     private static UpdateAwardPolicyRequest noStandingPolicy() {

@@ -111,7 +111,7 @@ test('event page exposes the complete operator tab model', () => {
   }
 })
 
-test('Start UI hides compatibility SportFormat and Race entry mode while preserving explicit publication', () => {
+test('Start UI uses the final Race-only contract while preserving explicit publication', () => {
   assert.match(core, /createRace/)
   assert.match(core, /Добавить старт/)
   assert.match(core, /Создать старт/)
@@ -120,8 +120,7 @@ test('Start UI hides compatibility SportFormat and Race entry mode while preserv
   assert.match(core, /Вернуть в черновик/)
   assert.match(core, /Опубликовать/)
   assert.doesNotMatch(core, /auto-?draft/i)
-  assert.match(api, /sportFormats:/)
-  assert.match(api, /createSportFormat:/)
+  assert.doesNotMatch(api, /sportFormats:|createSportFormat:|sportFormatId|entryMode/)
 })
 
 test('category and start-wave CRUD preserve their distinct meanings', () => {
@@ -130,7 +129,7 @@ test('category and start-wave CRUD preserve their distinct meanings', () => {
   assert.match(categories, /Стартовые волны/)
   assert.match(categories, /стартовая волна не рассчитывается/)
   assert.match(categories, /Field label="Старт"/)
-  assert.match(categories, /item\.effectiveName/)
+  assert.match(categories, /item\.name/)
   assert.match(categories, /младше 18 лет/)
 })
 
@@ -138,7 +137,7 @@ test('participants are an Event-wide admin view without a fabricated Event place
   assert.match(results, /Текущие участники по всем стартам/)
   assert.match(results, /Общее место по мероприятию не вычисляется/)
   assert.match(results, /Field label="Старт"/)
-  assert.match(results, /race\.effectiveName/)
+  assert.match(results, /race\.name/)
   assert.doesNotMatch(results, /sportFormatId: filters\.sportFormatId|Field label="SportFormat"/)
 })
 
@@ -157,7 +156,7 @@ test('import exposes three explicit modes and never auto-syncs them', () => {
   assert.match(imports, /Обновить существующие/)
   assert.match(imports, /Экстренно заменить данные/)
   assert.match(imports, /Загрузка результатов/)
-  assert.match(imports, /race\.effectiveName/)
+  assert.match(imports, /race\.name/)
   assert.doesNotMatch(imports, /race\.sportFormatName/)
   assert.doesNotMatch(imports, /Синхронизировать всё/)
 })
@@ -185,7 +184,7 @@ test('AwardPolicy stays backend-owned and published Start is never auto-drafted'
   assert.match(policy, /NONE/)
   assert.match(policy, /Сохранение настроек не меняет статус публикации автоматически/)
   assert.match(policy, /Field label="Старт"/)
-  assert.match(policy, /item\.effectiveName/)
+  assert.match(policy, /item\.name/)
 })
 
 test('admin result sorting sends only backend-supported contract values', () => {
@@ -248,8 +247,8 @@ test('global journal keeps filters in URL and uses server-side pagination', () =
   assert.match(journal, /filtersFromUrl/)
   assert.match(journal, /writeFiltersToUrl/)
   assert.match(journal, /AdminPagination/)
-  assert.match(journal, /Historical snapshot/)
-  assert.match(journal, /Current context/)
+  assert.match(journal, /Состояние на момент обращения/)
+  assert.match(journal, /Текущее состояние/)
 })
 
 test('XLSX is downloaded as binary and share batch can be revoked', () => {

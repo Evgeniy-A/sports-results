@@ -37,7 +37,7 @@ class FlywayV7UpgradeTest {
             Long legacyRaceId = jdbc.queryForObject(
                     "SELECT id FROM races WHERE event_id=? AND source_code='10 km'", Long.class, publishedEventId);
 
-            Flyway.configure().dataSource(dataSource).load().migrate();
+            Flyway.configure().dataSource(dataSource).target("11").load().migrate();
 
             assertThat(jdbc.queryForObject(
                     "SELECT results_publication_status FROM events WHERE slug='legacy-published'", String.class))

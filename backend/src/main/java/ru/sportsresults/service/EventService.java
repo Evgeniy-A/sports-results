@@ -166,7 +166,7 @@ public class EventService {
         requireEvent(eventId);
         Map<Long, AwardPolicy> policiesByRace = awardPolicyRepository.findAllByRaceEventId(eventId).stream()
                 .collect(Collectors.toMap(policy -> policy.getRace().getId(), policy -> policy));
-        return RacePresentation.stableFlatOrder(raceRepository.findAllByEventIdOrderByDisplayOrderAsc(eventId)).stream()
+        return raceRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId).stream()
                 .map(race -> toDto(
                         race,
                         policiesByRace.containsKey(race.getId())
@@ -232,8 +232,8 @@ public class EventService {
         requirePublishedEvent(eventId);
         Map<Long, AwardPolicy> policiesByRace = awardPolicyRepository.findAllByRaceEventId(eventId).stream()
                 .collect(Collectors.toMap(policy -> policy.getRace().getId(), policy -> policy));
-        return RacePresentation.stableFlatOrder(raceRepository.findAllByEventIdOrderByDisplayOrderAsc(eventId)).stream()
-                .filter(RacePresentation::effectivePublicVisible)
+        return raceRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId).stream()
+                .filter(Race::isPublicVisible)
                 .map(race -> toDto(
                         race,
                         policiesByRace.containsKey(race.getId())
@@ -300,7 +300,7 @@ public class EventService {
                 || !Objects.equals(event.getTimeZone(), normalizedTimeZone(request.timeZone()));
         List<Race> ageAffectedRaces = ageReferenceChanged
                 ? configurationGuard.currentDataRaces(
-                        raceRepository.findAllByEventIdOrderByDisplayOrderAsc(eventId)
+                        raceRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId)
                 )
                 : List.of();
         if (ageReferenceChanged) {
@@ -503,14 +503,12 @@ public class EventService {
 
     private static RaceDto toDto(Race race, boolean categoryStandingEnabled) {
         return new RaceDto(
-                race.getId(), race.getEvent().getId(), race.getSportFormat().getId(),
-                race.getSportFormat().getDisplayName(), race.getSourceCode(), race.getName(), race.getSlug(),
-                race.getDistanceMeters(), race.getStartsAt(), race.getEntryMode(), race.getDisplayOrder(),
+                race.getId(), race.getEvent().getId(), race.getSourceCode(), race.getName(), race.getSlug(),
+                race.getDistanceMeters(), race.getStartsAt(), race.getDisplayOrder(),
                 race.getPublicRankingBasis(), categoryStandingEnabled, race.isPublicVisible(),
                 race.getResultsPublicationStatus(),
                 race.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED,
-                race.isResultRecalculationRequired(), RacePresentation.effectiveName(race),
-                RacePresentation.effectivePublicVisible(race)
+                race.isResultRecalculationRequired()
         );
     }
 

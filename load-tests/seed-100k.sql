@@ -20,8 +20,8 @@ BEGIN
             '2027-06-15T06:00:00Z', '2027-06-15T18:00:00Z', 'Екатеринбург', 'PUBLISHED', now(), now())
     RETURNING id INTO seeded_event_id;
 
-    INSERT INTO races(event_id, source_code, name, slug, distance_meters, starts_at, entry_mode, display_order, created_at, updated_at)
-    VALUES (seeded_event_id, 'LOAD-10K', '10 km', '10-km', 10000, '2027-06-15T06:00:00Z', 'INDIVIDUAL', 0, now(), now())
+    INSERT INTO races(event_id, source_code, name, slug, distance_meters, starts_at, display_order, created_at, updated_at)
+    VALUES (seeded_event_id, 'LOAD-10K', '10 km', '10-km', 10000, '2027-06-15T06:00:00Z', 0, now(), now())
     RETURNING id INTO seeded_race_id;
 
     INSERT INTO categories(race_id, source_name, display_name, display_order, created_at, updated_at)

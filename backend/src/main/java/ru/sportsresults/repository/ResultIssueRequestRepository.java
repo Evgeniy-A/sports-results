@@ -29,7 +29,6 @@ public interface ResultIssueRequestRepository extends JpaRepository<ResultIssueR
             "registration",
             "registration.category",
             "registration.race",
-            "registration.race.sportFormat",
             "result"
     })
     Optional<ResultIssueRequest> findByIdAndEvent_Id(Long issueId, Long eventId);
@@ -38,8 +37,7 @@ public interface ResultIssueRequestRepository extends JpaRepository<ResultIssueR
             "event",
             "registration",
             "registration.category",
-            "registration.race",
-            "registration.race.sportFormat"
+            "registration.race"
     })
     @Query("select issue from ResultIssueRequest issue where issue.id = :issueId")
     Optional<ResultIssueRequest> findJournalDetailById(@Param("issueId") Long issueId);

@@ -11,7 +11,7 @@ import java.util.Optional;
 
 public interface RegistrationRepository extends JpaRepository<Registration, Long> {
     @EntityGraph(attributePaths = {
-            "race", "race.event", "race.event.eventSeries", "race.sportFormat",
+            "race", "race.event", "race.event.eventSeries",
             "category", "cluster", "importBatch"
     })
     @Query("select registration from Registration registration "
@@ -20,7 +20,7 @@ public interface RegistrationRepository extends JpaRepository<Registration, Long
     List<Registration> findAllByRaceIdAndBib(@Param("raceId") Long raceId, @Param("bib") String bib);
 
     @EntityGraph(attributePaths = {
-            "race", "race.event", "race.event.eventSeries", "race.sportFormat",
+            "race", "race.event", "race.event.eventSeries",
             "category", "importBatch"
     })
     @Query("select registration from Registration registration "
@@ -31,7 +31,7 @@ public interface RegistrationRepository extends JpaRepository<Registration, Long
     /**
      * Canonical current-dataset predicate used by import planning.
      */
-    @EntityGraph(attributePaths = {"race", "race.sportFormat", "cluster"})
+    @EntityGraph(attributePaths = {"race", "cluster"})
     @Query("select registration from Registration registration "
             + "where registration.race.event.id = :eventId and registration.retiredAt is null")
     List<Registration> findAllCurrentByEventId(@Param("eventId") Long eventId);
@@ -54,7 +54,7 @@ public interface RegistrationRepository extends JpaRepository<Registration, Long
     boolean existsByClusterId(Long clusterId);
 
     @EntityGraph(attributePaths = {
-            "race", "race.event", "race.sportFormat", "category", "cluster", "importBatch"
+            "race", "race.event", "category", "cluster", "importBatch"
     })
     Optional<Registration> findById(Long id);
 

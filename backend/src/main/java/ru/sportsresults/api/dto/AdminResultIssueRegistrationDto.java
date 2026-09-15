@@ -16,8 +16,6 @@ public record AdminResultIssueRegistrationDto(
         RegistrationEntryKind entryKind,
         CategoryDto effectiveCategory,
         Long raceId,
-        String raceName,
-        Long sportFormatId,
-        String sportFormatName
+        String raceName
 ) {
 }

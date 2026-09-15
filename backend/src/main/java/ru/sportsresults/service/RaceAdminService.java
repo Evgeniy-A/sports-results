@@ -15,18 +15,16 @@ public class RaceAdminService {
     private final RaceRepository raceRepository;
     private final AwardPolicyRepository awardPolicyRepository;
     private final AdminChangeLogRepository auditRepository;
-    private final SportFormatService sportFormatService;
     private final EventResultDataMutationGuard mutationGuard;
     private final SlugGenerator slugGenerator;
 
     public RaceAdminService(RaceRepository raceRepository,
                             AwardPolicyRepository awardPolicyRepository, AdminChangeLogRepository auditRepository,
-                            SportFormatService sportFormatService, EventResultDataMutationGuard mutationGuard,
+                            EventResultDataMutationGuard mutationGuard,
                             SlugGenerator slugGenerator) {
         this.raceRepository = raceRepository;
         this.awardPolicyRepository = awardPolicyRepository;
         this.auditRepository = auditRepository;
-        this.sportFormatService = sportFormatService;
         this.mutationGuard = mutationGuard;
         this.slugGenerator = slugGenerator;
     }
@@ -36,9 +34,6 @@ public class RaceAdminService {
         Race race = new Race();
         Event event = mutationGuard.lock(eventId);
         race.setEvent(event);
-        race.setSportFormat(request.sportFormatId() == null
-                ? sportFormatService.ensureRaceOnlyDefault(event, actor)
-                : sportFormatService.requireFormat(eventId, request.sportFormatId()));
         String slug = request.slug() == null || request.slug().isBlank()
                 ? slugGenerator.uniqueSlug(request.name(), "start",
                         candidate -> raceRepository.existsByEventIdAndSlug(eventId, candidate))
@@ -71,11 +66,7 @@ public class RaceAdminService {
                 .orElseThrow(() -> new ResourceNotFoundException("RACE_NOT_FOUND", "Race not found in this event"));
         String old = race.getName();
         String oldSourceCode = race.getSourceCode();
-        Long oldSportFormatId = race.getSportFormat().getId();
         boolean oldPublicVisible = race.isPublicVisible();
-        if (request.sportFormatId() != null) {
-            race.setSportFormat(sportFormatService.requireFormat(eventId, request.sportFormatId()));
-        }
         String slug = request.slug() == null || request.slug().isBlank()
                 ? race.getSlug()
                 : request.slug().strip();
@@ -87,8 +78,7 @@ public class RaceAdminService {
             if (oldPublicVisible != saved.isPublicVisible()) {
                 audit(actor, raceId, "publicVisible", oldPublicVisible, saved.isPublicVisible());
             }
-            if (!java.util.Objects.equals(oldSourceCode, saved.getSourceCode())
-                    || !java.util.Objects.equals(oldSportFormatId, saved.getSportFormat().getId())) {
+            if (!java.util.Objects.equals(oldSourceCode, saved.getSourceCode())) {
                 mutationGuard.bump(event);
             }
             return toDto(saved, categories);
@@ -103,9 +93,6 @@ public class RaceAdminService {
         race.setSlug(slug);
         race.setDistanceMeters(request.distanceMeters());
         race.setStartsAt(request.startsAt());
-        if (request.entryMode() != null) {
-            race.setEntryMode(request.entryMode());
-        }
         race.setDisplayOrder(request.displayOrder());
         if (request.publicVisible() != null) {
             race.setPublicVisible(request.publicVisible());
@@ -113,14 +100,12 @@ public class RaceAdminService {
     }
 
     private static RaceDto toDto(Race race, boolean categoryEnabled) {
-        return new RaceDto(race.getId(), race.getEvent().getId(), race.getSportFormat().getId(),
-                race.getSportFormat().getDisplayName(), race.getSourceCode(), race.getName(), race.getSlug(),
-                race.getDistanceMeters(), race.getStartsAt(), race.getEntryMode(), race.getDisplayOrder(),
+        return new RaceDto(race.getId(), race.getEvent().getId(), race.getSourceCode(), race.getName(), race.getSlug(),
+                race.getDistanceMeters(), race.getStartsAt(), race.getDisplayOrder(),
                 race.getPublicRankingBasis(), categoryEnabled, race.isPublicVisible(),
                 race.getResultsPublicationStatus(),
                 race.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED,
-                race.isResultRecalculationRequired(), RacePresentation.effectiveName(race),
-                RacePresentation.effectivePublicVisible(race));
+                race.isResultRecalculationRequired());
     }
 
     private void audit(String actor, Long id, String field, Object oldValue, Object newValue) {

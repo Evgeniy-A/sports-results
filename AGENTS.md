@@ -9,7 +9,7 @@
 
 ## Architecture & Data Rules
 
-Keep `Controller → Service → Repository → PostgreSQL`; expose DTOs. Core: `EventSeries → Event → SportFormat → Race → Registration → Result`. Public results require one Race; SportFormat never ranks. Effective visibility is `SportFormat.publicVisible && Race.publicVisible`; toggles never alter rankings or imported facts. Registration is the participant/team snapshot. Preserve nullable source fields, textual non-unique bibs, and imported places. Store durations as Java `Duration` and PostgreSQL `BIGINT` milliseconds. FINISH belongs to Result; Split is intermediate.
+Keep `Controller → Service → Repository → PostgreSQL`; expose DTOs. Core: `EventSeries → Event → Race → Registration → Result`. Public results require one Race, and Race visibility never alters rankings or imported facts. Registration is the participant/team snapshot. Preserve nullable source fields, textual non-unique bibs, and imported places. Store durations as Java `Duration` and PostgreSQL `BIGINT` milliseconds. FINISH belongs to Result; Split is intermediate.
 
 Event and Results publication are independent; Results `DRAFT` leaves Event public. Derive calendar/archive from Event dates. Use the Event IANA timezone and `EVENT_DATE` age. `AwardPolicy.rankingBasis` is authoritative; Race ranking fields are mirrors. GUN/CHIP places and prize flags never change with sorting, filters, search, or pagination. `NONE` creates no `RankingAchievement`; «Место» is the current query position. Prize counts control awarding, so zero prizes remain valid for GUN/CHIP. Hide public «Порядок протокола» sorting and mark the ranking time «Зачёт».
 

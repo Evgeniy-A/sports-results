@@ -24,7 +24,6 @@ import ru.sportsresults.domain.ResultIssueQueueScope;
 import ru.sportsresults.domain.ResultIssueRequest;
 import ru.sportsresults.domain.ResultIssueStatus;
 import ru.sportsresults.domain.ResultIssueType;
-import ru.sportsresults.domain.SportFormat;
 import ru.sportsresults.repository.GlobalResultIssueJournalProjection;
 import ru.sportsresults.repository.ResultIssueAttachmentRepository;
 import ru.sportsresults.repository.ResultIssueHistoryRepository;
@@ -81,8 +80,6 @@ public class GlobalResultIssueJournalService {
             LocalDate eventDateTo,
             Instant createdFrom,
             Instant createdTo,
-            Long sportFormatId,
-            String sportFormatCode,
             Long raceId,
             String raceCode,
             String bib,
@@ -101,7 +98,7 @@ public class GlobalResultIssueJournalService {
         validatePage(page, size);
         ResultIssueJournalQuery query = prepareQuery(
                 issueId, eventId, location, eventDateFrom, eventDateTo, createdFrom, createdTo,
-                sportFormatId, sportFormatCode, raceId, raceCode, bib, participant, issueType,
+                raceId, raceCode, bib, participant, issueType,
                 correctionReason, statuses, queueScope, queueArchiveReason,
                 queueArchivedImportOperationId, sortValue, directionValue
         );
@@ -116,8 +113,6 @@ public class GlobalResultIssueJournalService {
             LocalDate eventDateTo,
             Instant createdFrom,
             Instant createdTo,
-            Long sportFormatId,
-            String sportFormatCode,
             Long raceId,
             String raceCode,
             String bib,
@@ -133,7 +128,6 @@ public class GlobalResultIssueJournalService {
     ) {
         validatePositive("issueId", issueId);
         validatePositive("eventId", eventId);
-        validatePositive("sportFormatId", sportFormatId);
         validatePositive("raceId", raceId);
         validateRanges(eventDateFrom, eventDateTo, createdFrom, createdTo);
 
@@ -154,8 +148,6 @@ public class GlobalResultIssueJournalService {
                 afterUtcEnd(eventDateTo),
                 createdFrom,
                 createdTo,
-                sportFormatId,
-                normalize(sportFormatCode, 100, "sportFormatCode"),
                 raceId,
                 normalize(raceCode, 255, "raceCode"),
                 normalize(bib, 64, "bib"),
@@ -212,7 +204,6 @@ public class GlobalResultIssueJournalService {
     ) {
         Registration registration = issue.getRegistration();
         Race race = registration.getRace();
-        SportFormat sportFormat = race.getSportFormat();
         Category category = registration.getCategory();
         Result currentResult = resultRepository.findByRegistrationId(registration.getId()).orElse(null);
         return new GlobalResultIssueDetailDto(
@@ -239,9 +230,6 @@ public class GlobalResultIssueJournalService {
                         true,
                         !registration.isCurrent(),
                         registration.getId(),
-                        new GlobalResultIssueCurrentContextDto.CurrentSportFormat(
-                                sportFormat.getId(), sportFormat.getDisplayName(), sportFormat.getCode()
-                        ),
                         new GlobalResultIssueCurrentContextDto.CurrentRace(
                                 race.getId(), race.getName(), race.getSourceCode(), race.getDistanceMeters()
                         ),

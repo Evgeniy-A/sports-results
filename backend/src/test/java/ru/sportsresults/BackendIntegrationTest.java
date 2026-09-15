@@ -52,7 +52,6 @@ import ru.sportsresults.domain.ImportOperationItem;
 import ru.sportsresults.domain.ImportOperationMode;
 import ru.sportsresults.domain.ImportOperationStatus;
 import ru.sportsresults.domain.Race;
-import ru.sportsresults.domain.RaceEntryMode;
 import ru.sportsresults.domain.RaceResultPublicationHistory;
 import ru.sportsresults.domain.Registration;
 import ru.sportsresults.domain.RegistrationEntryKind;
@@ -70,7 +69,6 @@ import ru.sportsresults.domain.ResultIssueSnapshotOrigin;
 import ru.sportsresults.domain.ResultIssueStatus;
 import ru.sportsresults.domain.ResultIssueType;
 import ru.sportsresults.domain.ResultsPublicationStatus;
-import ru.sportsresults.domain.SportFormat;
 import ru.sportsresults.domain.StartCluster;
 import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.CategoryRepository;
@@ -88,7 +86,6 @@ import ru.sportsresults.repository.ResultIssueAttachmentRepository;
 import ru.sportsresults.repository.ResultIssueHistoryRepository;
 import ru.sportsresults.repository.ResultIssueAttachmentShareGrantRepository;
 import ru.sportsresults.repository.ResultIssueShareBatchRepository;
-import ru.sportsresults.repository.SportFormatRepository;
 import ru.sportsresults.repository.StartClusterRepository;
 import ru.sportsresults.service.ImportService;
 import ru.sportsresults.service.ImportPreviewService;
@@ -110,7 +107,6 @@ import ru.sportsresults.service.ResultIssueAttachmentScanService;
 import ru.sportsresults.service.EventContentService;
 import ru.sportsresults.service.EventDocumentService;
 import ru.sportsresults.service.StartClusterService;
-import ru.sportsresults.service.SportFormatService;
 import ru.sportsresults.service.RaceAdminService;
 import ru.sportsresults.service.RaceResultsPublicationService;
 import ru.sportsresults.service.CategoryAdminService;
@@ -193,7 +189,6 @@ class BackendIntegrationTest {
     private ResultIssueAttachmentShareGrantRepository resultIssueAttachmentShareGrantRepository;
     private ResultIssueShareBatchRepository resultIssueShareBatchRepository;
     private ResultIssueHistoryRepository resultIssueHistoryRepository;
-    private SportFormatRepository sportFormatRepository;
     private StartClusterRepository startClusterRepository;
     private AdminChangeLogRepository changeLogRepository;
     private ImportService importService;
@@ -217,7 +212,6 @@ class BackendIntegrationTest {
     private ResultIssueSnapshotService resultIssueSnapshotService;
     private ResultIssueJournalXlsxExportService resultIssueJournalXlsxExportService;
     private ResultIssueShareTokenService resultIssueShareTokenService;
-    private SportFormatService sportFormatService;
     private RaceAdminService raceAdminService;
     private RaceResultsPublicationService raceResultsPublicationService;
     private CategoryAdminService categoryAdminService;
@@ -273,7 +267,6 @@ class BackendIntegrationTest {
         resultIssueAttachmentShareGrantRepository = context.getBean(ResultIssueAttachmentShareGrantRepository.class);
         resultIssueShareBatchRepository = context.getBean(ResultIssueShareBatchRepository.class);
         resultIssueHistoryRepository = context.getBean(ResultIssueHistoryRepository.class);
-        sportFormatRepository = context.getBean(SportFormatRepository.class);
         startClusterRepository = context.getBean(StartClusterRepository.class);
         changeLogRepository = context.getBean(AdminChangeLogRepository.class);
         importService = context.getBean(ImportService.class);
@@ -297,7 +290,6 @@ class BackendIntegrationTest {
         resultIssueSnapshotService = context.getBean(ResultIssueSnapshotService.class);
         resultIssueJournalXlsxExportService = context.getBean(ResultIssueJournalXlsxExportService.class);
         resultIssueShareTokenService = context.getBean(ResultIssueShareTokenService.class);
-        sportFormatService = context.getBean(SportFormatService.class);
         raceAdminService = context.getBean(RaceAdminService.class);
         raceResultsPublicationService = context.getBean(RaceResultsPublicationService.class);
         categoryAdminService = context.getBean(CategoryAdminService.class);
@@ -324,7 +316,7 @@ class BackendIntegrationTest {
                     result_issue_attachment_share_grants, result_issue_share_batches,
                     result_issue_history, result_issue_attachments, result_issue_requests, splits, results,
                     registrations, import_batches,
-                    award_policies, checkpoints, categories, races, sport_formats, events, event_series
+                    award_policies, checkpoints, categories, races, events, event_series
                 RESTART IDENTITY CASCADE
                 """);
         attachmentObjectStorage.clear();
@@ -441,7 +433,7 @@ class BackendIntegrationTest {
 
         RaceDto raceDto = raceAdminService.create(event.getId(), new UpsertRaceRequest(
                 "admin-race", "Admin race", "admin-race", null, null,
-                RaceEntryMode.INDIVIDUAL, 0, null, false
+                0, false
         ), ADMIN_USERNAME);
         Race race = raceRepository.findById(raceDto.id()).orElseThrow();
         race.setResultRecalculationRequired(true);
@@ -473,8 +465,8 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void raceOnlyAdminCreateUsesV24CompatibilityDefaultsAndRenameKeepsIdentity() throws Exception {
-        Event event = createPublishedEvent("Race-only compatibility", "race-only-compatibility");
+    void raceAdminCreateAndRenameKeepIdentityAndStableSlug() throws Exception {
+        Event event = createPublishedEvent("Race-only model", "race-only-model");
 
         MvcResult createdResponse = mockMvc.perform(post("/api/admin/events/{eventId}/races", event.getId())
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
@@ -490,18 +482,14 @@ class BackendIntegrationTest {
                                 }
                                 """))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.entryMode").value("UNKNOWN"))
-                .andExpect(jsonPath("$.sportFormatName").value("Основной формат"))
-                .andExpect(jsonPath("$.effectiveName").value("Детский забег"))
-                .andExpect(jsonPath("$.effectivePublicVisible").value(true))
+                .andExpect(jsonPath("$.name").value("Детский забег"))
+                .andExpect(jsonPath("$.publicVisible").value(true))
+                .andExpect(jsonPath("$.entryMode").doesNotExist())
+                .andExpect(jsonPath("$.sportFormatId").doesNotExist())
                 .andReturn();
         RaceDto created = objectMapper.readValue(createdResponse.getResponse().getContentAsByteArray(), RaceDto.class);
         Race persisted = raceRepository.findById(created.id()).orElseThrow();
-        assertThat(persisted.getEntryMode()).isEqualTo(RaceEntryMode.UNKNOWN);
         Long originalId = persisted.getId();
-        Long originalFormatId = persisted.getSportFormat().getId();
-        assertThat(sportFormatRepository.findById(originalFormatId).orElseThrow().getCode())
-                .isEqualTo(SportFormatService.COMPATIBILITY_DEFAULT_CODE);
         String originalSlug = persisted.getSlug();
 
         mockMvc.perform(put("/api/admin/events/{eventId}/races/{raceId}", event.getId(), originalId)
@@ -520,35 +508,26 @@ class BackendIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(originalId))
                 .andExpect(jsonPath("$.slug").value(originalSlug))
-                .andExpect(jsonPath("$.sportFormatId").value(originalFormatId))
-                .andExpect(jsonPath("$.entryMode").value("UNKNOWN"))
-                .andExpect(jsonPath("$.effectiveName").value("Детский забег 2 км"));
+                .andExpect(jsonPath("$.name").value("Детский забег 2 км"));
 
-        var businessFormat = sportFormatService.create(event.getId(),
-                new ru.sportsresults.api.dto.UpsertSportFormatRequest(
-                        "mass", "Mass", "Масс-старт", 1, true), ADMIN_USERNAME);
         mockMvc.perform(post("/api/admin/events/{eventId}/races", event.getId())
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "sourceCode":"mass-10",
-                                  "name":"10 км",
-                                  "slug":"mass-10-km",
-                                  "entryMode":"TEAM",
-                                  "displayOrder":0,
-                                  "sportFormatId":%d,
-                                  "publicVisible":true
-                                }
-                                """.formatted(businessFormat.id())))
+                                   "sourceCode":"mass-10",
+                                   "name":"Масс-старт 10 км",
+                                   "slug":"mass-10-km",
+                                   "displayOrder":0,
+                                   "publicVisible":true
+                                 }
+                                 """))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.entryMode").value("TEAM"))
-                .andExpect(jsonPath("$.sportFormatId").value(businessFormat.id()))
-                .andExpect(jsonPath("$.effectiveName").value("Масс-старт 10 км"));
+                .andExpect(jsonPath("$.name").value("Масс-старт 10 км"));
 
         mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sportFormats.length()").value(2))
+                .andExpect(jsonPath("$.sportFormats").doesNotExist())
                 .andExpect(jsonPath("$.races.length()").value(2))
                 .andExpect(jsonPath("$.races[0].id").value(originalId))
                 .andExpect(jsonPath("$.races[0].name").value("Детский забег 2 км"))
@@ -556,29 +535,18 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void adminResultSearchScopesBySportFormatAndExposesParticipantFacts() {
-        Event event = createPublishedEvent("Admin format filter", "admin-format-filter");
+    void adminResultSearchScopesByRaceAndExposesParticipantFacts() {
+        Event event = createPublishedEvent("Admin race filter", "admin-race-filter");
         importPublishedFixture(event.getId(), "format-filter.csv", rankingCsv().getBytes(StandardCharsets.UTF_8));
         List<Race> importedRaces = raceRepository.findAllByEventIdOrderByDisplayOrderAsc(event.getId());
         Race firstRace = importedRaces.stream().filter(race -> race.getSourceCode().equals("5 km")).findFirst().orElseThrow();
         Race secondRace = importedRaces.stream().filter(race -> race.getSourceCode().equals("10 km")).findFirst().orElseThrow();
-        SportFormat firstFormat = firstRace.getSportFormat();
-        SportFormat secondFormat = new SportFormat();
-        secondFormat.setEvent(event);
-        secondFormat.setCode("second-format");
-        secondFormat.setDisplayName("Second format");
-        secondFormat.setDisplayOrder(1);
-        secondFormat.setPublicVisible(true);
-        secondFormat = sportFormatRepository.saveAndFlush(secondFormat);
-        secondRace.setSportFormat(secondFormat);
-        raceRepository.saveAndFlush(secondRace);
-
         var firstPage = resultQueryService.searchAdmin(
-                event.getId(), firstFormat.getId(), null, null, null, null, null, null, null,
+                event.getId(), firstRace.getId(), null, null, null, null, null, null,
                 0, 50, "bib", "asc", RankingBasis.GUN_TIME
         );
         var secondPage = resultQueryService.searchAdmin(
-                event.getId(), secondFormat.getId(), null, null, null, null, null, null, null,
+                event.getId(), secondRace.getId(), null, null, null, null, null, null,
                 0, 50, "bib", "asc", RankingBasis.GUN_TIME
         );
 
@@ -600,14 +568,14 @@ class BackendIntegrationTest {
                     'events', 'races', 'categories', 'registrations', 'results',
                     'checkpoints', 'splits', 'import_batches', 'admin_change_logs',
                     'event_series', 'award_policies', 'event_participant_info',
-                    'event_info_blocks', 'event_schedule_items', 'event_documents', 'start_clusters', 'sport_formats',
+                    'event_info_blocks', 'event_schedule_items', 'event_documents', 'start_clusters',
                     'result_issue_requests', 'result_issue_attachments', 'import_operations', 'import_operation_races',
                     'import_operation_items', 'race_result_publication_history', 'result_issue_history',
                     'result_recalculation_operations', 'result_recalculation_operation_races',
                     'result_issue_share_batches', 'result_issue_attachment_share_grants'
                   )
                 """, Integer.class);
-        assertThat(count).isEqualTo(28);
+        assertThat(count).isEqualTo(27);
         Integer rankingColumn = jdbcTemplate.queryForObject("""
                 SELECT count(*)
                 FROM information_schema.columns
@@ -1858,7 +1826,6 @@ class BackendIntegrationTest {
         assertThat(leadingZero.bib()).isEqualTo("0817");
         assertThat(leadingZero.participantDisplayName()).isEqualTo("Скрытый Статус");
         assertThat(leadingZero.raceDisplayName()).isEqualTo("10 km");
-        assertThat(leadingZero.sportFormatDisplayName()).isEqualTo("Основной формат");
         assertThat(leadingZero.startDisplayName()).isEqualTo("10 km");
         assertThat(leadingZero.publicResultId()).isNull();
         assertThat(leadingZero.missingResultActionAvailable()).isTrue();
@@ -1902,8 +1869,6 @@ class BackendIntegrationTest {
                 inquiryVisibilityCsv().getBytes(StandardCharsets.UTF_8)
         );
         Race race = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
-        SportFormat format = sportFormatRepository.findById(race.getSportFormat().getId()).orElseThrow();
-
         assertThat(resultInquiryService.lookup(event.getId(), "V-1").lookupState())
                 .isEqualTo(ResultInquiryLookupState.RESULT_NOT_PUBLIC);
         race.setPublicVisible(false);
@@ -1912,12 +1877,6 @@ class BackendIntegrationTest {
                 .isEqualTo(ResultInquiryLookupState.NOT_FOUND);
         race.setPublicVisible(true);
         raceRepository.saveAndFlush(race);
-        format.setPublicVisible(false);
-        sportFormatRepository.saveAndFlush(format);
-        assertThat(resultInquiryService.lookup(event.getId(), "V-1").lookupState())
-                .isEqualTo(ResultInquiryLookupState.NOT_FOUND);
-        format.setPublicVisible(true);
-        sportFormatRepository.saveAndFlush(format);
 
         event.setResultsPublicationStatus(ru.sportsresults.domain.ResultsPublicationStatus.DRAFT);
         eventRepository.saveAndFlush(event);
@@ -1971,7 +1930,6 @@ class BackendIntegrationTest {
         assertThat(nonPublic.lookupState()).isEqualTo(ResultInquiryLookupState.RESULT_NOT_PUBLIC);
         assertThat(nonPublic.participantDisplayName()).isEqualTo("Первый Дубль");
         assertThat(nonPublic.raceDisplayName()).isEqualTo("5 km");
-        assertThat(nonPublic.sportFormatDisplayName()).isEqualTo("Основной формат");
         assertThat(nonPublic.startDisplayName()).isEqualTo("5 km");
 
         String publicJson = mockMvc.perform(post("/api/events/{eventId}/result-inquiry/verify", event.getId())
@@ -2232,15 +2190,13 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void dobVerificationDoesNotBypassRaceOrSportFormatVisibility() {
+    void dobVerificationDoesNotBypassRaceVisibility() {
         Event event = createOpenInquiryEvent("Hidden duplicate inquiry", "hidden-duplicate-inquiry");
         importPublishedFixture(
                 event.getId(), "hidden-duplicate-inquiry.csv",
                 duplicateInquiryBibCsv().getBytes(StandardCharsets.UTF_8)
         );
         Race race = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
-        SportFormat format = sportFormatRepository.findById(race.getSportFormat().getId()).orElseThrow();
-
         race.setPublicVisible(false);
         raceRepository.saveAndFlush(race);
         assertThat(resultInquiryService.lookup(event.getId(), "1100").lookupState())
@@ -2249,13 +2205,6 @@ class BackendIntegrationTest {
         assertThat(hiddenRace.lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
         assertThat(hiddenRace.participantDisplayName()).isNull();
 
-        race.setPublicVisible(true);
-        raceRepository.saveAndFlush(race);
-        format.setPublicVisible(false);
-        sportFormatRepository.saveAndFlush(format);
-        var hiddenFormat = resultInquiryService.verify(event.getId(), "1100", LocalDate.parse("1990-01-10"));
-        assertThat(hiddenFormat.lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
-        assertThat(hiddenFormat.participantDisplayName()).isNull();
     }
 
     @Test
@@ -3024,7 +2973,7 @@ class BackendIntegrationTest {
                 .andExpect(jsonPath("$.content[1].issueId").value(fixture.issues().get(1).getId()))
                 .andExpect(jsonPath("$.content[0].registration.bib").value("Q-1"))
                 .andExpect(jsonPath("$.content[0].race.raceName").value("5 km"))
-                .andExpect(jsonPath("$.content[0].race.sportFormatId").isNumber())
+                .andExpect(jsonPath("$.content[0].race.sportFormatId").doesNotExist())
                 .andExpect(jsonPath("$.content[0].attachmentCount").value(2))
                 .andExpect(jsonPath("$.content[1].attachmentCount").value(1))
                 .andReturn().getResponse().getContentAsString();
@@ -3133,7 +3082,7 @@ class BackendIntegrationTest {
                 .andExpect(jsonPath("$.registration.birthDate").value("1990-01-03"))
                 .andExpect(jsonPath("$.registration.sourceCategory").value("Open"))
                 .andExpect(jsonPath("$.registration.raceId").value(currentRegistration.getRace().getId()))
-                .andExpect(jsonPath("$.registration.sportFormatId").isNumber())
+                .andExpect(jsonPath("$.registration.sportFormatId").doesNotExist())
                 .andExpect(jsonPath("$.result.resultId").value(currentResult.getId()))
                 .andExpect(jsonPath("$.result.status").value("finished"))
                 .andExpect(jsonPath("$.attachments.length()").value(1))
@@ -3344,8 +3293,9 @@ class BackendIntegrationTest {
         assertThat(first.getSnapshotEventName()).isEqualTo("Stage E archive");
         assertThat(first.getSnapshotEventLocation()).isEqualTo("Perm");
         assertThat(first.getSnapshotEventStartsAt()).isEqualTo(event.getStartsAt());
-        assertThat(first.getSnapshotSportFormatId()).isEqualTo(registration.getRace().getSportFormat().getId());
-        assertThat(first.getSnapshotSportFormatName()).isNotBlank();
+        assertThat(first.getSnapshotSportFormatId()).isNull();
+        assertThat(first.getSnapshotSportFormatName()).isNull();
+        assertThat(first.getSnapshotSportFormatCode()).isNull();
         assertThat(first.getSnapshotRaceId()).isEqualTo(registration.getRace().getId());
         assertThat(first.getSnapshotRaceName()).isEqualTo(registration.getRace().getName());
         assertThat(first.getSnapshotRaceCode()).isEqualTo(registration.getRace().getSourceCode());
@@ -3556,28 +3506,16 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void separatesSportFormatsAndKeepsEveryPublicProtocolRaceScoped() throws Exception {
-        Event event = createPublishedEvent("Format separation", "format-separation");
-        assertThat(importPublishedFixture(event.getId(), "formats.csv",
-                sportFormatsCsv().getBytes(StandardCharsets.UTF_8)).status()).isEqualTo(ImportBatchStatus.SUCCEEDED);
-
-        SportFormat defaultFormat = sportFormatRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(event.getId())
-                .getFirst();
-        var individual = sportFormatService.update(event.getId(), defaultFormat.getId(),
-                new ru.sportsresults.api.dto.UpsertSportFormatRequest(
-                        "individual", "Individual", "Индивидуальный", 1, true), ADMIN_USERNAME);
-        var team = sportFormatService.create(event.getId(),
-                new ru.sportsresults.api.dto.UpsertSportFormatRequest(
-                        "team", "Team", "Командный", 2, true), ADMIN_USERNAME);
+    void keepsEveryPublicProtocolRaceScopedAndHonorsRaceVisibility() throws Exception {
+        Event event = createPublishedEvent("Race separation", "race-separation");
+        assertThat(importPublishedFixture(event.getId(), "races.csv",
+                raceSeparationCsv().getBytes(StandardCharsets.UTF_8)).status()).isEqualTo(ImportBatchStatus.SUCCEEDED);
 
         Race raceA = raceRepository.findByEventIdAndSourceCode(event.getId(), "Race A").orElseThrow();
         Race raceB = raceRepository.findByEventIdAndSourceCode(event.getId(), "Race B").orElseThrow();
         Race raceC = raceRepository.findByEventIdAndSourceCode(event.getId(), "Race C").orElseThrow();
         long registrationsBeforeVisibilityChanges = registrationRepository.countByRaceEventId(event.getId());
         long resultsBeforeVisibilityChanges = resultRepository.countByRegistrationRaceEventId(event.getId());
-        raceAdminService.update(event.getId(), raceC.getId(), new ru.sportsresults.api.dto.UpsertRaceRequest(
-                raceC.getSourceCode(), raceC.getName(), raceC.getSlug(), raceC.getDistanceMeters(), raceC.getStartsAt(),
-                raceC.getEntryMode(), raceC.getDisplayOrder(), team.id(), true), ADMIN_USERNAME);
 
         for (Race race : List.of(raceA, raceB, raceC)) {
             awardPolicyService.upsert(race.getId(), new UpdateAwardPolicyRequest(
@@ -3585,32 +3523,18 @@ class BackendIntegrationTest {
                     AgeCalculationMode.EVENT_DATE, 0, false), ADMIN_USERNAME);
         }
 
-        assertThat(sportFormatRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(event.getId()))
-                .extracting(SportFormat::getDisplayName)
-                .containsExactly("Индивидуальный", "Командный");
-        assertThat(raceRepository.findById(raceA.getId()).orElseThrow().getSportFormat().getId())
-                .isEqualTo(individual.id());
-        assertThat(raceRepository.findById(raceB.getId()).orElseThrow().getSportFormat().getId())
-                .isEqualTo(individual.id());
-        assertThat(raceRepository.findById(raceC.getId()).orElseThrow().getSportFormat().getId())
-                .isEqualTo(team.id());
-
         mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sportFormats.length()").value(2))
-                .andExpect(jsonPath("$.sportFormats[0].displayName").value("Индивидуальный"))
-                .andExpect(jsonPath("$.sportFormats[0].races.length()").value(2))
-                .andExpect(jsonPath("$.sportFormats[1].displayName").value("Командный"))
-                .andExpect(jsonPath("$.sportFormats[1].races.length()").value(1))
+                .andExpect(jsonPath("$.sportFormats").doesNotExist())
                 .andExpect(jsonPath("$.races.length()").value(3))
                 .andExpect(jsonPath("$.races[0].id").value(raceA.getId()))
-                .andExpect(jsonPath("$.races[0].name").value("Индивидуальный Race A"))
+                .andExpect(jsonPath("$.races[0].name").value("Race A"))
                 .andExpect(jsonPath("$.races[0].displayOrder").value(0))
                 .andExpect(jsonPath("$.races[1].id").value(raceB.getId()))
-                .andExpect(jsonPath("$.races[1].name").value("Индивидуальный Race B"))
+                .andExpect(jsonPath("$.races[1].name").value("Race B"))
                 .andExpect(jsonPath("$.races[1].displayOrder").value(1))
                 .andExpect(jsonPath("$.races[2].id").value(raceC.getId()))
-                .andExpect(jsonPath("$.races[2].name").value("Командный Race C"))
+                .andExpect(jsonPath("$.races[2].name").value("Race C"))
                 .andExpect(jsonPath("$.races[2].displayOrder").value(2));
 
         mockMvc.perform(get("/api/events/{eventId}/results", event.getId()))
@@ -3631,7 +3555,7 @@ class BackendIntegrationTest {
 
         raceAdminService.update(event.getId(), raceB.getId(), new ru.sportsresults.api.dto.UpsertRaceRequest(
                 raceB.getSourceCode(), raceB.getName(), raceB.getSlug(), raceB.getDistanceMeters(), raceB.getStartsAt(),
-                raceB.getEntryMode(), raceB.getDisplayOrder(), individual.id(), false), ADMIN_USERNAME);
+                raceB.getDisplayOrder(), false), ADMIN_USERNAME);
         Long hiddenResultId = jdbcTemplate.queryForObject("""
                 SELECT result.id
                 FROM results result
@@ -3640,14 +3564,12 @@ class BackendIntegrationTest {
                 """, Long.class, raceB.getId());
         mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sportFormats.length()").value(2))
-                .andExpect(jsonPath("$.sportFormats[0].races.length()").value(1))
-                .andExpect(jsonPath("$.sportFormats[0].races[0].id").value(raceA.getId()))
+                .andExpect(jsonPath("$.sportFormats").doesNotExist())
                 .andExpect(jsonPath("$.races.length()").value(2))
                 .andExpect(jsonPath("$.races[0].id").value(raceA.getId()))
                 .andExpect(jsonPath("$.races[0].displayOrder").value(0))
                 .andExpect(jsonPath("$.races[1].id").value(raceC.getId()))
-                .andExpect(jsonPath("$.races[1].displayOrder").value(1));
+                .andExpect(jsonPath("$.races[1].displayOrder").value(2));
         mockMvc.perform(get("/api/events/{eventId}/races", event.getId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
@@ -3660,38 +3582,6 @@ class BackendIntegrationTest {
                 .andExpect(status().isNotFound());
         assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
                 AuditEntityType.RACE, raceB.getId()))
-                .anyMatch(change -> change.getFieldName().equals("publicVisible")
-                        && change.getOldValue().equals("true") && change.getNewValue().equals("false"));
-
-        raceAdminService.update(event.getId(), raceC.getId(), new ru.sportsresults.api.dto.UpsertRaceRequest(
-                raceC.getSourceCode(), raceC.getName(), raceC.getSlug(), raceC.getDistanceMeters(), raceC.getStartsAt(),
-                raceC.getEntryMode(), raceC.getDisplayOrder(), team.id(), false), ADMIN_USERNAME);
-        mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sportFormats.length()").value(1))
-                .andExpect(jsonPath("$.sportFormats[0].id").value(individual.id()));
-        raceAdminService.update(event.getId(), raceC.getId(), new ru.sportsresults.api.dto.UpsertRaceRequest(
-                raceC.getSourceCode(), raceC.getName(), raceC.getSlug(), raceC.getDistanceMeters(), raceC.getStartsAt(),
-                raceC.getEntryMode(), raceC.getDisplayOrder(), team.id(), true), ADMIN_USERNAME);
-
-        sportFormatService.update(event.getId(), team.id(),
-                new ru.sportsresults.api.dto.UpsertSportFormatRequest(
-                        "team", "Team", "Командный", 2, false), ADMIN_USERNAME);
-        mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sportFormats.length()").value(1))
-                .andExpect(jsonPath("$.sportFormats[0].races.length()").value(1))
-                .andExpect(jsonPath("$.races.length()").value(1))
-                .andExpect(jsonPath("$.races[0].id").value(raceA.getId()));
-        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
-                        .param("raceId", raceC.getId().toString()))
-                .andExpect(status().isNotFound());
-        mockMvc.perform(get("/api/admin/events/{eventId}/sport-formats", event.getId())
-                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[1].publicVisible").value(false));
-        assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
-                AuditEntityType.SPORT_FORMAT, team.id()))
                 .anyMatch(change -> change.getFieldName().equals("publicVisible")
                         && change.getOldValue().equals("true") && change.getNewValue().equals("false"));
 
@@ -5146,8 +5036,8 @@ class BackendIntegrationTest {
                 .isEqualTo(ResultInquiryLookupState.NOT_FOUND);
         mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sportFormats[0].races[0].resultsPublicationStatus").value("DRAFT"))
-                .andExpect(jsonPath("$.sportFormats[0].races[0].resultsPublished").value(false));
+                .andExpect(jsonPath("$.races[0].resultsPublicationStatus").value("DRAFT"))
+                .andExpect(jsonPath("$.races[0].resultsPublished").value(false));
 
         mockMvc.perform(post("/api/admin/events/{eventId}/races/{raceId}/results/publish",
                         event.getId(), race.getId()))
@@ -5253,9 +5143,9 @@ class BackendIntegrationTest {
                 .isEqualTo(ResultInquiryLookupState.RESULT_PUBLIC);
         mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.sportFormats[0].races.length()").value(2))
-                .andExpect(jsonPath("$.sportFormats[0].races[0].resultsPublished").value(true))
-                .andExpect(jsonPath("$.sportFormats[0].races[1].resultsPublished").value(false));
+                .andExpect(jsonPath("$.races.length()").value(2))
+                .andExpect(jsonPath("$.races[0].resultsPublished").value(true))
+                .andExpect(jsonPath("$.races[1].resultsPublished").value(false));
 
         raceResultsPublicationService.draft(event.getId(), publishedRace.getId(), "E2E correction", ADMIN_USERNAME);
         assertThatThrownBy(() -> resultQueryService.search(
@@ -5704,8 +5594,7 @@ class BackendIntegrationTest {
                 fixture.event().getId(),
                 fixture.event().getName(), fixture.event().getLocation(),
                 java.sql.Timestamp.from(fixture.event().getStartsAt()),
-                seed.getRace().getSportFormat().getId(), seed.getRace().getSportFormat().getDisplayName(),
-                seed.getRace().getSportFormat().getCode(),
+                7_001L, "Legacy format", "legacy-format",
                 seed.getRace().getId(), seed.getRace().getName(), seed.getRace().getSourceCode(),
                 seed.getImportBatch().getId(), firstSourceRow, lastSourceRow
         );
@@ -6271,7 +6160,7 @@ class BackendIntegrationTest {
                 event.getId(),
                 new UpsertRaceRequest(
                         "empty", "Empty Race", "empty-race", null, null,
-                        RaceEntryMode.UNKNOWN, 0, null, true
+                        0, true
                 ),
                 ADMIN_USERNAME
         ).id();
@@ -6279,7 +6168,7 @@ class BackendIntegrationTest {
                 event.getId(),
                 new UpsertRaceRequest(
                         "5 km", "Outside Race", "outside-race", null, null,
-                        RaceEntryMode.UNKNOWN, 1, null, true
+                        1, true
                 ),
                 ADMIN_USERNAME
         );
@@ -6977,11 +6866,9 @@ class BackendIntegrationTest {
 
         Race newRace = new Race();
         newRace.setEvent(fixture.event());
-        newRace.setSportFormat(oldRace.getSportFormat());
         newRace.setSourceCode("10 km updated");
         newRace.setName("10 km updated");
         newRace.setSlug("historical-event-10-km-updated");
-        newRace.setEntryMode(RaceEntryMode.INDIVIDUAL);
         newRace.setDisplayOrder(10);
         newRace = raceRepository.saveAndFlush(newRace);
         Category newCategory = new Category();
@@ -7116,7 +7003,6 @@ class BackendIntegrationTest {
                         .param("createdFrom", "2020-01-01T00:00:00Z")
                         .param("createdTo", "2030-01-01T00:00:00Z")
                         .param("eventId", kazan.event().getId().toString())
-                        .param("sportFormatId", target.getSnapshotSportFormatId().toString())
                         .param("raceId", target.getSnapshotRaceId().toString())
                         .param("raceCode", target.getSnapshotRaceCode())
                         .param("issueType", "RESULT_CORRECTION")
@@ -7308,7 +7194,7 @@ class BackendIntegrationTest {
             assertThat(attachments.getLastRowNum()).isEqualTo(6);
             assertThat(headerValues(issues)).contains(
                     "ID обращения", "Категория на момент обращения", "Snapshot origin",
-                    "Текущая Race", "Текущая категория", "Registration retired"
+                    "Текущий старт", "Текущая категория", "Registration retired"
             ).noneMatch(value -> value.toLowerCase().contains("рожд"));
             for (int rowIndex = 1; rowIndex <= issues.getLastRowNum(); rowIndex++) {
                 workbookIssueIds.add((long) issues.getRow(rowIndex).getCell(0).getNumericCellValue());
@@ -7501,11 +7387,9 @@ class BackendIntegrationTest {
         ResultIssueRequest missingResultIssue = fixture.issues().getFirst();
         Race currentRace = new Race();
         currentRace.setEvent(fixture.event());
-        currentRace.setSportFormat(historicalRace.getSportFormat());
         currentRace.setSourceCode("current-race");
         currentRace.setName("Текущая Race");
         currentRace.setSlug("xlsx-historical-current-race");
-        currentRace.setEntryMode(RaceEntryMode.INDIVIDUAL);
         currentRace.setDisplayOrder(10);
         currentRace = raceRepository.saveAndFlush(currentRace);
         Category currentCategory = new Category();
@@ -7771,21 +7655,11 @@ class BackendIntegrationTest {
                 "Kazan",
                 "2025-06-15T08:00:00Z"
         );
-        SportFormat format = new SportFormat();
-        format.setEvent(event);
-        format.setCode("individual");
-        format.setSourceName("individual");
-        format.setDisplayName("Individual");
-        format.setDisplayOrder(0);
-        format = sportFormatRepository.saveAndFlush(format);
-
         Race race = new Race();
         race.setEvent(event);
-        race.setSportFormat(format);
         race.setSourceCode("5 km");
         race.setName("5 km");
         race.setSlug(slug + "-5-km");
-        race.setEntryMode(RaceEntryMode.INDIVIDUAL);
         race.setPublicRankingBasis(RankingBasis.GUN_TIME);
         race.setDisplayOrder(0);
         race.setResultsPublicationStatus(ResultsPublicationStatus.DRAFT);
@@ -8335,7 +8209,7 @@ class BackendIntegrationTest {
         return csv.toString();
     }
 
-    private static String sportFormatsCsv() {
+    private static String raceSeparationCsv() {
         return csvHeader() + """
                 Участник,A,male,1990-01-01,Race A,A-1,Open,finished,1000.0,900.0,1.0,1.0,1.0,1.0,1.0,1.0
                 Участник,B,female,1991-01-01,Race B,B-1,Open,finished,2000.0,1900.0,1.0,1.0,1.0,1.0,1.0,1.0

@@ -688,10 +688,7 @@ public class ImportPreviewPlanner {
     private static ImportPreviewResponseDto.RaceRef raceRef(
             ImportPreviewDatabaseSnapshot.RaceSnapshot race
     ) {
-        return race == null ? null : new ImportPreviewResponseDto.RaceRef(
-                race.id(), race.name(), race.sportFormatId(), race.sportFormatName(),
-                RacePresentation.effectiveName(race.sportFormatName(), race.name())
-        );
+        return race == null ? null : new ImportPreviewResponseDto.RaceRef(race.id(), race.name());
     }
 
     private static String displayRace(ImportPreviewDatabaseSnapshot.RaceSnapshot race) {
@@ -882,7 +879,7 @@ public class ImportPreviewPlanner {
             writer.add(row.sourceRowNumber()).add(row.bib()).add(row.decision()).add(row.futureAction())
                     .add(row.reasonCode()).add(row.matchedRegistrationId()).add(row.matchedResultId());
             if (row.targetRace() != null) {
-                writer.add(row.targetRace().raceId()).add(row.targetRace().sportFormatId());
+                writer.add(row.targetRace().raceId());
             }
             row.diffs().stream().sorted(Comparator.comparing(ImportPreviewResponseDto.FieldDiff::field))
                     .forEach(diff -> writer.add(diff.field()).add(diff.oldValue()).add(diff.newValue()));

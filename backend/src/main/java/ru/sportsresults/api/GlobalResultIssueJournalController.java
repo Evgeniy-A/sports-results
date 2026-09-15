@@ -51,8 +51,6 @@ public class GlobalResultIssueJournalController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant createdFrom,
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant createdTo,
-            @RequestParam(required = false) Long sportFormatId,
-            @RequestParam(required = false) String sportFormatCode,
             @RequestParam(required = false) Long raceId,
             @RequestParam(required = false) String raceCode,
             @RequestParam(required = false) String bib,
@@ -77,8 +75,6 @@ public class GlobalResultIssueJournalController {
                 eventDateTo,
                 createdFrom,
                 createdTo,
-                sportFormatId,
-                sportFormatCode,
                 raceId,
                 raceCode,
                 bib,

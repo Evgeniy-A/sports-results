@@ -7,7 +7,6 @@ import ru.sportsresults.domain.*;
 import ru.sportsresults.repository.*;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -21,7 +20,6 @@ public class EventDetailsService {
     private final EventScheduleItemRepository scheduleRepository;
     private final EventDocumentRepository documentRepository;
     private final RaceRepository raceRepository;
-    private final SportFormatRepository sportFormatRepository;
     private final StartClusterRepository clusterRepository;
     private final AwardPolicyRepository awardPolicyRepository;
     private final CategoryRepository categoryRepository;
@@ -32,7 +30,6 @@ public class EventDetailsService {
                                EventScheduleItemRepository scheduleRepository,
                                EventDocumentRepository documentRepository,
                                RaceRepository raceRepository,
-                               SportFormatRepository sportFormatRepository,
                                StartClusterRepository clusterRepository,
                                AwardPolicyRepository awardPolicyRepository,
                                CategoryRepository categoryRepository) {
@@ -42,7 +39,6 @@ public class EventDetailsService {
         this.scheduleRepository = scheduleRepository;
         this.documentRepository = documentRepository;
         this.raceRepository = raceRepository;
-        this.sportFormatRepository = sportFormatRepository;
         this.clusterRepository = clusterRepository;
         this.awardPolicyRepository = awardPolicyRepository;
         this.categoryRepository = categoryRepository;
@@ -66,7 +62,7 @@ public class EventDetailsService {
 
     private EventDetailsDto toDto(Event event) {
         Long eventId = event.getId();
-        List<Race> races = raceRepository.findAllByEventIdOrderByDisplayOrderAsc(eventId);
+        List<Race> races = raceRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId);
         Map<Long, AwardPolicy> policies = awardPolicyRepository.findAllByRaceEventId(eventId).stream()
                 .collect(Collectors.toMap(policy -> policy.getRace().getId(), Function.identity()));
         Map<Long, List<Category>> categories = categoryRepository.findAllByRaceEventId(eventId).stream()
@@ -76,48 +72,23 @@ public class EventDetailsService {
                 .findAllByRaceEventIdOrderByRaceDisplayOrderAscDisplayOrderAscIdAsc(eventId).stream()
                 .collect(Collectors.groupingBy(cluster -> cluster.getRace().getId()));
 
-        Map<Long, List<PublicRaceDetailsDto>> racesByFormat = races.stream()
+        List<PublicRaceDto> flatRaces = races.stream()
                 .filter(Race::isPublicVisible)
                 .map(race -> {
-            AwardPolicy policy = policies.get(race.getId());
-            RaceRulesSummaryDto rules = policy == null ? null : rules(policy, categories.getOrDefault(race.getId(), List.of()));
-            return Map.entry(race.getSportFormat().getId(),
-                    new PublicRaceDetailsDto(race.getId(), race.getName(), race.getSlug(), race.getDistanceMeters(),
-                            race.getStartsAt(), race.getEntryMode(), race.getDisplayOrder(),
+                    AwardPolicy policy = policies.get(race.getId());
+                    RaceRulesSummaryDto rules = policy == null
+                            ? null
+                            : rules(policy, categories.getOrDefault(race.getId(), List.of()));
+                    return new PublicRaceDto(
+                            race.getId(), race.getName(), race.getSlug(), race.getDistanceMeters(),
+                            race.getStartsAt(), race.getDisplayOrder(), true,
                             clusters.getOrDefault(race.getId(), List.of()).stream()
-                                    .map(StartClusterService::toDto).toList(), rules,
-                            race.getResultsPublicationStatus(),
-                            race.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED));
-        }).collect(Collectors.groupingBy(Map.Entry::getKey,
-                Collectors.mapping(Map.Entry::getValue, Collectors.toList())));
-        List<PublicSportFormatDto> formats = sportFormatRepository
-                .findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId).stream()
-                .filter(SportFormat::isPublicVisible)
-                .filter(format -> !racesByFormat.getOrDefault(format.getId(), List.of()).isEmpty())
-                .map(format -> new PublicSportFormatDto(format.getId(), format.getCode(), format.getSourceName(),
-                        format.getDisplayName(), format.getDisplayOrder(),
-                        racesByFormat.getOrDefault(format.getId(), List.of())))
+                                    .map(StartClusterService::toDto).toList(),
+                            rules, race.getResultsPublicationStatus(),
+                            race.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED
+                    );
+                })
                 .toList();
-
-        List<PublicRaceDto> flatRaces = new ArrayList<>();
-        List<Race> orderedRaces = RacePresentation.stableFlatOrder(races);
-        for (Race race : orderedRaces) {
-            if (!RacePresentation.effectivePublicVisible(race)) {
-                continue;
-            }
-            AwardPolicy policy = policies.get(race.getId());
-            RaceRulesSummaryDto rules = policy == null
-                    ? null
-                    : rules(policy, categories.getOrDefault(race.getId(), List.of()));
-            flatRaces.add(new PublicRaceDto(
-                    race.getId(), RacePresentation.effectiveName(race), race.getSlug(), race.getDistanceMeters(),
-                    race.getStartsAt(), flatRaces.size(), true,
-                    clusters.getOrDefault(race.getId(), List.of()).stream()
-                            .map(StartClusterService::toDto).toList(),
-                    rules, race.getResultsPublicationStatus(),
-                    race.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED
-            ));
-        }
 
         return new EventDetailsDto(eventId, event.getEventSeries().getId(), event.getEventSeries().getName(),
                 event.getEventSeries().getSlug(), event.getName(), event.getSlug(), event.getStartsAt(), event.getEndsAt(),
@@ -131,7 +102,7 @@ public class EventDetailsService {
                         .map(EventContentService::toDto).toList(),
                 documentRepository.findAllByEventIdAndPublicDocumentTrueOrderByDisplayOrderAscIdAsc(eventId).stream()
                         .map(EventDocumentService::toDto).toList(),
-                formats, flatRaces);
+                flatRaces);
     }
 
     private static RaceRulesSummaryDto rules(AwardPolicy policy, List<Category> categories) {

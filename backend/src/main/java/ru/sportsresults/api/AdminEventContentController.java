@@ -22,18 +22,15 @@ public class AdminEventContentController {
     private final RaceAdminService raceService;
     private final StartClusterService clusterService;
     private final EventDocumentService documentService;
-    private final SportFormatService sportFormatService;
     private final RaceResultsPublicationService raceResultsPublicationService;
 
     public AdminEventContentController(EventContentService contentService, RaceAdminService raceService,
                                        StartClusterService clusterService, EventDocumentService documentService,
-                                       SportFormatService sportFormatService,
                                        RaceResultsPublicationService raceResultsPublicationService) {
         this.contentService = contentService;
         this.raceService = raceService;
         this.clusterService = clusterService;
         this.documentService = documentService;
-        this.sportFormatService = sportFormatService;
         this.raceResultsPublicationService = raceResultsPublicationService;
     }
 
@@ -100,30 +97,6 @@ public class AdminEventContentController {
     @ResponseStatus(HttpStatus.CREATED)
     public RaceDto createRace(@PathVariable Long eventId, @Valid @RequestBody UpsertRaceRequest request, Principal principal) {
         return raceService.create(eventId, request, principal.getName());
-    }
-
-    @GetMapping("/sport-formats")
-    public List<SportFormatDto> sportFormats(@PathVariable Long eventId) {
-        return sportFormatService.list(eventId);
-    }
-
-    @PostMapping("/sport-formats")
-    @ResponseStatus(HttpStatus.CREATED)
-    public SportFormatDto createSportFormat(@PathVariable Long eventId,
-            @Valid @RequestBody UpsertSportFormatRequest request, Principal principal) {
-        return sportFormatService.create(eventId, request, principal.getName());
-    }
-
-    @PutMapping("/sport-formats/{formatId}")
-    public SportFormatDto updateSportFormat(@PathVariable Long eventId, @PathVariable Long formatId,
-            @Valid @RequestBody UpsertSportFormatRequest request, Principal principal) {
-        return sportFormatService.update(eventId, formatId, request, principal.getName());
-    }
-
-    @DeleteMapping("/sport-formats/{formatId}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deleteSportFormat(@PathVariable Long eventId, @PathVariable Long formatId, Principal principal) {
-        sportFormatService.delete(eventId, formatId, principal.getName());
     }
 
     @PutMapping("/races/{raceId}")

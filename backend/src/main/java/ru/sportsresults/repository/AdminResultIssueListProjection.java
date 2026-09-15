@@ -18,8 +18,6 @@ public record AdminResultIssueListProjection(
         String displayName,
         Long raceId,
         String raceName,
-        Long sportFormatId,
-        String sportFormatName,
         Long resultId,
         Long attachmentCount
 ) {

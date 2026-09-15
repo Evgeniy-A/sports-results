@@ -4,8 +4,6 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
-import ru.sportsresults.domain.RaceEntryMode;
-
 import java.math.BigDecimal;
 import java.time.Instant;
 
@@ -17,9 +15,7 @@ public record UpsertRaceRequest(
         String slug,
         @PositiveOrZero BigDecimal distanceMeters,
         Instant startsAt,
-        RaceEntryMode entryMode,
         @PositiveOrZero int displayOrder,
-        Long sportFormatId,
         Boolean publicVisible
 ) {
 }

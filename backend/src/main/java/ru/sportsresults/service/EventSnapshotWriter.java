@@ -7,7 +7,6 @@ import ru.sportsresults.domain.Event;
 import ru.sportsresults.domain.ImportBatch;
 import ru.sportsresults.domain.ImportBatchStatus;
 import ru.sportsresults.domain.Race;
-import ru.sportsresults.domain.RaceEntryMode;
 import ru.sportsresults.domain.Registration;
 import ru.sportsresults.domain.Result;
 import ru.sportsresults.importing.TimingResultImportRow;
@@ -39,7 +38,6 @@ public class EventSnapshotWriter {
     private final ResultRepository resultRepository;
     private final SnapshotCleanupRepository cleanupRepository;
     private final AgeCategoryRecalculationService recalculationService;
-    private final SportFormatService sportFormatService;
     private final EventResultDataMutationGuard mutationGuard;
 
     public EventSnapshotWriter(
@@ -50,7 +48,6 @@ public class EventSnapshotWriter {
             ResultRepository resultRepository,
             SnapshotCleanupRepository cleanupRepository,
             AgeCategoryRecalculationService recalculationService,
-            SportFormatService sportFormatService,
             EventResultDataMutationGuard mutationGuard
     ) {
         this.raceRepository = raceRepository;
@@ -60,7 +57,6 @@ public class EventSnapshotWriter {
         this.resultRepository = resultRepository;
         this.cleanupRepository = cleanupRepository;
         this.recalculationService = recalculationService;
-        this.sportFormatService = sportFormatService;
         this.mutationGuard = mutationGuard;
     }
 
@@ -141,33 +137,17 @@ public class EventSnapshotWriter {
             if (race == null) {
                 race = new Race();
                 race.setEvent(event);
-                race.setSportFormat(sportFormatService.resolveImportFormat(event, row.sportFormatCode(),
-                        row.sportFormatSourceName(), row.sportFormatDisplayName()));
                 race.setSourceCode(row.raceCode());
                 race.setName(row.raceCode());
                 race.setSlug(slugFor(row.raceCode()));
-                race.setEntryMode(RaceEntryMode.UNKNOWN);
                 race.setDisplayOrder(nextOrder++);
                 races.put(row.raceCode(), race);
                 created.add(race);
-            } else if (hasExplicitSportFormat(row)) {
-                var resolved = sportFormatService.resolveImportFormat(event, row.sportFormatCode(),
-                        row.sportFormatSourceName(), row.sportFormatDisplayName());
-                if (race.getSportFormat() != null && !race.getSportFormat().getId().equals(resolved.getId())) {
-                    throw new InvalidRequestException("RACE_FORMAT_CONFLICT",
-                            "Race " + row.raceCode() + " is mapped to more than one sport format");
-                }
-                race.setSportFormat(resolved);
             }
         }
         raceRepository.saveAll(created);
         raceRepository.flush();
         return races;
-    }
-
-    private static boolean hasExplicitSportFormat(TimingResultImportRow row) {
-        return row.sportFormatCode() != null || row.sportFormatSourceName() != null
-                || row.sportFormatDisplayName() != null;
     }
 
     private Map<CategoryKey, Category> ensureCategories(

@@ -27,16 +27,6 @@ export interface EventSeries {
   updatedAt: string
 }
 
-export interface SportFormat {
-  id: number
-  eventId: number
-  code: string | null
-  sourceName: string | null
-  displayName: string
-  displayOrder: number
-  publicVisible: boolean
-}
-
 export interface AdminCategory {
   id: number
   raceId: number
@@ -186,9 +176,6 @@ export interface ImportPreview {
 export interface ImportRaceRef {
   raceId: number
   raceName: string
-  sportFormatId: number
-  sportFormatName: string
-  effectiveName: string
 }
 
 export interface ImportPreviewRow {
@@ -262,7 +249,7 @@ export interface EventIssueItem {
   createdAt: string
   queueArchivedAt: string | null
   registration: { registrationId: number; bib: string | null; displayName: string }
-  race: { raceId: number; raceName: string; sportFormatId: number; sportFormatName: string }
+  race: { raceId: number; raceName: string }
   resultId: number | null
   attachmentCount: number
 }
@@ -332,8 +319,6 @@ export interface EventIssueDetail {
     effectiveCategory: Category | null
     raceId: number
     raceName: string
-    sportFormatId: number
-    sportFormatName: string
   }
   result: null | {
     resultId: number
@@ -382,7 +367,6 @@ export interface JournalDetail {
     registrationExists: boolean
     registrationRetired: boolean
     registrationId: number | null
-    sportFormat: null | { sportFormatId: number; name: string; code: string | null }
     race: null | { raceId: number; name: string; code: string | null; distanceMeters: number | null }
     category: null | { categoryId: number; name: string }
     result: null | { resultId: number; status: string; gunTimeMs: number | null; chipTimeMs: number | null }
@@ -408,7 +392,6 @@ export interface JournalFilters {
   eventDateTo?: string
   createdFrom?: string
   createdTo?: string
-  sportFormatId?: number
   raceId?: number
   bib?: string
   participant?: string

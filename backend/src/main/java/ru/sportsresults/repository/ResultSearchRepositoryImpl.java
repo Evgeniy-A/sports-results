@@ -120,9 +120,6 @@ public class ResultSearchRepositoryImpl implements ResultSearchRepository {
         if (criteria.raceId() != null) {
             predicates.add(builder.equal(race.get("id"), criteria.raceId()));
         }
-        if (criteria.sportFormatId() != null) {
-            predicates.add(builder.equal(race.get("sportFormat").get("id"), criteria.sportFormatId()));
-        }
         if (criteria.categoryId() != null) {
             predicates.add(builder.equal(category.get("id"), criteria.categoryId()));
         }

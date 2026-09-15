@@ -20,7 +20,6 @@ import ru.sportsresults.domain.Category;
 import ru.sportsresults.domain.ResultIssueAttachment;
 import ru.sportsresults.domain.ResultIssueRequest;
 import ru.sportsresults.domain.ResultIssueQueueScope;
-import ru.sportsresults.domain.SportFormat;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -46,7 +45,6 @@ public class ResultIssueRequestSearchRepositoryImpl implements ResultIssueReques
         Root<ResultIssueRequest> issue = query.from(ResultIssueRequest.class);
         Join<ResultIssueRequest, Registration> registration = issue.join("registration");
         Join<Registration, Race> race = registration.join("race");
-        Join<Race, SportFormat> sportFormat = race.join("sportFormat");
         Join<ResultIssueRequest, Result> result = issue.join("result", JoinType.LEFT);
 
         Subquery<Long> attachmentCount = query.subquery(Long.class);
@@ -68,8 +66,6 @@ public class ResultIssueRequestSearchRepositoryImpl implements ResultIssueReques
                 registration.get("displayName"),
                 race.get("id"),
                 race.get("name"),
-                sportFormat.get("id"),
-                sportFormat.get("displayName"),
                 result.get("id"),
                 attachmentCount
         ));
@@ -264,15 +260,6 @@ public class ResultIssueRequestSearchRepositoryImpl implements ResultIssueReques
         }
         if (filter.createdTo() != null) {
             predicates.add(builder.lessThanOrEqualTo(issue.get("createdAt"), filter.createdTo()));
-        }
-        if (filter.sportFormatId() != null) {
-            predicates.add(builder.equal(issue.get("snapshotSportFormatId"), filter.sportFormatId()));
-        }
-        if (filter.sportFormatCode() != null) {
-            predicates.add(builder.equal(
-                    builder.lower(issue.<String>get("snapshotSportFormatCode")),
-                    filter.sportFormatCode().toLowerCase(Locale.ROOT)
-            ));
         }
         if (filter.raceId() != null) {
             predicates.add(builder.equal(issue.get("snapshotRaceId"), filter.raceId()));

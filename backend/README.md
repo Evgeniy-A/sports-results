@@ -28,7 +28,7 @@ Flyway applies V1–V24 automatically. V4 enables PostgreSQL `pg_trgm`, so the m
 
 - `GET /api/events` — published calendar/archive; filters include `UPCOMING`, `ONGOING`, and `PAST` derived phases.
 - `GET /api/events/filter-options` — currently available years, series, and cities for combined filters.
-- `GET /api/events/slug/{slug}` — public Event detail with participant info, schedule, documents, and nested `SportFormat → Race` rules, categories, and start clusters.
+- `GET /api/events/slug/{slug}` — public Event detail with participant info, schedule, documents, and ordered Race rules, categories, and start clusters.
 - `GET /api/events/{id}/races` and `/categories?raceId=...` — Race options and policy-controlled category standings. `categoryStandingEnabled` and category options are exposed only when `AwardPolicy.categoryEnabled` is true.
 - `GET /api/events/{id}/results?raceId=...` — one Race-scoped public protocol with server-side filtering, sorting, pagination, and structured `rankingAchievements`. `raceId` is mandatory; public API never combines Race protocols. It returns 404 while Results are `DRAFT`.
 - `GET /api/events/{id}/documents/{documentId}/content` — inline public PDF, available only for a published Event and public document.
@@ -42,7 +42,7 @@ Age-category resolution keeps three concepts separate: `birthDate` and `sourceCa
 
 ## Event lifecycle and content
 
-An Event exists before Results and drives both the future calendar and past archive—there is no separate calendar entity. Event page publication and Results publication are independent. Results can move `PUBLISHED → DRAFT → PUBLISHED` without hiding participant information or rules. `SportFormat` is Event-scoped and data-driven; every Race belongs to exactly one format, while rankings remain Race-scoped. Effective public visibility is `SportFormat.publicVisible && Race.publicVisible`; visibility changes do not recalculate results or rankings. `EventScheduleItem` and `EventInfoBlock` are optional. `StartCluster` belongs to a Race and may be assigned to a Registration, but never creates a standing or changes existing achievements.
+An Event exists before Results and drives both the future calendar and past archive—there is no separate calendar entity. Event page publication and Results publication are independent. Results can move `PUBLISHED → DRAFT → PUBLISHED` without hiding participant information or rules. Race is the Event-scoped start/distance and the only public protocol scope. Race visibility changes do not recalculate results or rankings. `EventScheduleItem` and `EventInfoBlock` are optional. `StartCluster` belongs to a Race and may be assigned to a Registration, but never creates a standing or changes existing achievements.
 
 PDF metadata is stored in PostgreSQL while binary content goes through `FileStorageService`. Development uses `LocalFileStorageService`; configure `DOCUMENT_STORAGE_ROOT` and `DOCUMENT_MAX_SIZE_BYTES`. Storage keys are generated, paths stay private, and a future S3-compatible implementation can replace local storage without changing Event domain or API.
 
@@ -101,7 +101,7 @@ curl.exe -u "admin:$env:ADMIN_PASSWORD" `
   http://localhost:8080/api/admin/events/1/imports/preview
 ```
 
-EventSeries and Event updates, Registration/Result edits, and AwardPolicy changes are available under `/api/admin/**`. Event-scoped endpoints manage participant info, schedule, info blocks, SportFormat, Race, clusters, documents, and the two publication statuses. The admin results query may search across an Event's formats and races, but does not calculate a combined place. Existing Category CRUD remains Race-scoped. Changes are validated and audited. The operator UI is served by the frontend at `/admin`; it uses the existing HTTP Basic configuration and does not introduce JWT or RBAC.
+EventSeries and Event updates, Registration/Result edits, and AwardPolicy changes are available under `/api/admin/**`. Event-scoped endpoints manage participant info, schedule, info blocks, Race, clusters, documents, and the two publication statuses. The admin results query may search across all of an Event's races, but does not calculate a combined place. Existing Category CRUD remains Race-scoped. Changes are validated and audited. The operator UI is served by the frontend at `/admin`; it uses the existing HTTP Basic configuration and does not introduce JWT or RBAC.
 
 ## Verification
 

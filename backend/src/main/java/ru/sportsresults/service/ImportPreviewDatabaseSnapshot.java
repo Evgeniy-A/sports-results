@@ -42,13 +42,11 @@ record ImportPreviewDatabaseSnapshot(
             Long id,
             String sourceCode,
             String name,
-            Long sportFormatId,
-            String sportFormatName,
             AgeCalculationMode ageCalculationMode,
             ResultsPublicationStatus resultsPublicationStatus
     ) {
-        RaceSnapshot(Long id, String sourceCode, String name, Long sportFormatId, String sportFormatName) {
-            this(id, sourceCode, name, sportFormatId, sportFormatName,
+        RaceSnapshot(Long id, String sourceCode, String name) {
+            this(id, sourceCode, name,
                     AgeCalculationMode.EVENT_DATE, ResultsPublicationStatus.PUBLISHED);
         }
 
@@ -56,11 +54,9 @@ record ImportPreviewDatabaseSnapshot(
                 Long id,
                 String sourceCode,
                 String name,
-                Long sportFormatId,
-                String sportFormatName,
                 AgeCalculationMode ageCalculationMode
         ) {
-            this(id, sourceCode, name, sportFormatId, sportFormatName,
+            this(id, sourceCode, name,
                     ageCalculationMode, ResultsPublicationStatus.PUBLISHED);
         }
     }

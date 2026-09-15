@@ -22,8 +22,6 @@ public record ResultIssueJournalFilter(
         Instant eventStartsAtToExclusive,
         Instant createdFrom,
         Instant createdTo,
-        Long sportFormatId,
-        String sportFormatCode,
         Long raceId,
         String raceCode,
         String bib,

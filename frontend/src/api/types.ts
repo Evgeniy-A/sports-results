@@ -42,14 +42,11 @@ export interface EventQuery {
 export interface Race {
   id: number
   eventId: number
-  sportFormatId: number
-  sportFormatName: string
   sourceCode: string
   name: string
   slug: string
   distanceMeters: number | null
   startsAt: string | null
-  entryMode: 'INDIVIDUAL' | 'TEAM' | 'MIXED' | 'UNKNOWN'
   displayOrder: number
   publicRankingBasis: RankingBasis
   categoryStandingEnabled: boolean
@@ -57,8 +54,6 @@ export interface Race {
   resultsPublicationStatus: 'DRAFT' | 'PUBLISHED'
   resultsPublished: boolean
   resultRecalculationRequired: boolean
-  effectiveName: string
-  effectivePublicVisible: boolean
 }
 
 export interface StartCluster {
@@ -89,29 +84,6 @@ export interface RaceRules {
   excludeAbsoluteWinnersFromCategory: boolean | null
   ageCalculationMode: 'EVENT_DATE' | 'END_OF_EVENT_YEAR' | null
   categories: CategoryRule[]
-}
-
-export interface PublicRaceDetails {
-  id: number
-  name: string
-  slug: string
-  distanceMeters: number | null
-  startsAt: string | null
-  entryMode: Race['entryMode']
-  displayOrder: number
-  clusters: StartCluster[]
-  rules: RaceRules | null
-  resultsPublicationStatus: 'DRAFT' | 'PUBLISHED'
-  resultsPublished: boolean
-}
-
-export interface PublicSportFormat {
-  id: number
-  code: string | null
-  sourceName: string | null
-  displayName: string
-  displayOrder: number
-  races: PublicRaceDetails[]
 }
 
 export interface PublicRace {
@@ -169,7 +141,6 @@ export interface EventDetails extends Omit<EventSummary, 'shortDescription' | 'v
   schedule: EventScheduleItem[]
   infoBlocks: EventInfoBlock[]
   documents: EventDocument[]
-  sportFormats: PublicSportFormat[]
   races: PublicRace[]
 }
 
@@ -278,7 +249,6 @@ export interface ResultInquiryLookup {
   participantDisplayName?: string
   raceId?: number
   raceDisplayName?: string
-  sportFormatDisplayName?: string
   startDisplayName?: string
   publicResultId?: number
   missingResultActionAvailable: boolean

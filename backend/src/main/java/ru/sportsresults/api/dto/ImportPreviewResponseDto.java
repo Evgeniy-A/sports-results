@@ -82,10 +82,7 @@ public record ImportPreviewResponseDto(
 
     public record RaceRef(
             Long raceId,
-            String raceName,
-            Long sportFormatId,
-            String sportFormatName,
-            String effectiveName
+            String raceName
     ) {
     }
 

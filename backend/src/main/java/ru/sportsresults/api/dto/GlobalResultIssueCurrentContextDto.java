@@ -6,14 +6,10 @@ public record GlobalResultIssueCurrentContextDto(
         boolean registrationExists,
         boolean registrationRetired,
         Long registrationId,
-        CurrentSportFormat sportFormat,
         CurrentRace race,
         CurrentCategory category,
         CurrentResult result
 ) {
-    public record CurrentSportFormat(Long sportFormatId, String name, String code) {
-    }
-
     public record CurrentRace(Long raceId, String name, String code, BigDecimal distanceMeters) {
     }
 

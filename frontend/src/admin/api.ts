@@ -27,7 +27,6 @@ import type {
   ResultInquirySettings,
   ResultListItem,
   ShareBatch,
-  SportFormat,
   StartCluster,
 } from './types'
 
@@ -127,18 +126,6 @@ export function createAdminApi(credentials: AdminCredentials) {
     createEventSeries: (body: object) =>
       request<EventSeries>('/admin/event-series', { method: 'POST', ...json(body) }),
     races: (eventId: number) => request<Race[]>(`/admin/events/${eventId}/races`),
-    sportFormats: (eventId: number) => request<SportFormat[]>(`/admin/events/${eventId}/sport-formats`),
-    createSportFormat: (eventId: number, body: object) =>
-      request<SportFormat>(`/admin/events/${eventId}/sport-formats`, { method: 'POST', ...json(body) }),
-    updateSportFormat: (eventId: number, formatId: number, body: object) => request<SportFormat>(
-      `/admin/events/${eventId}/sport-formats/${formatId}`,
-      { method: 'PUT', ...json(body) },
-    ),
-    deleteSportFormat: (eventId: number, formatId: number) => request<void>(
-      `/admin/events/${eventId}/sport-formats/${formatId}`,
-      { method: 'DELETE' },
-      true,
-    ),
     createRace: (eventId: number, body: object) =>
       request<Race>(`/admin/events/${eventId}/races`, { method: 'POST', ...json(body) }),
     updateRace: (eventId: number, raceId: number, body: object) =>

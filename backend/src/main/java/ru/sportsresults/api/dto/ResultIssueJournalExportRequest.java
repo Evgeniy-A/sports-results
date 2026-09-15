@@ -21,8 +21,6 @@ public record ResultIssueJournalExportRequest(
         LocalDate eventDateTo,
         Instant createdFrom,
         Instant createdTo,
-        Long sportFormatId,
-        String sportFormatCode,
         Long raceId,
         String raceCode,
         String bib,

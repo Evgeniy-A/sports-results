@@ -11,7 +11,6 @@ import ru.sportsresults.domain.Registration;
 import ru.sportsresults.domain.Result;
 import ru.sportsresults.domain.ResultIssueRequest;
 import ru.sportsresults.domain.ResultIssueSnapshotOrigin;
-import ru.sportsresults.domain.SportFormat;
 import ru.sportsresults.repository.AwardPolicyRepository;
 import tools.jackson.databind.ObjectMapper;
 
@@ -38,7 +37,6 @@ public class ResultIssueSnapshotService {
         Event event = issue.getEvent();
         Registration registration = issue.getRegistration();
         Race race = registration.getRace();
-        SportFormat format = race.getSportFormat();
         Category category = registration.getCategory();
         ImportBatch importBatch = registration.getImportBatch();
         Result result = issue.getResult();
@@ -47,9 +45,6 @@ public class ResultIssueSnapshotService {
         issue.setSnapshotEventName(event.getName());
         issue.setSnapshotEventLocation(event.getLocation());
         issue.setSnapshotEventStartsAt(event.getStartsAt());
-        issue.setSnapshotSportFormatId(format.getId());
-        issue.setSnapshotSportFormatName(format.getDisplayName());
-        issue.setSnapshotSportFormatCode(format.getCode());
         issue.setSnapshotRaceId(race.getId());
         issue.setSnapshotRaceName(race.getName());
         issue.setSnapshotRaceCode(race.getSourceCode());

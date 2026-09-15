@@ -73,7 +73,10 @@ class FlywayV24UpgradeTest {
     @Test
     void migratesAndValidatesAFreshDatabase() throws Exception {
         try (EmbeddedPostgres postgres = EmbeddedPostgres.start()) {
-            Flyway flyway = Flyway.configure().dataSource(postgres.getPostgresDatabase()).load();
+            Flyway flyway = Flyway.configure()
+                    .dataSource(postgres.getPostgresDatabase())
+                    .target("24")
+                    .load();
             flyway.migrate();
             flyway.validate();
             assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("24");

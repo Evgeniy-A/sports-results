@@ -72,8 +72,6 @@ public class ImportPreviewSnapshotLoader {
                         race.getId(),
                         race.getSourceCode(),
                         race.getName(),
-                        race.getSportFormat().getId(),
-                        race.getSportFormat().getDisplayName(),
                         ageModes.getOrDefault(race.getId(), AgeCalculationMode.EVENT_DATE),
                         race.getResultsPublicationStatus()
                 ))

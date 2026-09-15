@@ -255,9 +255,7 @@ public class AdminResultIssueService {
                         registration.getEntryKind(),
                         category == null ? null : new CategoryDto(category.getId(), category.getDisplayName()),
                         race.getId(),
-                        race.getName(),
-                        race.getSportFormat().getId(),
-                        race.getSportFormat().getDisplayName()
+                        race.getName()
                 ),
                 result == null ? null : new AdminResultIssueResultDto(
                         result.getId(),
@@ -344,7 +342,7 @@ public class AdminResultIssueService {
                         item.registrationId(), item.bib(), item.displayName()
                 ),
                 new AdminResultIssueRaceSummaryDto(
-                        item.raceId(), item.raceName(), item.sportFormatId(), item.sportFormatName()
+                        item.raceId(), item.raceName()
                 ),
                 item.resultId(),
                 item.attachmentCount()

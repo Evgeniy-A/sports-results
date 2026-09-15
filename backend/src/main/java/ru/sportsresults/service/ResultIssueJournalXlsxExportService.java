@@ -64,18 +64,18 @@ public class ResultIssueJournalXlsxExportService {
     private static final Logger LOGGER = LoggerFactory.getLogger(ResultIssueJournalXlsxExportService.class);
 
     private static final String[] ISSUE_HEADERS = {
-            "ID обращения", "Мероприятие", "Город / место", "Дата мероприятия", "Формат",
-            "Дистанция / Race", "Дистанция, м", "Bib", "Участник",
+            "ID обращения", "Мероприятие", "Город / место", "Дата мероприятия", "Формат на момент обращения",
+            "Старт на момент обращения", "Дистанция, м", "Bib", "Участник",
             "Категория на момент обращения", "Исходная категория", "Тип обращения", "Причина",
             "Статус обращения", "Архивировано", "Причина архивации", "Дата создания",
             "Дата обновления", "Статус результата на момент обращения", "Официальное время",
             "Чистое время", "Email для связи", "Сообщение", "Заявленное официальное время",
             "Заявленное чистое время", "Оценочное время старта", "Оценочное время финиша",
-            "Количество вложений", "Snapshot origin", "Текущая Race", "Текущая категория",
+            "Количество вложений", "Snapshot origin", "Текущий старт", "Текущая категория",
             "Registration retired"
     };
     private static final String[] ATTACHMENT_HEADERS = {
-            "ID обращения", "Мероприятие", "Race", "Bib", "Участник", "Attachment ID",
+            "ID обращения", "Мероприятие", "Старт", "Bib", "Участник", "Attachment ID",
             "Имя файла", "Content-Type", "Размер, байт", "Upload status", "Scan status", "Ссылка"
     };
 
@@ -274,7 +274,7 @@ public class ResultIssueJournalXlsxExportService {
     private ResultIssueJournalQuery prepareQuery(ResultIssueJournalExportRequest request) {
         return journalService.prepareQuery(
                 request.issueId(), request.eventId(), request.location(), request.eventDateFrom(), request.eventDateTo(),
-                request.createdFrom(), request.createdTo(), request.sportFormatId(), request.sportFormatCode(),
+                request.createdFrom(), request.createdTo(),
                 request.raceId(), request.raceCode(), request.bib(), request.participant(), request.issueType(),
                 request.correctionReason(), request.statuses(), request.queueScope(), request.queueArchiveReason(),
                 request.queueArchivedImportOperationId(),
@@ -460,8 +460,6 @@ public class ResultIssueJournalXlsxExportService {
         add(values, "eventStartsAtToExclusive", filter.eventStartsAtToExclusive());
         add(values, "createdFrom", filter.createdFrom());
         add(values, "createdTo", filter.createdTo());
-        add(values, "sportFormatId", filter.sportFormatId());
-        add(values, "sportFormatCode", filter.sportFormatCode());
         add(values, "raceId", filter.raceId());
         add(values, "raceCode", filter.raceCode());
         add(values, "bib", filter.bib());

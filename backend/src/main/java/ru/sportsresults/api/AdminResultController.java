@@ -36,7 +36,6 @@ public class AdminResultController {
     @GetMapping("/events/{eventId}/results")
     public PageResponse<ResultListItemDto> searchResults(
             @PathVariable Long eventId,
-            @RequestParam(required = false) Long sportFormatId,
             @RequestParam(required = false) Long raceId,
             @RequestParam(required = false) String name,
             @RequestParam(required = false) String bib,
@@ -51,7 +50,7 @@ public class AdminResultController {
             @RequestParam(defaultValue = "CHIP_TIME") RankingBasis rankingBasis
     ) {
         return resultQueryService.searchAdmin(
-                eventId, sportFormatId, raceId, name, bib, gender, categoryId, clusterId, status,
+                eventId, raceId, name, bib, gender, categoryId, clusterId, status,
                 page, size, sort, direction, rankingBasis
         );
     }

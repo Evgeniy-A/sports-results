@@ -26,14 +26,12 @@ public record EventDetailsDto(
         List<EventScheduleItemDto> schedule,
         List<EventInfoBlockDto> infoBlocks,
         List<EventDocumentDto> documents,
-        List<PublicSportFormatDto> sportFormats,
         List<PublicRaceDto> races
 ) {
     public EventDetailsDto {
         schedule = List.copyOf(schedule);
         infoBlocks = List.copyOf(infoBlocks);
         documents = List.copyOf(documents);
-        sportFormats = List.copyOf(sportFormats);
         races = List.copyOf(races);
     }
 }

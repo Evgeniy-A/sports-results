@@ -27,9 +27,9 @@ class ImportPreviewPlannerTest {
     private static final String FILE_SHA = "a".repeat(64);
     private static final LocalDate DOB = LocalDate.of(1990, 1, 1);
     private static final ImportPreviewDatabaseSnapshot.RaceSnapshot RACE_A =
-            new ImportPreviewDatabaseSnapshot.RaceSnapshot(10L, "A", "Race A", 100L, "Individual");
+            new ImportPreviewDatabaseSnapshot.RaceSnapshot(10L, "A", "Race A");
     private static final ImportPreviewDatabaseSnapshot.RaceSnapshot RACE_B =
-            new ImportPreviewDatabaseSnapshot.RaceSnapshot(20L, "B", "Race B", 200L, "Team");
+            new ImportPreviewDatabaseSnapshot.RaceSnapshot(20L, "B", "Race B");
     private static final ImportPreviewDatabaseSnapshot.ClusterSnapshot CLUSTER_A1 =
             new ImportPreviewDatabaseSnapshot.ClusterSnapshot(101L, 10L, "A1", "Source A1", "Wave A1");
     private static final ImportPreviewDatabaseSnapshot.ClusterSnapshot CLUSTER_A2 =
@@ -446,7 +446,7 @@ class ImportPreviewPlannerTest {
 
     private static ImportPreviewDatabaseSnapshot.RaceSnapshot draftRace(long id, String sourceCode) {
         return new ImportPreviewDatabaseSnapshot.RaceSnapshot(
-                id, sourceCode, sourceCode, id + 100, sourceCode + " format",
+                id, sourceCode, sourceCode,
                 AgeCalculationMode.EVENT_DATE, ResultsPublicationStatus.DRAFT
         );
     }
@@ -507,9 +507,6 @@ class ImportPreviewPlannerTest {
                 SourceField.value("male"),
                 birthDate,
                 raceCode,
-                null,
-                null,
-                null,
                 bib,
                 SourceField.value("Open"),
                 clusterCode,
@@ -542,8 +539,7 @@ class ImportPreviewPlannerTest {
         return new TimingResultImportRow(
                 base.sourceRowNumber(), base.sourceRowHash(),
                 base.firstNameSource(), base.lastNameSource(), base.genderSource(), base.birthDateSource(),
-                base.raceCode(), base.sportFormatCode(), base.sportFormatSourceName(), base.sportFormatDisplayName(),
-                base.bib(), base.categorySource(), clusterCode, clusterName, clusterSourceName,
+                base.raceCode(), base.bib(), base.categorySource(), clusterCode, clusterName, clusterSourceName,
                 base.status(), base.entryKind(), base.gunTimeSource(), base.chipTimeSource(),
                 base.overallPlaceSource(), base.genderPlaceSource(), base.categoryPlaceSource(),
                 base.netOverallPlaceSource(), base.netGenderPlaceSource(), base.netCategoryPlaceSource()
@@ -552,7 +548,7 @@ class ImportPreviewPlannerTest {
 
     private static ImportPreviewDatabaseSnapshot.RaceSnapshot race(long id, String sourceCode) {
         return new ImportPreviewDatabaseSnapshot.RaceSnapshot(
-                id, sourceCode, sourceCode, id + 100, sourceCode + " format"
+                id, sourceCode, sourceCode
         );
     }
 

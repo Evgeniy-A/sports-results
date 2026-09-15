@@ -98,7 +98,7 @@ public class ResultQueryService {
 
         Page<ResultListProjection> resultPage = resultRepository.search(
                 new ResultSearchCriteria(
-                        eventId, null, raceId, name, bib, gender, categoryId, clusterId, publicStatus,
+                        eventId, raceId, name, bib, gender, categoryId, clusterId, publicStatus,
                         officialBasis, true
                 ),
                 page,
@@ -144,7 +144,6 @@ public class ResultQueryService {
     @Transactional(readOnly = true)
     public PageResponse<ResultListItemDto> searchAdmin(
             Long eventId,
-            Long sportFormatId,
             Long raceId,
             String name,
             String bib,
@@ -162,22 +161,13 @@ public class ResultQueryService {
             throw new ResourceNotFoundException("EVENT_NOT_FOUND", "Event not found");
         }
         if (raceId != null) requireRace(eventId, raceId);
-        if (sportFormatId != null && raceId != null) {
-            Race selectedRace = requireRace(eventId, raceId);
-            if (!selectedRace.getSportFormat().getId().equals(sportFormatId)) {
-                throw new InvalidRequestException(
-                        "RACE_FORMAT_MISMATCH",
-                        "Race does not belong to the selected sport format"
-                );
-            }
-        }
         validatePage(page, size);
         ResultSortField sortField = parseSort(sort);
         Sort.Direction sortDirection = parseDirection(direction);
         RankingBasis resolvedBasis = rankingBasis == null ? RankingBasis.CHIP_TIME : rankingBasis;
         Page<ResultListProjection> resultPage = resultRepository.search(
                 new ResultSearchCriteria(
-                        eventId, sportFormatId, raceId, name, bib, gender, categoryId, clusterId, status,
+                        eventId, raceId, name, bib, gender, categoryId, clusterId, status,
                         resolvedBasis, false
                 ),
                 page,
@@ -213,7 +203,7 @@ public class ResultQueryService {
             RankingBasis rankingBasis
     ) {
         return searchAdmin(
-                eventId, null, raceId, name, bib, gender, categoryId, null, status,
+                eventId, raceId, name, bib, gender, categoryId, null, status,
                 page, size, sort, direction, rankingBasis
         );
     }
@@ -287,7 +277,7 @@ public class ResultQueryService {
 
     private Race requirePublicRace(Long eventId, Long raceId) {
         return raceRepository
-                .findByIdAndEventIdAndPublicVisibleTrueAndSportFormatPublicVisibleTrueAndResultsPublicationStatus(
+                .findByIdAndEventIdAndPublicVisibleTrueAndResultsPublicationStatus(
                         raceId, eventId, ResultsPublicationStatus.PUBLISHED
                 )
                 .orElseThrow(() -> new ResourceNotFoundException(

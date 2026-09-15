@@ -29,11 +29,6 @@ public class Race extends BaseEntity {
     @JoinColumn(name = "event_id", nullable = false)
     private Event event;
 
-    @NotNull
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "sport_format_id", nullable = false)
-    private SportFormat sportFormat;
-
     @NotBlank
     @Size(max = 255)
     @Column(name = "source_code", nullable = false, length = 255)
@@ -55,11 +50,6 @@ public class Race extends BaseEntity {
 
     @Column(name = "starts_at")
     private Instant startsAt;
-
-    @NotNull
-    @Enumerated(EnumType.STRING)
-    @Column(name = "entry_mode", nullable = false, length = 32)
-    private RaceEntryMode entryMode = RaceEntryMode.UNKNOWN;
 
     @NotNull
     @Enumerated(EnumType.STRING)
@@ -86,14 +76,6 @@ public class Race extends BaseEntity {
 
     public void setEvent(Event event) {
         this.event = event;
-    }
-
-    public SportFormat getSportFormat() {
-        return sportFormat;
-    }
-
-    public void setSportFormat(SportFormat sportFormat) {
-        this.sportFormat = sportFormat;
     }
 
     public String getSourceCode() {
@@ -134,14 +116,6 @@ public class Race extends BaseEntity {
 
     public void setStartsAt(Instant startsAt) {
         this.startsAt = startsAt;
-    }
-
-    public RaceEntryMode getEntryMode() {
-        return entryMode;
-    }
-
-    public void setEntryMode(RaceEntryMode entryMode) {
-        this.entryMode = entryMode;
     }
 
     public RankingBasis getPublicRankingBasis() {

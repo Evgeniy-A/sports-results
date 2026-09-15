@@ -30,7 +30,6 @@ public final class PublicResultVisibility {
     public static boolean isRaceResultsPublic(Race race) {
         return isEventPublic(race.getEvent())
                 && race.isPublicVisible()
-                && race.getSportFormat().isPublicVisible()
                 && race.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED;
     }
 
