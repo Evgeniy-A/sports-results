@@ -20,10 +20,16 @@ import java.util.Objects;
 public class EventSeriesService {
     private final EventSeriesRepository repository;
     private final AdminChangeLogRepository auditRepository;
+    private final SlugGenerator slugGenerator;
 
-    public EventSeriesService(EventSeriesRepository repository, AdminChangeLogRepository auditRepository) {
+    public EventSeriesService(
+            EventSeriesRepository repository,
+            AdminChangeLogRepository auditRepository,
+            SlugGenerator slugGenerator
+    ) {
         this.repository = repository;
         this.auditRepository = auditRepository;
+        this.slugGenerator = slugGenerator;
     }
 
     @Transactional(readOnly = true)
@@ -34,7 +40,10 @@ public class EventSeriesService {
     @Transactional
     public EventSeriesDto create(CreateEventSeriesRequest request) {
         EventSeries series = new EventSeries();
-        apply(series, request.name(), request.slug(), request.description(), request.active());
+        String slug = slugGenerator.uniqueSlug(
+                slugSource(request.slug(), request.name()), "series", repository::existsBySlug
+        );
+        apply(series, request.name(), slug, request.description(), request.active());
         try {
             return toDto(repository.saveAndFlush(series));
         } catch (DataIntegrityViolationException exception) {
@@ -46,12 +55,14 @@ public class EventSeriesService {
     public EventSeriesDto update(Long id, UpdateEventSeriesRequest request, String actor) {
         EventSeries series = repository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("EVENT_SERIES_NOT_FOUND", "Event series not found"));
+        String slug = request.slug() == null || request.slug().isBlank()
+                ? series.getSlug() : request.slug().strip();
         List<AdminChangeLog> changes = new ArrayList<>();
         change(changes, actor, id, "name", series.getName(), request.name().strip());
-        change(changes, actor, id, "slug", series.getSlug(), request.slug().strip());
+        change(changes, actor, id, "slug", series.getSlug(), slug);
         change(changes, actor, id, "description", series.getDescription(), normalize(request.description()));
         change(changes, actor, id, "active", series.isActive(), request.active());
-        apply(series, request.name(), request.slug(), request.description(), request.active());
+        apply(series, request.name(), slug, request.description(), request.active());
         try {
             EventSeriesDto dto = toDto(repository.saveAndFlush(series));
             auditRepository.saveAll(changes);
@@ -89,5 +100,9 @@ public class EventSeriesService {
 
     private static String normalize(String value) {
         return value == null || value.isBlank() ? null : value.strip();
+    }
+
+    private static String slugSource(String requestedSlug, String name) {
+        return requestedSlug == null || requestedSlug.isBlank() ? name : requestedSlug.strip();
     }
 }

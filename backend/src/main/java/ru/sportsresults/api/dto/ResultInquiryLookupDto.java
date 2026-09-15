@@ -15,6 +15,7 @@ public record ResultInquiryLookupDto(
         Long raceId,
         String raceDisplayName,
         String sportFormatDisplayName,
+        String startDisplayName,
         Long publicResultId,
         boolean missingResultActionAvailable,
         Instant deadline,

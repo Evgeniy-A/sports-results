@@ -66,6 +66,7 @@ public class EventService {
     private final ResultConfigurationChangeGuard configurationGuard;
     private final EventParticipantInfoRepository participantInfoRepository;
     private final EventResultDataMutationGuard mutationGuard;
+    private final SlugGenerator slugGenerator;
 
     public EventService(
             EventRepository eventRepository,
@@ -77,7 +78,8 @@ public class EventService {
             PublicCategoryPresentation categoryPresentation,
             ResultConfigurationChangeGuard configurationGuard,
             EventParticipantInfoRepository participantInfoRepository,
-            EventResultDataMutationGuard mutationGuard
+            EventResultDataMutationGuard mutationGuard,
+            SlugGenerator slugGenerator
     ) {
         this.eventRepository = eventRepository;
         this.eventSeriesRepository = eventSeriesRepository;
@@ -89,6 +91,7 @@ public class EventService {
         this.configurationGuard = configurationGuard;
         this.participantInfoRepository = participantInfoRepository;
         this.mutationGuard = mutationGuard;
+        this.slugGenerator = slugGenerator;
     }
 
     @Transactional(readOnly = true)
@@ -163,7 +166,7 @@ public class EventService {
         requireEvent(eventId);
         Map<Long, AwardPolicy> policiesByRace = awardPolicyRepository.findAllByRaceEventId(eventId).stream()
                 .collect(Collectors.toMap(policy -> policy.getRace().getId(), policy -> policy));
-        return raceRepository.findAllByEventIdOrderByDisplayOrderAsc(eventId).stream()
+        return RacePresentation.stableFlatOrder(raceRepository.findAllByEventIdOrderByDisplayOrderAsc(eventId)).stream()
                 .map(race -> toDto(
                         race,
                         policiesByRace.containsKey(race.getId())
@@ -229,9 +232,8 @@ public class EventService {
         requirePublishedEvent(eventId);
         Map<Long, AwardPolicy> policiesByRace = awardPolicyRepository.findAllByRaceEventId(eventId).stream()
                 .collect(Collectors.toMap(policy -> policy.getRace().getId(), policy -> policy));
-        return raceRepository.findAllByEventIdOrderByDisplayOrderAsc(eventId).stream()
-                .filter(Race::isPublicVisible)
-                .filter(race -> race.getSportFormat().isPublicVisible())
+        return RacePresentation.stableFlatOrder(raceRepository.findAllByEventIdOrderByDisplayOrderAsc(eventId)).stream()
+                .filter(RacePresentation::effectivePublicVisible)
                 .map(race -> toDto(
                         race,
                         policiesByRace.containsKey(race.getId())
@@ -275,7 +277,10 @@ public class EventService {
         }
         Event event = new Event();
         event.setEventSeries(requireSeries(request.eventSeriesId()));
-        apply(event, request.name(), request.slug(), request.startsAt(), request.endsAt(), request.location(),
+        String slug = slugGenerator.uniqueSlug(
+                slugSource(request.slug(), request.name()), "event", eventRepository::existsBySlug
+        );
+        apply(event, request.name(), slug, request.startsAt(), request.endsAt(), request.location(),
                 request.timeZone(), status);
         try {
             return toDto(eventRepository.saveAndFlush(event));
@@ -302,17 +307,19 @@ public class EventService {
             configurationGuard.requireDraft(ageAffectedRaces);
         }
         EventSeries series = requireSeries(request.eventSeriesId());
+        String slug = request.slug() == null || request.slug().isBlank()
+                ? event.getSlug() : request.slug().strip();
         List<AdminChangeLog> changes = new ArrayList<>();
         addChange(changes, actor, eventId, "eventSeriesId", event.getEventSeries().getId(), series.getId());
         addChange(changes, actor, eventId, "name", event.getName(), request.name().strip());
-        addChange(changes, actor, eventId, "slug", event.getSlug(), request.slug().strip());
+        addChange(changes, actor, eventId, "slug", event.getSlug(), slug);
         addChange(changes, actor, eventId, "startsAt", event.getStartsAt(), request.startsAt());
         addChange(changes, actor, eventId, "endsAt", event.getEndsAt(), request.endsAt());
         addChange(changes, actor, eventId, "location", event.getLocation(), normalizeNullable(request.location()));
         addChange(changes, actor, eventId, "timeZone", event.getTimeZone(), normalizedTimeZone(request.timeZone()));
         addChange(changes, actor, eventId, "publicationStatus", event.getPublicationStatus(), request.publicationStatus());
         event.setEventSeries(series);
-        apply(event, request.name(), request.slug(), request.startsAt(), request.endsAt(), request.location(),
+        apply(event, request.name(), slug, request.startsAt(), request.endsAt(), request.location(),
                 request.timeZone(), request.publicationStatus());
         try {
             EventDto dto = toDto(eventRepository.saveAndFlush(event));
@@ -454,6 +461,10 @@ public class EventService {
         event.setPublicationStatus(status);
     }
 
+    private static String slugSource(String requestedSlug, String name) {
+        return requestedSlug == null || requestedSlug.isBlank() ? name : requestedSlug.strip();
+    }
+
     private static void addChange(List<AdminChangeLog> changes, String actor, Long id, String field, Object oldValue, Object newValue) {
         if (Objects.equals(oldValue, newValue)) return;
         AdminChangeLog log = new AdminChangeLog();
@@ -498,7 +509,8 @@ public class EventService {
                 race.getPublicRankingBasis(), categoryStandingEnabled, race.isPublicVisible(),
                 race.getResultsPublicationStatus(),
                 race.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED,
-                race.isResultRecalculationRequired()
+                race.isResultRecalculationRequired(), RacePresentation.effectiveName(race),
+                RacePresentation.effectivePublicVisible(race)
         );
     }
 

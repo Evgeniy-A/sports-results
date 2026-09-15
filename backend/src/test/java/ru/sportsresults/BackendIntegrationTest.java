@@ -358,6 +358,74 @@ class BackendIntegrationTest {
     }
 
     @Test
+    void eventAndSeriesCreationGenerateUniqueSlugsWhileRenameKeepsExistingUrls() throws Exception {
+        MvcResult firstSeriesResponse = mockMvc.perform(post("/api/admin/event-series")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Гонка Героев","description":null,"active":true}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.slug").value("gonka-geroev"))
+                .andReturn();
+        long firstSeriesId = objectMapper.readTree(firstSeriesResponse.getResponse().getContentAsByteArray())
+                .get("id").asLong();
+
+        mockMvc.perform(post("/api/admin/event-series")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Гонка Героев","description":null,"active":true}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.slug").value("gonka-geroev-2"));
+
+        String eventBody = """
+                {"eventSeriesId":%d,"name":"Гонка Героев — Казань 2027",
+                 "startsAt":null,"endsAt":null,"location":"Казань",
+                 "timeZone":"Europe/Moscow","publicationStatus":"DRAFT"}
+                """.formatted(firstSeriesId);
+        MvcResult firstEventResponse = mockMvc.perform(post("/api/admin/events")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(eventBody))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.slug").value("gonka-geroev-kazan-2027"))
+                .andReturn();
+        long eventId = objectMapper.readTree(firstEventResponse.getResponse().getContentAsByteArray())
+                .get("id").asLong();
+
+        mockMvc.perform(post("/api/admin/events")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(eventBody))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.slug").value("gonka-geroev-kazan-2027-2"));
+
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}", firstSeriesId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Гонка Героев — новая редакция","description":null,"active":true}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Гонка Героев — новая редакция"))
+                .andExpect(jsonPath("$.slug").value("gonka-geroev"));
+
+        mockMvc.perform(put("/api/admin/events/{eventId}", eventId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"eventSeriesId":%d,"name":"Гонка Героев — Казань 2027. Весна",
+                                 "startsAt":null,"endsAt":null,"location":"Казань",
+                                 "timeZone":"Europe/Moscow","publicationStatus":"DRAFT"}
+                                """.formatted(firstSeriesId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Гонка Героев — Казань 2027. Весна"))
+                .andExpect(jsonPath("$.slug").value("gonka-geroev-kazan-2027"));
+    }
+
+    @Test
     void adminEventReadsIncludeDraftEventsHiddenRacesAndRecalculationState() throws Exception {
         EventSeries series = createSeries("Admin Series", "admin-series");
         Event event = createEvent(
@@ -402,6 +470,89 @@ class BackendIntegrationTest {
                 .andExpect(jsonPath("$[0].id").value(race.getId()))
                 .andExpect(jsonPath("$[0].publicVisible").value(false))
                 .andExpect(jsonPath("$[0].resultRecalculationRequired").value(true));
+    }
+
+    @Test
+    void raceOnlyAdminCreateUsesV24CompatibilityDefaultsAndRenameKeepsIdentity() throws Exception {
+        Event event = createPublishedEvent("Race-only compatibility", "race-only-compatibility");
+
+        MvcResult createdResponse = mockMvc.perform(post("/api/admin/events/{eventId}/races", event.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceCode":"kids",
+                                  "name":"Детский забег",
+                                  "distanceMeters":null,
+                                  "startsAt":null,
+                                  "displayOrder":0,
+                                  "publicVisible":true
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.entryMode").value("UNKNOWN"))
+                .andExpect(jsonPath("$.sportFormatName").value("Основной формат"))
+                .andExpect(jsonPath("$.effectiveName").value("Детский забег"))
+                .andExpect(jsonPath("$.effectivePublicVisible").value(true))
+                .andReturn();
+        RaceDto created = objectMapper.readValue(createdResponse.getResponse().getContentAsByteArray(), RaceDto.class);
+        Race persisted = raceRepository.findById(created.id()).orElseThrow();
+        assertThat(persisted.getEntryMode()).isEqualTo(RaceEntryMode.UNKNOWN);
+        Long originalId = persisted.getId();
+        Long originalFormatId = persisted.getSportFormat().getId();
+        assertThat(sportFormatRepository.findById(originalFormatId).orElseThrow().getCode())
+                .isEqualTo(SportFormatService.COMPATIBILITY_DEFAULT_CODE);
+        String originalSlug = persisted.getSlug();
+
+        mockMvc.perform(put("/api/admin/events/{eventId}/races/{raceId}", event.getId(), originalId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceCode":"kids",
+                                  "name":"Детский забег 2 км",
+                                  "distanceMeters":2000,
+                                  "startsAt":null,
+                                  "displayOrder":0,
+                                  "publicVisible":true
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(originalId))
+                .andExpect(jsonPath("$.slug").value(originalSlug))
+                .andExpect(jsonPath("$.sportFormatId").value(originalFormatId))
+                .andExpect(jsonPath("$.entryMode").value("UNKNOWN"))
+                .andExpect(jsonPath("$.effectiveName").value("Детский забег 2 км"));
+
+        var businessFormat = sportFormatService.create(event.getId(),
+                new ru.sportsresults.api.dto.UpsertSportFormatRequest(
+                        "mass", "Mass", "Масс-старт", 1, true), ADMIN_USERNAME);
+        mockMvc.perform(post("/api/admin/events/{eventId}/races", event.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "sourceCode":"mass-10",
+                                  "name":"10 км",
+                                  "slug":"mass-10-km",
+                                  "entryMode":"TEAM",
+                                  "displayOrder":0,
+                                  "sportFormatId":%d,
+                                  "publicVisible":true
+                                }
+                                """.formatted(businessFormat.id())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.entryMode").value("TEAM"))
+                .andExpect(jsonPath("$.sportFormatId").value(businessFormat.id()))
+                .andExpect(jsonPath("$.effectiveName").value("Масс-старт 10 км"));
+
+        mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sportFormats.length()").value(2))
+                .andExpect(jsonPath("$.races.length()").value(2))
+                .andExpect(jsonPath("$.races[0].id").value(originalId))
+                .andExpect(jsonPath("$.races[0].name").value("Детский забег 2 км"))
+                .andExpect(jsonPath("$.races[1].name").value("Масс-старт 10 км"));
     }
 
     @Test
@@ -1708,6 +1859,7 @@ class BackendIntegrationTest {
         assertThat(leadingZero.participantDisplayName()).isEqualTo("Скрытый Статус");
         assertThat(leadingZero.raceDisplayName()).isEqualTo("10 km");
         assertThat(leadingZero.sportFormatDisplayName()).isEqualTo("Основной формат");
+        assertThat(leadingZero.startDisplayName()).isEqualTo("10 km");
         assertThat(leadingZero.publicResultId()).isNull();
         assertThat(leadingZero.missingResultActionAvailable()).isTrue();
         assertThat(leadingZero.contactEmail()).isEqualTo("timing@example.org");
@@ -1820,6 +1972,7 @@ class BackendIntegrationTest {
         assertThat(nonPublic.participantDisplayName()).isEqualTo("Первый Дубль");
         assertThat(nonPublic.raceDisplayName()).isEqualTo("5 km");
         assertThat(nonPublic.sportFormatDisplayName()).isEqualTo("Основной формат");
+        assertThat(nonPublic.startDisplayName()).isEqualTo("5 km");
 
         String publicJson = mockMvc.perform(post("/api/events/{eventId}/result-inquiry/verify", event.getId())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -3448,7 +3601,17 @@ class BackendIntegrationTest {
                 .andExpect(jsonPath("$.sportFormats[0].displayName").value("Индивидуальный"))
                 .andExpect(jsonPath("$.sportFormats[0].races.length()").value(2))
                 .andExpect(jsonPath("$.sportFormats[1].displayName").value("Командный"))
-                .andExpect(jsonPath("$.sportFormats[1].races.length()").value(1));
+                .andExpect(jsonPath("$.sportFormats[1].races.length()").value(1))
+                .andExpect(jsonPath("$.races.length()").value(3))
+                .andExpect(jsonPath("$.races[0].id").value(raceA.getId()))
+                .andExpect(jsonPath("$.races[0].name").value("Индивидуальный Race A"))
+                .andExpect(jsonPath("$.races[0].displayOrder").value(0))
+                .andExpect(jsonPath("$.races[1].id").value(raceB.getId()))
+                .andExpect(jsonPath("$.races[1].name").value("Индивидуальный Race B"))
+                .andExpect(jsonPath("$.races[1].displayOrder").value(1))
+                .andExpect(jsonPath("$.races[2].id").value(raceC.getId()))
+                .andExpect(jsonPath("$.races[2].name").value("Командный Race C"))
+                .andExpect(jsonPath("$.races[2].displayOrder").value(2));
 
         mockMvc.perform(get("/api/events/{eventId}/results", event.getId()))
                 .andExpect(status().isBadRequest());
@@ -3479,7 +3642,12 @@ class BackendIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.sportFormats.length()").value(2))
                 .andExpect(jsonPath("$.sportFormats[0].races.length()").value(1))
-                .andExpect(jsonPath("$.sportFormats[0].races[0].id").value(raceA.getId()));
+                .andExpect(jsonPath("$.sportFormats[0].races[0].id").value(raceA.getId()))
+                .andExpect(jsonPath("$.races.length()").value(2))
+                .andExpect(jsonPath("$.races[0].id").value(raceA.getId()))
+                .andExpect(jsonPath("$.races[0].displayOrder").value(0))
+                .andExpect(jsonPath("$.races[1].id").value(raceC.getId()))
+                .andExpect(jsonPath("$.races[1].displayOrder").value(1));
         mockMvc.perform(get("/api/events/{eventId}/races", event.getId()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
@@ -3512,7 +3680,9 @@ class BackendIntegrationTest {
         mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.sportFormats.length()").value(1))
-                .andExpect(jsonPath("$.sportFormats[0].races.length()").value(1));
+                .andExpect(jsonPath("$.sportFormats[0].races.length()").value(1))
+                .andExpect(jsonPath("$.races.length()").value(1))
+                .andExpect(jsonPath("$.races[0].id").value(raceA.getId()));
         mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
                         .param("raceId", raceC.getId().toString()))
                 .andExpect(status().isNotFound());

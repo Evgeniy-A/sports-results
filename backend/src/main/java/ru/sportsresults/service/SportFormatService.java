@@ -21,6 +21,7 @@ import java.util.Objects;
 @Service
 public class SportFormatService {
     public static final String DEFAULT_CODE = "default";
+    public static final String COMPATIBILITY_DEFAULT_CODE = "race-only-default";
     public static final String DEFAULT_DISPLAY_NAME = "Основной формат";
 
     private final EventRepository eventRepository;
@@ -112,6 +113,49 @@ public class SportFormatService {
         }
         return formatRepository.findByEventIdAndCode(event.getId(), DEFAULT_CODE)
                 .orElseGet(() -> createDefault(event, existing));
+    }
+
+    /**
+     * Assigns Race-only API creates to an invisible implementation detail without
+     * reusing an arbitrary single business format.
+     */
+    @Transactional
+    public SportFormat ensureRaceOnlyDefault(Event event, String actor) {
+        List<SportFormat> existing = formatRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(event.getId());
+        SportFormat legacyDefault = formatRepository.findByEventIdAndCode(event.getId(), DEFAULT_CODE).orElse(null);
+        if (legacyDefault != null
+                && legacyDefault.isPublicVisible()
+                && RacePresentation.isTechnicalFormatName(legacyDefault.getDisplayName())) {
+            return legacyDefault;
+        }
+
+        SportFormat compatibilityDefault = formatRepository
+                .findByEventIdAndCode(event.getId(), COMPATIBILITY_DEFAULT_CODE)
+                .orElse(null);
+        if (compatibilityDefault == null) {
+            compatibilityDefault = new SportFormat();
+            compatibilityDefault.setEvent(event);
+            compatibilityDefault.setCode(COMPATIBILITY_DEFAULT_CODE);
+            compatibilityDefault.setDisplayName(DEFAULT_DISPLAY_NAME);
+            compatibilityDefault.setDisplayOrder(existing.stream()
+                    .mapToInt(SportFormat::getDisplayOrder).max().orElse(-1) + 1);
+            compatibilityDefault.setPublicVisible(true);
+            SportFormat saved = formatRepository.saveAndFlush(compatibilityDefault);
+            audit(actor, saved.getId(), "created", null, saved.getDisplayName());
+            return saved;
+        }
+        if (!RacePresentation.isTechnicalFormatName(compatibilityDefault.getDisplayName())) {
+            throw new RequestConflictException(
+                    "COMPATIBILITY_FORMAT_INVALID",
+                    "The reserved compatibility sport format has a non-technical display name"
+            );
+        }
+        if (!compatibilityDefault.isPublicVisible()) {
+            compatibilityDefault.setPublicVisible(true);
+            formatRepository.saveAndFlush(compatibilityDefault);
+            audit(actor, compatibilityDefault.getId(), "publicVisible", "false", "true");
+        }
+        return compatibilityDefault;
     }
 
     @Transactional

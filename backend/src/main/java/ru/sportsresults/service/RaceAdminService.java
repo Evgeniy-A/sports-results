@@ -17,15 +17,18 @@ public class RaceAdminService {
     private final AdminChangeLogRepository auditRepository;
     private final SportFormatService sportFormatService;
     private final EventResultDataMutationGuard mutationGuard;
+    private final SlugGenerator slugGenerator;
 
     public RaceAdminService(RaceRepository raceRepository,
                             AwardPolicyRepository awardPolicyRepository, AdminChangeLogRepository auditRepository,
-                            SportFormatService sportFormatService, EventResultDataMutationGuard mutationGuard) {
+                            SportFormatService sportFormatService, EventResultDataMutationGuard mutationGuard,
+                            SlugGenerator slugGenerator) {
         this.raceRepository = raceRepository;
         this.awardPolicyRepository = awardPolicyRepository;
         this.auditRepository = auditRepository;
         this.sportFormatService = sportFormatService;
         this.mutationGuard = mutationGuard;
+        this.slugGenerator = slugGenerator;
     }
 
     @Transactional
@@ -34,9 +37,13 @@ public class RaceAdminService {
         Event event = mutationGuard.lock(eventId);
         race.setEvent(event);
         race.setSportFormat(request.sportFormatId() == null
-                ? sportFormatService.ensureDefault(event)
+                ? sportFormatService.ensureRaceOnlyDefault(event, actor)
                 : sportFormatService.requireFormat(eventId, request.sportFormatId()));
-        applyFields(race, request);
+        String slug = request.slug() == null || request.slug().isBlank()
+                ? slugGenerator.uniqueSlug(request.name(), "start",
+                        candidate -> raceRepository.existsByEventIdAndSlug(eventId, candidate))
+                : request.slug().strip();
+        applyFields(race, request, slug);
         try {
             raceRepository.saveAndFlush(race);
             AwardPolicy policy = new AwardPolicy();
@@ -69,7 +76,10 @@ public class RaceAdminService {
         if (request.sportFormatId() != null) {
             race.setSportFormat(sportFormatService.requireFormat(eventId, request.sportFormatId()));
         }
-        applyFields(race, request);
+        String slug = request.slug() == null || request.slug().isBlank()
+                ? race.getSlug()
+                : request.slug().strip();
+        applyFields(race, request, slug);
         try {
             Race saved = raceRepository.saveAndFlush(race);
             boolean categories = awardPolicyRepository.findByRaceId(raceId).map(AwardPolicy::isCategoryEnabled).orElse(false);
@@ -87,13 +97,15 @@ public class RaceAdminService {
         }
     }
 
-    private static void applyFields(Race race, UpsertRaceRequest request) {
+    private static void applyFields(Race race, UpsertRaceRequest request, String slug) {
         race.setSourceCode(request.sourceCode().strip());
         race.setName(request.name().strip());
-        race.setSlug(request.slug().strip());
+        race.setSlug(slug);
         race.setDistanceMeters(request.distanceMeters());
         race.setStartsAt(request.startsAt());
-        race.setEntryMode(request.entryMode());
+        if (request.entryMode() != null) {
+            race.setEntryMode(request.entryMode());
+        }
         race.setDisplayOrder(request.displayOrder());
         if (request.publicVisible() != null) {
             race.setPublicVisible(request.publicVisible());
@@ -107,7 +119,8 @@ public class RaceAdminService {
                 race.getPublicRankingBasis(), categoryEnabled, race.isPublicVisible(),
                 race.getResultsPublicationStatus(),
                 race.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED,
-                race.isResultRecalculationRequired());
+                race.isResultRecalculationRequired(), RacePresentation.effectiveName(race),
+                RacePresentation.effectivePublicVisible(race));
     }
 
     private void audit(String actor, Long id, String field, Object oldValue, Object newValue) {

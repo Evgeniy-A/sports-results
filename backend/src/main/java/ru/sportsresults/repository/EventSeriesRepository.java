@@ -6,5 +6,7 @@ import ru.sportsresults.domain.EventSeries;
 import java.util.Optional;
 
 public interface EventSeriesRepository extends JpaRepository<EventSeries, Long> {
+    boolean existsBySlug(String slug);
+
     Optional<EventSeries> findBySlug(String slug);
 }

@@ -24,6 +24,8 @@ public record RaceDto(
         boolean publicVisible,
         ResultsPublicationStatus resultsPublicationStatus,
         boolean resultsPublished,
-        boolean resultRecalculationRequired
+        boolean resultRecalculationRequired,
+        String effectiveName,
+        boolean effectivePublicVisible
 ) {
 }

@@ -689,7 +689,8 @@ public class ImportPreviewPlanner {
             ImportPreviewDatabaseSnapshot.RaceSnapshot race
     ) {
         return race == null ? null : new ImportPreviewResponseDto.RaceRef(
-                race.id(), race.name(), race.sportFormatId(), race.sportFormatName()
+                race.id(), race.name(), race.sportFormatId(), race.sportFormatName(),
+                RacePresentation.effectiveName(race.sportFormatName(), race.name())
         );
     }
 

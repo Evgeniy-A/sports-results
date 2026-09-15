@@ -18,6 +18,8 @@ public interface RaceRepository extends JpaRepository<Race, Long> {
 
     Optional<Race> findByEventIdAndSourceCode(Long eventId, String sourceCode);
 
+    boolean existsByEventIdAndSlug(Long eventId, String slug);
+
     Optional<Race> findByIdAndEventId(Long id, Long eventId);
 
     Optional<Race> findByIdAndEventIdAndPublicVisibleTrueAndSportFormatPublicVisibleTrueAndResultsPublicationStatus(

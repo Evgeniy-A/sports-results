@@ -7,6 +7,7 @@ import ru.sportsresults.domain.*;
 import ru.sportsresults.repository.*;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -98,6 +99,26 @@ public class EventDetailsService {
                         racesByFormat.getOrDefault(format.getId(), List.of())))
                 .toList();
 
+        List<PublicRaceDto> flatRaces = new ArrayList<>();
+        List<Race> orderedRaces = RacePresentation.stableFlatOrder(races);
+        for (Race race : orderedRaces) {
+            if (!RacePresentation.effectivePublicVisible(race)) {
+                continue;
+            }
+            AwardPolicy policy = policies.get(race.getId());
+            RaceRulesSummaryDto rules = policy == null
+                    ? null
+                    : rules(policy, categories.getOrDefault(race.getId(), List.of()));
+            flatRaces.add(new PublicRaceDto(
+                    race.getId(), RacePresentation.effectiveName(race), race.getSlug(), race.getDistanceMeters(),
+                    race.getStartsAt(), flatRaces.size(), true,
+                    clusters.getOrDefault(race.getId(), List.of()).stream()
+                            .map(StartClusterService::toDto).toList(),
+                    rules, race.getResultsPublicationStatus(),
+                    race.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED
+            ));
+        }
+
         return new EventDetailsDto(eventId, event.getEventSeries().getId(), event.getEventSeries().getName(),
                 event.getEventSeries().getSlug(), event.getName(), event.getSlug(), event.getStartsAt(), event.getEndsAt(),
                 event.getLocation(), event.getTimeZone(), EventPhaseCalculator.calculate(event, Instant.now()),
@@ -110,7 +131,7 @@ public class EventDetailsService {
                         .map(EventContentService::toDto).toList(),
                 documentRepository.findAllByEventIdAndPublicDocumentTrueOrderByDisplayOrderAscIdAsc(eventId).stream()
                         .map(EventDocumentService::toDto).toList(),
-                formats);
+                formats, flatRaces);
     }
 
     private static RaceRulesSummaryDto rules(AwardPolicy policy, List<Category> categories) {

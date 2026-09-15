@@ -84,7 +84,8 @@ public record ImportPreviewResponseDto(
             Long raceId,
             String raceName,
             Long sportFormatId,
-            String sportFormatName
+            String sportFormatName,
+            String effectiveName
     ) {
     }
 
