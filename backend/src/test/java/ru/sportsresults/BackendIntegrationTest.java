@@ -70,6 +70,7 @@ import ru.sportsresults.domain.ResultIssueStatus;
 import ru.sportsresults.domain.ResultIssueType;
 import ru.sportsresults.domain.ResultsPublicationStatus;
 import ru.sportsresults.domain.StartCluster;
+import ru.sportsresults.importing.TabularImportFileReader;
 import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.CategoryRepository;
 import ru.sportsresults.repository.EventRepository;
@@ -311,6 +312,7 @@ class BackendIntegrationTest {
         jdbcTemplate.execute("""
                 TRUNCATE TABLE
                     result_recalculation_operation_races, result_recalculation_operations,
+                    import_mapping_profiles,
                     import_operation_items, import_operation_races, import_operations,
                     admin_change_logs, race_result_publication_history,
                     result_issue_attachment_share_grants, result_issue_share_batches,
@@ -473,7 +475,6 @@ class BackendIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "sourceCode":"kids",
                                   "name":"Детский забег",
                                   "distanceMeters":null,
                                   "startsAt":null,
@@ -491,13 +492,14 @@ class BackendIntegrationTest {
         Race persisted = raceRepository.findById(created.id()).orElseThrow();
         Long originalId = persisted.getId();
         String originalSlug = persisted.getSlug();
+        String originalSourceCode = persisted.getSourceCode();
+        assertThat(originalSourceCode).isEqualTo("internal-detskiy-zabeg");
 
         mockMvc.perform(put("/api/admin/events/{eventId}/races/{raceId}", event.getId(), originalId)
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
-                                  "sourceCode":"kids",
                                   "name":"Детский забег 2 км",
                                   "distanceMeters":2000,
                                   "startsAt":null,
@@ -508,6 +510,7 @@ class BackendIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(originalId))
                 .andExpect(jsonPath("$.slug").value(originalSlug))
+                .andExpect(jsonPath("$.sourceCode").value(originalSourceCode))
                 .andExpect(jsonPath("$.name").value("Детский забег 2 км"));
 
         mockMvc.perform(post("/api/admin/events/{eventId}/races", event.getId())
@@ -905,6 +908,54 @@ class BackendIntegrationTest {
         )).isInstanceOf(RequestConflictException.class)
                 .extracting(exception -> ((RequestConflictException) exception).getCode())
                 .isEqualTo("NO_APPLICABLE_CHANGES");
+    }
+
+    @Test
+    void createsUnknownRaceScopedClustersOnlyOnApplyAndDoesNotDuplicateThem() {
+        Event event = createPublishedEvent("Stage J.1 clusters", "stage-j1-clusters");
+        assertThat(importPublishedFixture(
+                event.getId(), "cluster-base.csv", oneRowCsv("1000.0").getBytes(StandardCharsets.UTF_8)
+        ).status()).isEqualTo(ImportBatchStatus.SUCCEEDED);
+        Race race = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
+        awardPolicyService.upsert(race.getId(), new UpdateAwardPolicyRequest(
+                RankingBasis.GUN_TIME, PrimaryStandingMode.ALL, 0, false,
+                AgeCalculationMode.EVENT_DATE, 0, false
+        ), ADMIN_USERNAME);
+        assertThat(startClusterRepository.countByRaceId(race.getId())).isZero();
+
+        byte[] csv = (csvHeader().stripTrailing() + ",clusterCode\n" + """
+                Волна,Альфа,male,1990-01-01,5 km,CL-A,Open,finished,2000.0,1900.0,2.0,2.0,2.0,2.0,2.0,2.0,%s
+                Волна,Бета,female,1991-01-01,5 km,CL-B,Open,finished,3000.0,2900.0,3.0,1.0,1.0,3.0,1.0,1.0,B
+                """.formatted(" A ")).getBytes(StandardCharsets.UTF_8);
+        ImportPreviewResponseDto preview = importPreviewService.preview(
+                event.getId(), "unknown-clusters.csv", csv, ImportOperationMode.ADD_NEW,
+                List.of(race.getId()), 100, ADMIN_USERNAME
+        );
+        assertThat(preview.blockingErrorsPresent()).isFalse();
+        assertThat(preview.totals().newCount()).isEqualTo(2);
+        assertThat(preview.rows()).allSatisfy(row -> assertThat(row.diffs())
+                .extracting(ImportPreviewResponseDto.FieldDiff::field)
+                .contains("clusterDefinition"));
+        assertThat(startClusterRepository.countByRaceId(race.getId())).isZero();
+
+        importApplyService.apply(event.getId(), preview.operationId(), csv, ADMIN_USERNAME);
+        assertThat(startClusterRepository.findAllByRaceIdOrderByDisplayOrderAscIdAsc(race.getId()))
+                .extracting(StartCluster::getDisplayName).containsExactly("A", "B");
+        assertThat(registrationRepository.findAllByRaceIdAndBib(race.getId(), "CL-A").getFirst().getCluster())
+                .extracting(StartCluster::getDisplayName).isEqualTo("A");
+
+        ImportPreviewResponseDto repeated = importPreviewService.preview(
+                event.getId(), "unknown-clusters-again.csv", csv, ImportOperationMode.ADD_NEW,
+                List.of(race.getId()), 100, ADMIN_USERNAME
+        );
+        assertThat(repeated.totals().newCount()).isZero();
+        assertThat(repeated.totals().unchangedCount()).isEqualTo(2);
+        assertThat(startClusterRepository.countByRaceId(race.getId())).isEqualTo(2);
+        assertThat(resultQueryService.search(
+                event.getId(), race.getId(), null, "CL-A", null, null, null,
+                0, 20, "place", "asc"
+        ).content()).singleElement().satisfies(row ->
+                assertThat(row.rankingAchievements().getFirst().place()).isEqualTo(2));
     }
 
     @Test
@@ -1412,7 +1463,16 @@ class BackendIntegrationTest {
         assertMoveBlocked(event, bothRaces, stageCRaceMoveCsv("1991-01-01", "B"), "RACE_MOVE_DOB_MISMATCH");
         assertMoveBlocked(event, bothRaces, stageCRaceMoveCsv("", "B"), "RACE_MOVE_REQUIRES_DOB");
         assertMoveBlocked(event, bothRaces, stageCRaceMoveWithoutClusterCsv(), "RACE_MOVE_CLUSTER_REQUIRED");
-        assertMoveBlocked(event, bothRaces, stageCRaceMoveCsv("1990-01-01", "A"), "CROSS_RACE_START_CLUSTER");
+        ImportPreviewResponseDto raceScopedCluster = importPreviewService.preview(
+                event.getId(), "race-scoped-cluster.csv",
+                stageCRaceMoveCsv("1990-01-01", "A").getBytes(StandardCharsets.UTF_8),
+                ImportOperationMode.UPDATE_EXISTING, bothRaces, 100, ADMIN_USERNAME
+        );
+        assertThat(raceScopedCluster.blockingErrorsPresent()).isFalse();
+        assertThat(raceScopedCluster.rows().getFirst().diffs())
+                .extracting(ImportPreviewResponseDto.FieldDiff::field)
+                .contains("cluster", "clusterDefinition");
+        assertThat(startClusterRepository.countByRaceId(raceB.getId())).isOne();
         assertMoveBlocked(event, List.of(raceA.getId()), stageCRaceMoveCsv("1990-01-01", "B"),
                 "TARGET_RACE_OUT_OF_SCOPE");
         ImportPreviewResponseDto currentOutOfScope = importPreviewService.preview(
@@ -1880,8 +1940,8 @@ class BackendIntegrationTest {
 
         event.setResultsPublicationStatus(ru.sportsresults.domain.ResultsPublicationStatus.DRAFT);
         eventRepository.saveAndFlush(event);
-        assertThatThrownBy(() -> resultInquiryService.lookup(eventId, "V-1"))
-                .isInstanceOf(ResourceNotFoundException.class);
+        assertThat(resultInquiryService.lookup(eventId, "V-1").lookupState())
+                .isEqualTo(ResultInquiryLookupState.RESULT_NOT_PUBLIC);
         event.setResultsPublicationStatus(ru.sportsresults.domain.ResultsPublicationStatus.PUBLISHED);
         event.setPublicationStatus(EventPublicationStatus.DRAFT);
         eventRepository.saveAndFlush(event);
@@ -3597,6 +3657,219 @@ class BackendIntegrationTest {
     }
 
     @Test
+    void generatedXlsxTemplateFlowsThroughAnalysisPreviewAndExistingApplyPipeline() throws Exception {
+        Event event = createPublishedEvent("Stage J synthetic", "stage-j-synthetic");
+        Race first = createDraftRace(event, "SYN-A", 0);
+        Race second = createDraftRace(event, "SYN-B", 1);
+
+        MvcResult download = mockMvc.perform(get("/api/admin/events/{eventId}/imports/template.xlsx", event.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("attachment")))
+                .andReturn();
+        byte[] workbook = populateGeneratedTemplate(download.getResponse().getContentAsByteArray(), first.getId());
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "stage-j-template.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", workbook
+        );
+
+        mockMvc.perform(multipart("/api/admin/events/{eventId}/imports/analyze", event.getId())
+                        .file(file).with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sportsResultsTemplate").value(true))
+                .andExpect(jsonPath("$.readyForValidation").value(true))
+                .andExpect(jsonPath("$.resolvedRaceIds.length()").value(2))
+                .andExpect(jsonPath("$.resolvedRaceIds[0]").value(first.getId()))
+                .andExpect(jsonPath("$.resolvedRaceIds[1]").value(second.getId()));
+
+        MvcResult preview = mockMvc.perform(multipart(
+                                "/api/admin/events/{eventId}/imports/preview", event.getId())
+                        .file(file)
+                        .param("mode", "ADD_NEW")
+                        .param("raceIds", first.getId().toString(), second.getId().toString())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.blockingErrorsPresent").value(false))
+                .andExpect(jsonPath("$.totals.totalRows").value(1))
+                .andExpect(jsonPath("$.totals.newCount").value(1))
+                .andReturn();
+        String operationId = objectMapper.readTree(preview.getResponse().getContentAsByteArray())
+                .get("operationId").asText();
+
+        mockMvc.perform(multipart("/api/admin/events/{eventId}/imports/{operationId}/apply", event.getId(), operationId)
+                        .file(file).with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.insertedCount").value(1))
+                .andExpect(jsonPath("$.updatedCount").value(0));
+
+        assertThat(registrationRepository.findAllByRaceIdAndBib(first.getId(), "SYN-XLSX-1"))
+                .singleElement().satisfies(registration -> {
+                    assertThat(registration.getFirstName()).isEqualTo("Анна");
+                    assertThat(registration.getLastName()).isEqualTo("Тестова");
+                    assertThat(registration.getBirthDate()).isEqualTo(LocalDate.of(1992, 4, 3));
+                });
+        assertThat(resultRepository.findAll()).singleElement().satisfies(result -> {
+            assertThat(result.getStatus()).isEqualTo("finished");
+            assertThat(result.getGunTime()).isEqualTo(Duration.ofHours(1).plusMinutes(2).plusSeconds(3));
+            assertThat(result.getChipTime()).isEqualTo(Duration.ofHours(1).plusMinutes(1).plusSeconds(58));
+        });
+        assertThat(importBatchRepository.count()).isOne();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT input_config <> '{}'::jsonb FROM import_operations WHERE id=?::uuid",
+                Boolean.class, operationId
+        )).isTrue();
+    }
+
+    @Test
+    void mappingProfileCrudAndExactHeaderReuseWorkThroughAdminApi() throws Exception {
+        Event event = createPublishedEvent("Profile event", "profile-event");
+        Race race = createDraftRace(event, "PROFILE", 0);
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "supplier.csv", "text/csv",
+                "custom_bib;custom_status;custom_name\nSYN-42;finished;Synthetic Runner\n"
+                        .getBytes(StandardCharsets.UTF_8)
+        );
+
+        MvcResult firstAnalysis = mockMvc.perform(multipart(
+                                "/api/admin/events/{eventId}/imports/analyze", event.getId())
+                        .file(file).param("targetRaceId", race.getId().toString())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.readyForValidation").value(false))
+                .andReturn();
+        String signature = objectMapper.readTree(firstAnalysis.getResponse().getContentAsByteArray())
+                .get("headerSignature").asText();
+
+        String createBody = objectMapper.writeValueAsString(Map.of(
+                "name", "Synthetic timer",
+                "fileType", "CSV",
+                "headerSignature", signature,
+                "mappings", Map.of(
+                        "custom_bib", "BIB", "custom_status", "STATUS", "custom_name", "FULL_NAME"
+                )
+        ));
+        MvcResult created = mockMvc.perform(post("/api/admin/import-mapping-profiles")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(createBody))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("Synthetic timer"))
+                .andReturn();
+        long profileId = objectMapper.readTree(created.getResponse().getContentAsByteArray()).get("id").asLong();
+
+        mockMvc.perform(multipart("/api/admin/events/{eventId}/imports/analyze", event.getId())
+                        .file(file).param("targetRaceId", race.getId().toString())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.readyForValidation").value(true))
+                .andExpect(jsonPath("$.suggestedProfile.id").value(profileId))
+                .andExpect(jsonPath("$.columnMappings.custom_bib").value("BIB"))
+                .andExpect(jsonPath("$.columnMappings.custom_status").value("STATUS"));
+
+        mockMvc.perform(multipart("/api/admin/events/{eventId}/imports/analyze", event.getId())
+                        .file(file)
+                        .param("targetRaceId", race.getId().toString())
+                        .param("options", objectMapper.writeValueAsString(Map.of(
+                                "targetRaceId", race.getId(),
+                                "columnMappings", Map.of("custom_name", "LAST_NAME"),
+                                "raceMappings", Map.of(),
+                                "saveRaceMappings", false
+                        )))
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.suggestedProfile.id").value(profileId))
+                .andExpect(jsonPath("$.columnMappings.custom_name").value("LAST_NAME"))
+                .andExpect(jsonPath("$.readyForValidation").value(true));
+
+        MockMultipartFile incompatible = new MockMultipartFile(
+                "file", "other.csv", "text/csv",
+                "custom_bib;different_status\nSYN-43;finished\n".getBytes(StandardCharsets.UTF_8)
+        );
+        mockMvc.perform(multipart("/api/admin/events/{eventId}/imports/analyze", event.getId())
+                        .file(incompatible).param("targetRaceId", race.getId().toString())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.suggestedProfile").doesNotExist())
+                .andExpect(jsonPath("$.readyForValidation").value(false));
+
+        mockMvc.perform(get("/api/admin/import-mapping-profiles")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
+        mockMvc.perform(delete("/api/admin/import-mapping-profiles/{profileId}", profileId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/admin/import-mapping-profiles")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void confirmedExternalRaceCodeIsAuditedReusedAndConflictsBeforeApply() throws Exception {
+        Event event = createPublishedEvent("Race mapping event", "race-mapping-event");
+        Race first = createDraftRace(event, "INTERNAL-A", 0);
+        Race second = createDraftRace(event, "TAKEN", 1);
+        byte[] csv = "start,bib,status\nEXT-A,SYN-MAP-1,finished\n".getBytes(StandardCharsets.UTF_8);
+        String options = objectMapper.writeValueAsString(Map.of(
+                "columnMappings", Map.of("start", "RACE", "bib", "BIB", "status", "STATUS"),
+                "raceMappings", Map.of("EXT-A", first.getId()),
+                "saveRaceMappings", true
+        ));
+        MockMultipartFile file = new MockMultipartFile("file", "multi.csv", "text/csv", csv);
+
+        MvcResult preview = mockMvc.perform(multipart(
+                                "/api/admin/events/{eventId}/imports/preview", event.getId())
+                        .file(file)
+                        .param("mode", "ADD_NEW")
+                        .param("raceIds", first.getId().toString())
+                        .param("options", options)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.blockingErrorsPresent").value(false))
+                .andReturn();
+        String operationId = objectMapper.readTree(preview.getResponse().getContentAsByteArray())
+                .get("operationId").asText();
+        mockMvc.perform(multipart("/api/admin/events/{eventId}/imports/{operationId}/apply", event.getId(), operationId)
+                        .file(file).with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.insertedCount").value(1));
+
+        assertThat(raceRepository.findById(first.getId()).orElseThrow().getSourceCode()).isEqualTo("EXT-A");
+        assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
+                AuditEntityType.RACE, first.getId()
+        )).anySatisfy(change -> {
+            assertThat(change.getFieldName()).isEqualTo("sourceCode");
+            assertThat(change.getOldValue()).isEqualTo("INTERNAL-A");
+            assertThat(change.getNewValue()).isEqualTo("EXT-A");
+        });
+
+        mockMvc.perform(multipart("/api/admin/events/{eventId}/imports/analyze", event.getId())
+                        .file(file).with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.raceValues[0].sourceValue").value("EXT-A"))
+                .andExpect(jsonPath("$.raceValues[0].raceId").value(first.getId()))
+                .andExpect(jsonPath("$.raceValues[0].automatic").value(true));
+
+        byte[] conflictCsv = "start,bib,status\nTAKEN,SYN-MAP-2,finished\n".getBytes(StandardCharsets.UTF_8);
+        String conflictOptions = objectMapper.writeValueAsString(Map.of(
+                "columnMappings", Map.of("start", "RACE", "bib", "BIB", "status", "STATUS"),
+                "raceMappings", Map.of("TAKEN", first.getId()),
+                "saveRaceMappings", true
+        ));
+        mockMvc.perform(multipart("/api/admin/events/{eventId}/imports/preview", event.getId())
+                        .file(new MockMultipartFile("file", "conflict.csv", "text/csv", conflictCsv))
+                        .param("mode", "ADD_NEW")
+                        .param("raceIds", first.getId().toString())
+                        .param("options", conflictOptions)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RACE_SOURCE_CODE_CONFLICT"));
+        assertThat(registrationRepository.countByRaceEventId(event.getId())).isOne();
+        assertThat(raceRepository.findById(second.getId()).orElseThrow().getSourceCode()).isEqualTo("TAKEN");
+    }
+
+    @Test
     void importsM52AndTreatsSameSuccessfulFileAsIdempotent() throws Exception {
         Event event = createPublishedEvent("M52 2025", "m52-2025");
         byte[] csv = Files.readAllBytes(sample("results_m52_2025.csv"));
@@ -4051,13 +4324,18 @@ class BackendIntegrationTest {
                 event.getId(), race.getId(), null, null, null, target.getId(), null,
                 0, 20, "chipTime", "asc"
         );
-        assertThat(achievement(excluded.content(), "A", "ABSOLUTE").place()).isEqualTo(2);
-        assertThat(achievement(excluded.content(), "Y", "ABSOLUTE").place()).isEqualTo(3);
+        assertThat(excluded.content()).extracting(ResultListItemDto::displayName)
+                .containsExactly("B", "C", "D");
         assertThat(achievement(excluded.content(), "B", "CATEGORY").place()).isEqualTo(1);
         assertThat(achievement(excluded.content(), "C", "CATEGORY").place()).isEqualTo(2);
         assertThat(achievement(excluded.content(), "D", "CATEGORY").place()).isEqualTo(3);
         assertThat(achievement(excluded.content(), "B", "CATEGORY").label())
                 .isEqualTo("1 место · Target");
+        assertThat(resultQueryService.searchAdmin(
+                event.getId(), race.getId(), null, null, null, target.getId(), null,
+                0, 20, "chipTime", "asc", RankingBasis.CHIP_TIME
+        ).content()).extracting(ResultListItemDto::displayName)
+                .containsExactly("A", "Y", "B", "C", "D");
 
         awardPolicyService.upsert(race.getId(), new UpdateAwardPolicyRequest(
                 RankingBasis.CHIP_TIME, PrimaryStandingMode.ALL, 3, true,
@@ -4090,6 +4368,20 @@ class BackendIntegrationTest {
                 0, 20, "chipTime", "asc");
         assertThat(achievement(women.content(), "A", "GENDER").place()).isEqualTo(1);
         assertThat(achievement(men.content(), "X", "GENDER").place()).isEqualTo(1);
+
+        awardPolicyService.upsert(race.getId(), new UpdateAwardPolicyRequest(
+                RankingBasis.CHIP_TIME, PrimaryStandingMode.NONE, 0, true,
+                AgeCalculationMode.EVENT_DATE, 3, false
+        ), ADMIN_USERNAME);
+        var categoriesOnly = resultQueryService.search(
+                event.getId(), race.getId(), null, null, null, target.getId(), null,
+                0, 20, "chipTime", "asc"
+        );
+        assertThat(categoriesOnly.content()).allSatisfy(result -> {
+            assertThat(result.rankingAchievements())
+                    .allMatch(achievement -> achievement.type().name().equals("CATEGORY"));
+            assertThat(result.rankingAchievements()).isNotEmpty();
+        });
         assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
                 AuditEntityType.AWARD_POLICY, awardPolicyService.get(race.getId()).id()
         )).isNotEmpty();
@@ -4960,7 +5252,7 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void separatesEventAndResultsPublicationAndKeepsEventPublicInDraft() throws Exception {
+    void separatesEventAndRaceResultsPublicationAndTreatsLegacyGlobalFlagAsNonBlocking() throws Exception {
         EventSeries series = createSeries("Future Series", "future-series");
         Event event = new Event();
         event.setEventSeries(series);
@@ -4976,9 +5268,9 @@ class BackendIntegrationTest {
 
         mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.resultsPublished").value(false));
+                .andExpect(jsonPath("$.resultsPublished").value(true));
         mockMvc.perform(get("/api/events/{eventId}/results", event.getId()).param("raceId", race.getId().toString()))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk());
 
         mockMvc.perform(put("/api/admin/events/{eventId}/publication", event.getId())
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
@@ -4996,10 +5288,23 @@ class BackendIntegrationTest {
                 .andExpect(status().isOk());
         mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug())).andExpect(status().isOk());
         mockMvc.perform(get("/api/events/{eventId}/results", event.getId()).param("raceId", race.getId().toString()))
+                .andExpect(status().isOk());
+        assertThat(raceRepository.findById(race.getId()).orElseThrow().getResultsPublicationStatus())
+                .isEqualTo(ResultsPublicationStatus.PUBLISHED);
+
+        mockMvc.perform(put("/api/admin/events/{eventId}/publication", event.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"eventPublicationStatus\":\"DRAFT\",\"resultsPublicationStatus\":\"DRAFT\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug())).andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId()).param("raceId", race.getId().toString()))
                 .andExpect(status().isNotFound());
+        assertThat(raceRepository.findById(race.getId()).orElseThrow().getResultsPublicationStatus())
+                .isEqualTo(ResultsPublicationStatus.PUBLISHED);
         assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
                 AuditEntityType.EVENT, event.getId())).extracting(AdminChangeLog::getFieldName)
-                .contains("resultsPublicationStatus");
+                .contains("publicationStatus", "resultsPublicationStatus");
     }
 
     @Test
@@ -5178,9 +5483,9 @@ class BackendIntegrationTest {
 
         eventService.updatePublication(event.getId(), new ru.sportsresults.api.dto.UpdateEventPublicationRequest(
                 EventPublicationStatus.PUBLISHED, ResultsPublicationStatus.DRAFT), ADMIN_USERNAME);
-        assertThatThrownBy(() -> resultQueryService.search(
+        assertThat(resultQueryService.search(
                 event.getId(), publishedRace.getId(), null, null, null, null, null,
-                0, 20, "gunTime", "asc")).isInstanceOf(ResourceNotFoundException.class);
+                0, 20, "gunTime", "asc").content()).hasSize(2);
         assertThat(raceRepository.findById(publishedRace.getId()).orElseThrow().getResultsPublicationStatus())
                 .isEqualTo(ResultsPublicationStatus.PUBLISHED);
         assertThat(raceRepository.findById(draftRace.getId()).orElseThrow().getResultsPublicationStatus())
@@ -5286,6 +5591,634 @@ class BackendIntegrationTest {
                 series.getId(), "Bad Zone", "bad-zone", null, null, null, "UTC+05:00", null)))
                 .isInstanceOf(InvalidRequestException.class)
                 .hasMessageContaining("IANA");
+    }
+
+    @Test
+    void bulkEventEndpointsPreviewAndAtomicallyCreateOrdinaryDraftEvents() throws Exception {
+        EventSeries template = createSeries("Гонка Героев", "bulk-heroes");
+        String command = """
+                {
+                  "eventSeriesId": %d,
+                  "date": "2027-08-15",
+                  "events": [
+                    {"name":"Казань","location":"Казань","timeZone":"Europe/Moscow"},
+                    {"name":"Екатеринбург","location":"Екатеринбург","timeZone":"Asia/Yekaterinburg"}
+                  ]
+                }
+                """.formatted(template.getId());
+
+        mockMvc.perform(post("/api/admin/events/bulk/preview")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(command))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.templateName").value("Гонка Героев"))
+                .andExpect(jsonPath("$.requestedCount").value(2))
+                .andExpect(jsonPath("$.creatableCount").value(2))
+                .andExpect(jsonPath("$.events[0].creatable").value(true));
+        assertThat(eventRepository.countByEventSeriesId(template.getId())).isZero();
+
+        MvcResult result = mockMvc.perform(post("/api/admin/events/bulk")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(command))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.events.length()").value(2))
+                .andExpect(jsonPath("$.events[0].eventSeriesId").value(template.getId()))
+                .andExpect(jsonPath("$.events[0].publicationStatus").value("DRAFT"))
+                .andReturn();
+
+        var eventNodes = objectMapper.readTree(result.getResponse().getContentAsByteArray()).get("events");
+        List<Long> ids = new ArrayList<>();
+        eventNodes.forEach(node -> ids.add(node.get("id").asLong()));
+        assertThat(ids).hasSize(2).doesNotHaveDuplicates();
+        List<Event> createdEvents = eventRepository.findAllByEventSeriesIdOrderByIdAsc(template.getId());
+        assertThat(createdEvents)
+                .extracting(Event::getName)
+                .containsExactly("Казань", "Екатеринбург");
+        assertThat(createdEvents).extracting(Event::getStartsAt)
+                .containsExactly(Instant.parse("2027-08-14T21:00:00Z"), Instant.parse("2027-08-14T19:00:00Z"));
+        assertThat(eventSeriesRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void bulkPreviewMarksExistingAndRequestDuplicatesAndApplyRejectsThem() throws Exception {
+        EventSeries template = createSeries("Повтор", "bulk-duplicate");
+        createEvent(template, "Москва", "bulk-existing-moscow", "Москва", "2027-08-14T21:00:00Z");
+        String existingCommand = """
+                {"eventSeriesId":%d,"date":"2027-08-15","events":[
+                  {"name":"Москва","location":"Москва","timeZone":"Europe/Moscow"},
+                  {"name":"Казань","location":"Казань","timeZone":"Europe/Moscow"}
+                ]}
+                """.formatted(template.getId());
+
+        mockMvc.perform(post("/api/admin/events/bulk/preview")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(existingCommand))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creatableCount").value(1))
+                .andExpect(jsonPath("$.events[0].creatable").value(false))
+                .andExpect(jsonPath("$.events[0].existingEventId").isNumber())
+                .andExpect(jsonPath("$.events[1].creatable").value(true));
+        mockMvc.perform(post("/api/admin/events/bulk")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(existingCommand))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("BULK_EVENT_DUPLICATE"));
+
+        String repeatedCommand = """
+                {"eventSeriesId":%d,"date":"2027-09-01","events":[
+                  {"name":"Омск","location":"Омск","timeZone":"Asia/Omsk"},
+                  {"name":"Омск","location":"  омск  ","timeZone":"Asia/Omsk"}
+                ]}
+                """.formatted(template.getId());
+        mockMvc.perform(post("/api/admin/events/bulk/preview")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(repeatedCommand))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creatableCount").value(0))
+                .andExpect(jsonPath("$.events[0].duplicateInRequest").value(true))
+                .andExpect(jsonPath("$.events[1].duplicateInRequest").value(true));
+        assertThat(eventRepository.countByEventSeriesId(template.getId())).isEqualTo(1);
+    }
+
+    @Test
+    void bulkCreationValidatesEveryTimeZoneBeforeWritingAndLeavesPublishedEventsUntouched() throws Exception {
+        EventSeries template = createSeries("Atomic", "bulk-atomic");
+        Event published = createEvent(template, "Опубликовано", "bulk-published", "Москва", "2027-06-15T06:00:00Z");
+        long publishedId = published.getId();
+        String command = """
+                {"eventSeriesId":%d,"date":"2027-08-15","events":[
+                  {"name":"Казань","location":"Казань","timeZone":"Europe/Moscow"},
+                  {"name":"Ошибка","location":"Ошибка","timeZone":"UTC+05:00"}
+                ]}
+                """.formatted(template.getId());
+
+        mockMvc.perform(post("/api/admin/events/bulk")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(command))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_TIME_ZONE"));
+
+        assertThat(eventRepository.countByEventSeriesId(template.getId())).isEqualTo(1);
+        Event unchanged = eventRepository.findById(publishedId).orElseThrow();
+        assertThat(unchanged.getName()).isEqualTo("Опубликовано");
+        assertThat(unchanged.getPublicationStatus()).isEqualTo(EventPublicationStatus.PUBLISHED);
+    }
+
+    @Test
+    void templateListIncludesEventCountAndRenameKeepsSlugAndExistingEventsIndependent() throws Exception {
+        EventSeries template = createSeries("Старое имя", "stable-template-url");
+        Event event = createEvent(template, "Казань", "independent-event", "Казань", "2027-08-15T06:00:00Z");
+
+        mockMvc.perform(get("/api/admin/event-series").with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].eventCount").value(1))
+                .andExpect(jsonPath("$[0].startCount").value(0));
+        mockMvc.perform(put("/api/admin/event-series/{id}", template.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Новое имя","description":null,"active":true}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Новое имя"))
+                .andExpect(jsonPath("$.slug").value("stable-template-url"));
+
+        Event unchanged = eventRepository.findById(event.getId()).orElseThrow();
+        assertThat(unchanged.getName()).isEqualTo("Казань");
+        assertThat(unchanged.getSlug()).isEqualTo("independent-event");
+    }
+
+    @Test
+    void managesOrderedTemplateStartsAndOptionalAwardPolicyWithoutNumericOrderInput() throws Exception {
+        EventSeries template = createSeries("Template starts", "template-starts");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM event_series_start_templates WHERE event_series_id=?",
+                Long.class, template.getId())).isZero();
+
+        long five = createTemplateStart(template.getId(), "5 км", 5000);
+        long ten = createTemplateStart(template.getId(), "10 км", 10000);
+        long championship = createTemplateStart(template.getId(), "Чемпионат", null);
+
+        mockMvc.perform(get("/api/admin/event-series/{id}/start-templates", template.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(five))
+                .andExpect(jsonPath("$[0].displayOrder").value(0))
+                .andExpect(jsonPath("$[2].id").value(championship))
+                .andExpect(jsonPath("$[0].sourceCode").doesNotExist())
+                .andExpect(jsonPath("$[2].awardPolicy").doesNotExist());
+        mockMvc.perform(get("/api/admin/event-series")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].startCount").value(3));
+
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}/start-templates/{startId}",
+                        template.getId(), five)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"5 км новый","distanceMeters":5100,"publicVisible":false}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("5 км новый"))
+                .andExpect(jsonPath("$.publicVisible").value(false));
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='event_series_start_templates'
+                  AND column_name='source_code'
+                """, Long.class)).isZero();
+
+        String policy = """
+                {"rankingBasis":"GUN_TIME","primaryStandingMode":"BY_GENDER",
+                 "absolutePrizePlaces":3,"categoryEnabled":true,"ageCalculationMode":"EVENT_DATE",
+                 "categoryPrizePlaces":2,"excludeAbsoluteWinnersFromCategory":true}
+                """;
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}/start-templates/{startId}/award-policy",
+                        template.getId(), five)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(policy))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rankingBasis").value("GUN_TIME"));
+        mockMvc.perform(get("/api/admin/event-series/{seriesId}/start-templates/{startId}/award-policy",
+                        template.getId(), five).with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.categoryEnabled").value(true));
+
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}/start-templates/reorder", template.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"templateStartIds\":[%d,%d,%d]}".formatted(championship, ten, five)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(championship))
+                .andExpect(jsonPath("$[2].id").value(five));
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}/start-templates/reorder", template.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"templateStartIds\":[%d,%d,%d]}".formatted(championship, championship, five)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_TEMPLATE_START_ORDER"));
+
+        mockMvc.perform(delete("/api/admin/event-series/{seriesId}/start-templates/{startId}/award-policy",
+                        template.getId(), five).with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(delete("/api/admin/event-series/{seriesId}/start-templates/{startId}",
+                        template.getId(), ten).with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isNoContent());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM event_series_start_templates WHERE event_series_id=?",
+                Long.class, template.getId())).isEqualTo(2);
+    }
+
+    @Test
+    void supportsAllAbsoluteAndCategoryAwardCombinationsWithoutChangingRankingSemantics() throws Exception {
+        EventSeries template = createSeries("Award combinations", "award-combinations");
+        long start = createTemplateStart(template.getId(), "10 км", 10000);
+        String[] policies = {
+                """
+                {"rankingBasis":"GUN_TIME","primaryStandingMode":"BY_GENDER",
+                 "absolutePrizePlaces":3,"categoryEnabled":false,"ageCalculationMode":"EVENT_DATE",
+                 "categoryPrizePlaces":0,"excludeAbsoluteWinnersFromCategory":false}
+                """,
+                """
+                {"rankingBasis":"CHIP_TIME","primaryStandingMode":"NONE",
+                 "absolutePrizePlaces":0,"categoryEnabled":true,"ageCalculationMode":"END_OF_EVENT_YEAR",
+                 "categoryPrizePlaces":3,"excludeAbsoluteWinnersFromCategory":false}
+                """,
+                """
+                {"rankingBasis":"GUN_TIME","primaryStandingMode":"ALL",
+                 "absolutePrizePlaces":3,"categoryEnabled":true,"ageCalculationMode":"EVENT_DATE",
+                 "categoryPrizePlaces":2,"excludeAbsoluteWinnersFromCategory":true}
+                """,
+                """
+                {"rankingBasis":"CHIP_TIME","primaryStandingMode":"NONE",
+                 "absolutePrizePlaces":0,"categoryEnabled":false,"ageCalculationMode":"EVENT_DATE",
+                 "categoryPrizePlaces":0,"excludeAbsoluteWinnersFromCategory":false}
+                """
+        };
+        for (String policy : policies) {
+            mockMvc.perform(put("/api/admin/event-series/{seriesId}/start-templates/{startId}/award-policy",
+                            template.getId(), start)
+                            .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(policy))
+                    .andExpect(status().isOk());
+        }
+        mockMvc.perform(get("/api/admin/event-series/{seriesId}/start-templates/{startId}/award-policy",
+                        template.getId(), start).with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rankingBasis").value("CHIP_TIME"))
+                .andExpect(jsonPath("$.primaryStandingMode").value("NONE"))
+                .andExpect(jsonPath("$.categoryEnabled").value(false));
+    }
+
+    @Test
+    void templateCategoriesAreValidatedCopiedAndIndependentFromMaterializedRaceCategories() throws Exception {
+        EventSeries template = createSeries("Category template", "category-template");
+        long start = createTemplateStart(template.getId(), "10 км", 10000);
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}/start-templates/{startId}/award-policy",
+                        template.getId(), start)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"rankingBasis":"CHIP_TIME","primaryStandingMode":"NONE",
+                                 "absolutePrizePlaces":0,"categoryEnabled":true,
+                                 "ageCalculationMode":"END_OF_EVENT_YEAR","categoryPrizePlaces":3,
+                                 "excludeAbsoluteWinnersFromCategory":false}
+                                """))
+                .andExpect(status().isOk());
+
+        MvcResult firstCategory = mockMvc.perform(post(
+                        "/api/admin/event-series/{seriesId}/start-templates/{startId}/categories",
+                        template.getId(), start)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sourceName":"18-29","displayName":"18–29","minAge":18,"maxAge":29,
+                                 "gender":null,"displayOrder":0,"enabled":true}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.templateStartId").value(start))
+                .andReturn();
+        long firstTemplateCategoryId = objectMapper.readTree(
+                firstCategory.getResponse().getContentAsByteArray()).get("id").asLong();
+        MvcResult secondCategory = mockMvc.perform(post(
+                        "/api/admin/event-series/{seriesId}/start-templates/{startId}/categories",
+                        template.getId(), start)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sourceName":"30-39","displayName":"30–39","minAge":30,"maxAge":39,
+                                 "gender":null,"displayOrder":1,"enabled":true}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long secondTemplateCategoryId = objectMapper.readTree(
+                secondCategory.getResponse().getContentAsByteArray()).get("id").asLong();
+
+        mockMvc.perform(post("/api/admin/event-series/{seriesId}/start-templates/{startId}/categories",
+                        template.getId(), start)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sourceName":"overlap","displayName":"Overlap","minAge":25,"maxAge":35,
+                                 "gender":null,"displayOrder":2,"enabled":true}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CATEGORY_RANGE_OVERLAP"));
+        mockMvc.perform(get("/api/admin/event-series/{seriesId}/start-templates", template.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].categories.length()").value(2))
+                .andExpect(jsonPath("$[0].categories[0].displayName").value("18–29"));
+
+        String command = """
+                {"event":{"eventSeriesId":%d,"name":"Казань","startsAt":"2027-08-15T06:00:00Z",
+                  "location":"Казань","timeZone":"Europe/Moscow","publicationStatus":"DRAFT"},
+                 "starts":[{"templateStartId":%d,"name":"10 км","distanceMeters":10000,
+                    "sourceCode":null,"publicVisible":true,"awardPolicy":null}]}
+                """.formatted(template.getId(), start);
+        MvcResult created = mockMvc.perform(post("/api/admin/events/with-starts")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(command))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long eventId = objectMapper.readTree(created.getResponse().getContentAsByteArray()).get("event").get("id").asLong();
+        Race race = raceRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId).getFirst();
+        List<Category> copied = categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(race.getId());
+        assertThat(copied).extracting(Category::getDisplayName).containsExactly("18–29", "30–39");
+        assertThat(copied).allSatisfy(category -> {
+            assertThat(category.getId()).isNotNull();
+            assertThat(category.getRace().getId()).isEqualTo(race.getId());
+        });
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT age_calculation_mode FROM award_policies WHERE race_id=?", String.class, race.getId()))
+                .isEqualTo("END_OF_EVENT_YEAR");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT primary_standing_mode FROM award_policies WHERE race_id=?", String.class, race.getId()))
+                .isEqualTo("NONE");
+
+        mockMvc.perform(put(
+                        "/api/admin/event-series/{seriesId}/start-templates/{startId}/categories/{categoryId}",
+                        template.getId(), start, firstTemplateCategoryId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sourceName":"18-29","displayName":"Шаблон 18–29","minAge":18,"maxAge":29,
+                                 "gender":null,"displayOrder":0,"enabled":true}
+                                """))
+                .andExpect(status().isOk());
+        assertThat(categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(race.getId()))
+                .extracting(Category::getDisplayName).containsExactly("18–29", "30–39");
+
+        Category realFirst = categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(race.getId()).getFirst();
+        mockMvc.perform(put("/api/admin/races/{raceId}/categories/{categoryId}", race.getId(), realFirst.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sourceName":"18-29","displayName":"Event 18–29","minAge":18,"maxAge":29,
+                                 "gender":null,"displayOrder":0,"enabled":true}
+                                """))
+                .andExpect(status().isOk());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT display_name FROM event_series_start_category_templates WHERE id=?",
+                String.class, firstTemplateCategoryId)).isEqualTo("Шаблон 18–29");
+
+        mockMvc.perform(delete(
+                        "/api/admin/event-series/{seriesId}/start-templates/{startId}/categories/{categoryId}",
+                        template.getId(), start, secondTemplateCategoryId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isNoContent());
+        assertThat(categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(race.getId()))
+                .extracting(Category::getDisplayName).containsExactly("Event 18–29", "30–39");
+    }
+
+    @Test
+    void singleEventCopyIsTransactionalEditableAndIndependentFromItsTemplate() throws Exception {
+        EventSeries template = createSeries("Copy template", "copy-template");
+        long five = createTemplateStart(template.getId(), "5 км", 5000);
+        long excluded = createTemplateStart(template.getId(), "Чемпионат", null);
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}/start-templates/{startId}/award-policy",
+                        template.getId(), five)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"rankingBasis":"GUN_TIME","primaryStandingMode":"BY_GENDER",
+                                 "absolutePrizePlaces":3,"categoryEnabled":false,"ageCalculationMode":"EVENT_DATE",
+                                 "categoryPrizePlaces":0,"excludeAbsoluteWinnersFromCategory":false}
+                                """))
+                .andExpect(status().isOk());
+
+        String command = """
+                {"event":{"eventSeriesId":%d,"name":"Казань","startsAt":"2027-08-15T06:00:00Z",
+                  "location":"Казань","timeZone":"Europe/Moscow","publicationStatus":"DRAFT"},
+                 "starts":[
+                   {"templateStartId":%d,"name":"5,2 км","distanceMeters":5200,"sourceCode":null,
+                    "publicVisible":true,"awardPolicy":null},
+                   {"templateStartId":null,"name":"Детский забег","distanceMeters":1000,"sourceCode":null,
+                    "publicVisible":false,"awardPolicy":null}
+                 ]}
+                """.formatted(template.getId(), five);
+        MvcResult result = mockMvc.perform(post("/api/admin/events/with-starts")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(command))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.starts.length()").value(2))
+                .andExpect(jsonPath("$.starts[0].name").value("5,2 км"))
+                .andExpect(jsonPath("$.starts[0].sourceCode").value("template-start-" + five))
+                .andExpect(jsonPath("$.starts[0].displayOrder").value(0))
+                .andExpect(jsonPath("$.starts[1].name").value("Детский забег"))
+                .andExpect(jsonPath("$.starts[1].sourceCode").value("start-2"))
+                .andReturn();
+        long eventId = objectMapper.readTree(result.getResponse().getContentAsByteArray()).get("event").get("id").asLong();
+        List<Race> copied = raceRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId);
+        assertThat(copied).extracting(Race::getName).containsExactly("5,2 км", "Детский забег");
+        assertThat(copied).allSatisfy(race -> assertThat(race.getEvent().getId()).isEqualTo(eventId));
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT count(*) FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='races' AND column_name='template_start_id'
+                """, Long.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT ranking_basis FROM award_policies WHERE race_id=?", String.class, copied.get(0).getId()))
+                .isEqualTo("GUN_TIME");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT ranking_basis FROM award_policies WHERE race_id=?", String.class, copied.get(1).getId()))
+                .isEqualTo("CHIP_TIME");
+
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}/start-templates/{startId}",
+                        template.getId(), five).with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"name":"Переименован в шаблоне","distanceMeters":5000,
+                                 "publicVisible":true}
+                                """))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/admin/event-series/{seriesId}/start-templates/{startId}",
+                        template.getId(), excluded).with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isNoContent());
+        createTemplateStart(template.getId(), "Новый шаблонный старт", null);
+        assertThat(raceRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId))
+                .extracting(Race::getName).containsExactly("5,2 км", "Детский забег");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM event_series_start_templates WHERE event_series_id=?",
+                Long.class, template.getId())).isEqualTo(2);
+
+        long eventsBefore = eventRepository.countByEventSeriesId(template.getId());
+        String duplicateCodes = """
+                {"event":{"eventSeriesId":%d,"name":"Rollback","timeZone":"Europe/Moscow"},
+                 "starts":[
+                   {"name":"A","sourceCode":"same","publicVisible":true},
+                   {"name":"B","sourceCode":"SAME","publicVisible":true}
+                 ]}
+                """.formatted(template.getId());
+        mockMvc.perform(post("/api/admin/events/with-starts")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(duplicateCodes))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RACE_SOURCE_CODE_DUPLICATE"));
+        assertThat(eventRepository.countByEventSeriesId(template.getId())).isEqualTo(eventsBefore);
+    }
+
+    @Test
+    void bulkCopyUsesTheSameStartMaterializationAndCreatesIndependentRaceSets() throws Exception {
+        EventSeries template = createSeries("Bulk starts", "bulk-starts");
+        long five = createTemplateStart(template.getId(), "5 км", 5000);
+        long ten = createTemplateStart(template.getId(), "10 км", 10000);
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}/start-templates/{startId}/award-policy",
+                        template.getId(), five)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"rankingBasis":"GUN_TIME","primaryStandingMode":"BY_GENDER",
+                                 "absolutePrizePlaces":3,"categoryEnabled":true,"ageCalculationMode":"EVENT_DATE",
+                                 "categoryPrizePlaces":2,"excludeAbsoluteWinnersFromCategory":true}
+                                """))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/admin/event-series/{seriesId}/start-templates/{startId}/categories",
+                        template.getId(), five)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sourceName":"18+","displayName":"18+","minAge":18,"maxAge":null,
+                                 "gender":null,"displayOrder":0,"enabled":true}
+                                """))
+                .andExpect(status().isCreated());
+        String command = """
+                {"eventSeriesId":%d,"date":"2027-08-15",
+                 "events":[
+                   {"name":"Казань","location":"Казань","timeZone":"Europe/Moscow"},
+                   {"name":"Омск","location":"Омск","timeZone":"Asia/Omsk"},
+                   {"name":"Иркутск","location":"Иркутск","timeZone":"Asia/Irkutsk"}],
+                 "starts":[
+                   {"templateStartId":%d,"name":"5 км","distanceMeters":5000,"sourceCode":"5K","publicVisible":true},
+                   {"templateStartId":%d,"name":"10 км","distanceMeters":10000,"sourceCode":"10K","publicVisible":true},
+                   {"name":"Детский забег","distanceMeters":1000,"sourceCode":"KIDS","publicVisible":true}
+                 ]}
+                """.formatted(template.getId(), five, ten);
+        mockMvc.perform(post("/api/admin/events/bulk/preview")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(command))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.startsPerEvent").value(3))
+                .andExpect(jsonPath("$.totalStartCount").value(9))
+                .andExpect(jsonPath("$.starts[2].name").value("Детский забег"));
+        mockMvc.perform(post("/api/admin/events/bulk")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(command))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.events.length()").value(3))
+                .andExpect(jsonPath("$.totalStartCount").value(9));
+
+        List<Event> events = eventRepository.findAllByEventSeriesIdOrderByIdAsc(template.getId());
+        assertThat(events).hasSize(3);
+        Set<Long> allRaceIds = new HashSet<>();
+        Set<Long> allCategoryIds = new HashSet<>();
+        for (Event event : events) {
+            List<Race> races = raceRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(event.getId());
+            assertThat(races).extracting(Race::getName).containsExactly("5 км", "10 км", "Детский забег");
+            assertThat(races).extracting(Race::getDisplayOrder).containsExactly(0, 1, 2);
+            races.forEach(race -> assertThat(allRaceIds.add(race.getId())).isTrue());
+            List<Category> copiedCategories = categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(
+                    races.getFirst().getId());
+            assertThat(copiedCategories).extracting(Category::getDisplayName).containsExactly("18+");
+            assertThat(allCategoryIds.add(copiedCategories.getFirst().getId())).isTrue();
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT category_enabled FROM award_policies WHERE race_id=?",
+                    Boolean.class, races.getFirst().getId())).isTrue();
+        }
+        assertThat(allRaceIds).hasSize(9);
+        assertThat(allCategoryIds).hasSize(3);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM event_series_start_templates WHERE event_series_id=?",
+                Long.class, template.getId())).isEqualTo(2);
+    }
+
+    @Test
+    void deletesOnlyAnEmptyDraftRaceAndKeepsTemplateOtherEventsAndPublishedRaceUntouched() throws Exception {
+        EventSeries template = createSeries("Delete safety", "delete-safety");
+        createTemplateStart(template.getId(), "Шаблонный старт", 5000);
+        Event event = createEvent(template, "Current", "delete-current", "Казань", "2027-08-15T06:00:00Z");
+        Event otherEvent = createEvent(template, "Other", "delete-other", "Омск", "2027-08-16T06:00:00Z");
+        Race published = createDraftRace(event, "published", 0);
+        published.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        raceRepository.saveAndFlush(published);
+        Race emptyDraft = createDraftRace(event, "empty", 1);
+        Race otherRace = createDraftRace(otherEvent, "other", 0);
+
+        mockMvc.perform(delete("/api/admin/events/{eventId}/races/{raceId}", event.getId(), emptyDraft.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isNoContent());
+
+        assertThat(raceRepository.findById(emptyDraft.getId())).isEmpty();
+        assertThat(raceRepository.findById(published.getId())).get()
+                .extracting(Race::getResultsPublicationStatus).isEqualTo(ResultsPublicationStatus.PUBLISHED);
+        assertThat(raceRepository.findById(otherRace.getId())).isPresent();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM event_series_start_templates WHERE event_series_id=?",
+                Long.class, template.getId())).isEqualTo(1);
+        assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
+                AuditEntityType.RACE, emptyDraft.getId())).extracting(AdminChangeLog::getFieldName)
+                .contains("deleted");
+    }
+
+    @Test
+    void rejectsRaceDeletionForPublishedOrPreviouslyPublishedResults() throws Exception {
+        EventSeries series = createSeries("Publication guard", "publication-guard");
+        Event event = createEvent(series, "Guard", "publication-delete-guard", "Казань", "2027-08-15T06:00:00Z");
+        Race race = createDraftRace(event, "guard", 0);
+        race.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        raceRepository.saveAndFlush(race);
+
+        mockMvc.perform(delete("/api/admin/events/{eventId}/races/{raceId}", event.getId(), race.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RACE_DELETE_PUBLISHED"));
+
+        race.setResultsPublicationStatus(ResultsPublicationStatus.DRAFT);
+        raceRepository.saveAndFlush(race);
+        RaceResultPublicationHistory history = new RaceResultPublicationHistory();
+        history.setRace(race);
+        history.setFromStatus(ResultsPublicationStatus.PUBLISHED);
+        history.setToStatus(ResultsPublicationStatus.DRAFT);
+        history.setActor(ADMIN_USERNAME);
+        history.setReason("test");
+        history.setCreatedAt(Instant.now());
+        raceResultPublicationHistoryRepository.saveAndFlush(history);
+
+        mockMvc.perform(delete("/api/admin/events/{eventId}/races/{raceId}", event.getId(), race.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RACE_DELETE_HAS_DEPENDENCIES"));
+        assertThat(raceRepository.findById(race.getId())).isPresent();
+    }
+
+    @Test
+    void rejectsRaceDeletionWhenRegistrationsOrResultsExist() throws Exception {
+        EventSeries series = createSeries("Facts guard", "facts-guard");
+        Event event = createEvent(series, "Facts", "facts-delete-guard", "Казань", "2027-08-15T06:00:00Z");
+        Race registrationRace = createDraftRace(event, "registration", 0);
+        Race resultRace = createDraftRace(event, "result", 1);
+        ImportBatch registrationBatch = raceImportBatch(event, registrationRace, "registration.csv");
+        ImportBatch resultBatch = raceImportBatch(event, resultRace, "result.csv");
+        Registration registrationOnly = raceRegistration(registrationRace, registrationBatch, 1, "101");
+        Registration withResult = raceRegistration(resultRace, resultBatch, 1, "102");
+        Result result = new Result();
+        result.setRegistration(withResult);
+        result.setStatus("finished");
+        resultRepository.saveAndFlush(result);
+
+        mockMvc.perform(delete("/api/admin/events/{eventId}/races/{raceId}", event.getId(), registrationRace.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RACE_DELETE_HAS_REGISTRATIONS"));
+        mockMvc.perform(delete("/api/admin/events/{eventId}/races/{raceId}", event.getId(), resultRace.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RACE_DELETE_HAS_RESULTS"));
+        assertThat(registrationRepository.findById(registrationOnly.getId())).isPresent();
+        assertThat(resultRepository.findById(result.getId())).isPresent();
     }
 
     @Test
@@ -7880,6 +8813,84 @@ class BackendIntegrationTest {
         event.setPublicationStatus(EventPublicationStatus.PUBLISHED);
         event.setResultsPublicationStatus(ru.sportsresults.domain.ResultsPublicationStatus.PUBLISHED);
         return eventRepository.saveAndFlush(event);
+    }
+
+    private long createTemplateStart(Long seriesId, String name, Integer distanceMeters)
+            throws Exception {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("name", name);
+        payload.put("distanceMeters", distanceMeters);
+        payload.put("publicVisible", true);
+        String body = objectMapper.writeValueAsString(payload);
+        MvcResult result = mockMvc.perform(post("/api/admin/event-series/{seriesId}/start-templates", seriesId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andReturn();
+        return objectMapper.readTree(result.getResponse().getContentAsByteArray()).get("id").asLong();
+    }
+
+    private Race createDraftRace(Event event, String sourceCode, int displayOrder) {
+        RaceDto created = raceAdminService.create(
+                event.getId(),
+                new UpsertRaceRequest(sourceCode, "Старт " + sourceCode, null, null, null, displayOrder, true),
+                ADMIN_USERNAME
+        );
+        return raceRepository.findById(created.id()).orElseThrow();
+    }
+
+    private static byte[] populateGeneratedTemplate(byte[] source, Long raceId) throws Exception {
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(source));
+             java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
+            Sheet target = null;
+            for (Sheet sheet : workbook) {
+                Row metadata = sheet.getRow(0);
+                if (metadata == null || metadata.getCell(0) == null || metadata.getCell(1) == null) continue;
+                if (TabularImportFileReader.SHEET_RACE_MARKER.equals(metadata.getCell(0).getStringCellValue())
+                        && Math.round(metadata.getCell(1).getNumericCellValue()) == raceId) {
+                    target = sheet;
+                    break;
+                }
+            }
+            if (target == null) throw new IllegalStateException("Generated template Race sheet not found");
+            Row row = target.getRow(2);
+            row.createCell(0).setCellValue("SYN-XLSX-1");
+            row.createCell(1).setCellValue("Тестова");
+            row.createCell(2).setCellValue("Анна");
+            row.createCell(3).setCellValue("Ж");
+            row.getCell(4).setCellValue(LocalDate.of(1992, 4, 3));
+            row.getCell(5).setCellValue(Duration.ofHours(1).plusMinutes(2).plusSeconds(3).toMillis()
+                    / 86_400_000d);
+            row.getCell(6).setCellValue(Duration.ofHours(1).plusMinutes(1).plusSeconds(58).toMillis()
+                    / 86_400_000d);
+            row.createCell(7).setCellValue("Финишировал");
+            workbook.write(output);
+            return output.toByteArray();
+        }
+    }
+
+    private ImportBatch raceImportBatch(Event event, Race race, String filename) {
+        ImportBatch batch = new ImportBatch();
+        batch.setEvent(event);
+        batch.setRace(race);
+        batch.setScopeType(ImportScopeType.RACE);
+        batch.setSourceFilename(filename);
+        batch.setFileSha256("a".repeat(64));
+        batch.setStatus(ImportBatchStatus.SUCCEEDED);
+        batch.setFinishedAt(Instant.now());
+        return importBatchRepository.saveAndFlush(batch);
+    }
+
+    private Registration raceRegistration(Race race, ImportBatch batch, int row, String bib) {
+        Registration registration = new Registration();
+        registration.setRace(race);
+        registration.setImportBatch(batch);
+        registration.setEntryKind(RegistrationEntryKind.PERSON);
+        registration.setBib(bib);
+        registration.setDisplayName("Synthetic " + bib);
+        registration.setSourceRowNumber(row);
+        registration.setSourceRowHash("b".repeat(64));
+        return registrationRepository.saveAndFlush(registration);
     }
 
     private long count(String table, String predicate) {

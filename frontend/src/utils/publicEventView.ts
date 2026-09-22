@@ -3,9 +3,9 @@ import type { PublicRace, RankingBasis } from '../api/types'
 export type PublicEventSection = 'results' | 'info'
 
 export function defaultPublicEventSection(
-  resultsPublicationStatus: 'DRAFT' | 'PUBLISHED',
+  resultsPublished: boolean,
 ): PublicEventSection {
-  return resultsPublicationStatus === 'PUBLISHED' ? 'results' : 'info'
+  return resultsPublished ? 'results' : 'info'
 }
 
 export type PublicResultSort = 'gunTime' | 'chipTime' | 'displayName' | 'bib'

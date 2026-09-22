@@ -46,7 +46,8 @@ public class ImportOperationLifecycleService {
             long baseRevision,
             String planDigest,
             String createdBy,
-            String previewSummary
+            String previewSummary,
+            String inputConfig
     ) {
         var event = eventRepository.findById(eventId)
                 .orElseThrow(() -> new ResourceNotFoundException("EVENT_NOT_FOUND", "Event not found"));
@@ -69,6 +70,7 @@ public class ImportOperationLifecycleService {
         operation.setPlanDigest(planDigest);
         operation.setCreatedBy(createdBy);
         operation.setPreviewSummary(previewSummary);
+        operation.setInputConfig(inputConfig);
         operation.setCreatedAt(now);
         operation.setUpdatedAt(now);
         operation.setExpiresAt(now.plus(PREVIEW_LIFETIME));

@@ -7,6 +7,8 @@ import org.springframework.transaction.annotation.Transactional;
 import ru.sportsresults.api.dto.ImportApplyResponseDto;
 import ru.sportsresults.api.dto.ImportPreviewResponseDto;
 import ru.sportsresults.domain.AgeCalculationMode;
+import ru.sportsresults.domain.AdminChangeLog;
+import ru.sportsresults.domain.AuditEntityType;
 import ru.sportsresults.domain.AwardPolicy;
 import ru.sportsresults.domain.Category;
 import ru.sportsresults.domain.Event;
@@ -30,6 +32,7 @@ import ru.sportsresults.importing.ImportPreviewDecision;
 import ru.sportsresults.importing.SourceField;
 import ru.sportsresults.importing.TimingResultImportRow;
 import ru.sportsresults.repository.AwardPolicyRepository;
+import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.CategoryRepository;
 import ru.sportsresults.repository.ImportBatchRepository;
 import ru.sportsresults.repository.ImportOperationItemRepository;
@@ -43,6 +46,7 @@ import ru.sportsresults.repository.ResultIssueRequestRepository;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +75,7 @@ class ImportApplyTransactionService {
     private final AgeCategoryResolver ageCategoryResolver;
     private final ResultIssueRequestRepository issueRepository;
     private final ResultIssueLifecycleService issueLifecycleService;
+    private final AdminChangeLogRepository auditRepository;
 
     ImportApplyTransactionService(
             EventResultDataMutationGuard mutationGuard,
@@ -87,7 +92,8 @@ class ImportApplyTransactionService {
             ResultRepository resultRepository,
             AgeCategoryResolver ageCategoryResolver,
             ResultIssueRequestRepository issueRepository,
-            ResultIssueLifecycleService issueLifecycleService
+            ResultIssueLifecycleService issueLifecycleService,
+            AdminChangeLogRepository auditRepository
     ) {
         this.mutationGuard = mutationGuard;
         this.operationRepository = operationRepository;
@@ -104,6 +110,7 @@ class ImportApplyTransactionService {
         this.ageCategoryResolver = ageCategoryResolver;
         this.issueRepository = issueRepository;
         this.issueLifecycleService = issueLifecycleService;
+        this.auditRepository = auditRepository;
     }
 
     @Transactional
@@ -182,6 +189,7 @@ class ImportApplyTransactionService {
         if (plan.blockingErrorsPresent()) {
             throw new RequestConflictException("PREVIEW_BLOCKED", "Import plan contains blocking rows");
         }
+        validateSourceCodeMappings(prepared, scopeRaceIds, snapshot.races());
         int applicableCount = switch (operation.getMode()) {
             case ADD_NEW -> plan.totals().newCount();
             case UPDATE_EXISTING -> plan.totals().changedCount();
@@ -235,8 +243,12 @@ class ImportApplyTransactionService {
                         (left, right) -> left,
                         LinkedHashMap::new
                 ));
-        List<StartCluster> clusters = clusterRepository
-                .findAllByRaceEventIdOrderByRaceDisplayOrderAscDisplayOrderAscIdAsc(eventId);
+        List<StartCluster> clusters = ensureSourceClusters(
+                applicableRows,
+                sourceByRow,
+                racesById,
+                clusterRepository.findAllByRaceEventIdOrderByRaceDisplayOrderAscDisplayOrderAscIdAsc(eventId)
+        );
 
         Instant appliedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         EmergencyOutcome emergency = operation.getMode() == ImportOperationMode.EMERGENCY_REPLACE
@@ -260,6 +272,7 @@ class ImportApplyTransactionService {
         batch.setStatus(ImportBatchStatus.SUCCEEDED);
         batch.setFinishedAt(appliedAt);
         importBatchRepository.save(batch);
+        applySourceCodeMappings(prepared, racesById, actor);
         long newRevision = mutationGuard.bump(event);
 
         operation.setImportBatch(batch);
@@ -291,6 +304,86 @@ class ImportApplyTransactionService {
                 operation.getExistingSkippedCount(), operation.getOutOfScopeCount(), newRevision
         );
         return appliedResponse(operation);
+    }
+
+    private static void validateSourceCodeMappings(
+            PreparedImportFile prepared,
+            List<Long> scopeRaceIds,
+            List<ImportPreviewDatabaseSnapshot.RaceSnapshot> races
+    ) {
+        if (!prepared.inputConfig().saveRaceMappings()) return;
+        Map<Long, List<String>> valuesByRace = sourceCodesByRace(prepared);
+        if (!scopeRaceIds.containsAll(valuesByRace.keySet())) {
+            throw new InvalidRequestException(
+                    "INVALID_RACE_MAPPING", "Every saved Race mapping must belong to the import scope"
+            );
+        }
+        valuesByRace.forEach((raceId, values) -> {
+            List<String> distinct = values.stream().map(String::strip).filter(value -> !value.isEmpty())
+                    .distinct().toList();
+            if (distinct.size() != 1 || distinct.getFirst().length() > 255) {
+                throw new InvalidRequestException(
+                        "RACE_SOURCE_CODE_NOT_REPRESENTABLE",
+                        "One Race can persist exactly one non-empty external source code"
+                );
+            }
+        });
+        Map<String, Long> claimed = new LinkedHashMap<>();
+        races.forEach(race -> claimed.put(normalizedSourceCode(race.sourceCode()), race.id()));
+        valuesByRace.forEach((raceId, values) -> {
+            String normalized = normalizedSourceCode(values.getFirst());
+            Long owner = claimed.get(normalized);
+            if (owner != null && !owner.equals(raceId)) {
+                throw new RequestConflictException(
+                        "RACE_SOURCE_CODE_CONFLICT", "External Race code is already assigned to another Race"
+                );
+            }
+            Long previous = claimed.put(normalized, raceId);
+            if (previous != null && !previous.equals(raceId)) {
+                throw new RequestConflictException(
+                        "RACE_SOURCE_CODE_CONFLICT", "External Race code is mapped to more than one Race"
+                );
+            }
+        });
+    }
+
+    private void applySourceCodeMappings(
+            PreparedImportFile prepared,
+            Map<Long, Race> racesById,
+            String actor
+    ) {
+        if (!prepared.inputConfig().saveRaceMappings()) return;
+        List<AdminChangeLog> logs = new ArrayList<>();
+        sourceCodesByRace(prepared).forEach((raceId, values) -> {
+            Race race = racesById.get(raceId);
+            String sourceCode = values.getFirst().strip();
+            if (!Objects.equals(race.getSourceCode(), sourceCode)) {
+                AdminChangeLog log = new AdminChangeLog();
+                log.setActor(actor);
+                log.setEntityType(AuditEntityType.RACE);
+                log.setEntityId(raceId);
+                log.setFieldName("sourceCode");
+                log.setOldValue(race.getSourceCode());
+                log.setNewValue(sourceCode);
+                logs.add(log);
+                race.setSourceCode(sourceCode);
+            }
+        });
+        raceRepository.saveAll(racesById.values());
+        if (!logs.isEmpty()) auditRepository.saveAll(logs);
+    }
+
+    private static Map<Long, List<String>> sourceCodesByRace(PreparedImportFile prepared) {
+        return prepared.inputConfig().raceMappings().entrySet().stream()
+                .collect(Collectors.groupingBy(
+                        Map.Entry::getValue,
+                        LinkedHashMap::new,
+                        Collectors.mapping(Map.Entry::getKey, Collectors.toList())
+                ));
+    }
+
+    private static String normalizedSourceCode(String value) {
+        return value.strip().toLowerCase(java.util.Locale.ROOT);
     }
 
     private MutationOutcome insertNew(
@@ -537,6 +630,63 @@ class ImportApplyTransactionService {
             throw new RequestConflictException("PREVIEW_STALE", "Start cluster resolution changed after preview");
         }
         return matches.getFirst();
+    }
+
+    private List<StartCluster> ensureSourceClusters(
+            List<ImportPreviewResponseDto.Row> rows,
+            Map<Integer, TimingResultImportRow> sourceByRow,
+            Map<Long, Race> racesById,
+            List<StartCluster> existing
+    ) {
+        List<StartCluster> clusters = new ArrayList<>(existing);
+        List<StartCluster> created = new ArrayList<>();
+        Map<Long, Integer> nextOrder = new HashMap<>();
+        for (StartCluster cluster : clusters) {
+            nextOrder.merge(cluster.getRace().getId(), cluster.getDisplayOrder() + 1, Math::max);
+        }
+        for (ImportPreviewResponseDto.Row planned : rows) {
+            TimingResultImportRow source = requireSource(sourceByRow, planned.sourceRowNumber());
+            List<SourceField<String>> fields = List.of(
+                    source.clusterCodeSource(), source.clusterNameSource(), source.clusterSourceNameSource()
+            );
+            if (fields.stream().noneMatch(SourceField::hasValue)) continue;
+            Race race = requireRace(racesById, planned);
+            List<StartCluster> matches = clusters.stream()
+                    .filter(cluster -> cluster.getRace().getId().equals(race.getId()))
+                    .filter(cluster -> matches(source.clusterCodeSource(), cluster.getCode())
+                            && matches(source.clusterNameSource(), cluster.getDisplayName())
+                            && matches(source.clusterSourceNameSource(), cluster.getSourceName()))
+                    .toList();
+            if (matches.size() == 1) continue;
+            if (!matches.isEmpty()) {
+                throw new RequestConflictException("PREVIEW_STALE", "Start cluster resolution changed after preview");
+            }
+            StartCluster cluster = new StartCluster();
+            cluster.setRace(race);
+            cluster.setCode(normalizeClusterValue(source.clusterCode()));
+            cluster.setSourceName(normalizeClusterValue(source.clusterSourceName()));
+            cluster.setDisplayName(clusterDisplayName(source));
+            cluster.setDisplayOrder(nextOrder.getOrDefault(race.getId(), 0));
+            nextOrder.put(race.getId(), cluster.getDisplayOrder() + 1);
+            clusters.add(cluster);
+            created.add(cluster);
+        }
+        if (!created.isEmpty()) clusterRepository.saveAllAndFlush(created);
+        return clusters;
+    }
+
+    private static String clusterDisplayName(TimingResultImportRow source) {
+        String displayName = normalizeClusterValue(source.clusterName());
+        if (displayName == null) displayName = normalizeClusterValue(source.clusterSourceName());
+        if (displayName == null) displayName = normalizeClusterValue(source.clusterCode());
+        if (displayName == null) {
+            throw new RequestConflictException("PREVIEW_STALE", "Start cluster resolution changed after preview");
+        }
+        return displayName;
+    }
+
+    private static String normalizeClusterValue(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
     }
 
     private static StartCluster resolveUpdateCluster(

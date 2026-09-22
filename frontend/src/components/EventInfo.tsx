@@ -22,10 +22,11 @@ function Rules({ rules }: { rules: RaceRules | null }) {
 
 export function EventInfo({ event }: { event: EventDetails }) {
   const info = event.participantInfo
+  const resultsPublished = event.races.some((race) => race.resultsPublished)
 
   return <div className="event-detail-layout">
-    {event.resultsPublicationStatus === 'DRAFT' && <div className="results-awaiting-card" role="status">
-      <strong>Результаты будут опубликованы после мероприятия</strong>
+    {!resultsPublished && <div className="results-awaiting-card" role="status">
+      <strong>Результаты пока не опубликованы</strong>
       <span>Сейчас доступны программа, место проведения и правила стартов.</span>
     </div>}
 

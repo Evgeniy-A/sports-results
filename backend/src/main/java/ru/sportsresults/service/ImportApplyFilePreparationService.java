@@ -4,11 +4,8 @@ import org.springframework.stereotype.Service;
 import ru.sportsresults.api.dto.ImportErrorDto;
 import ru.sportsresults.importing.TimingCsvFormatException;
 import ru.sportsresults.importing.TimingCsvParseResult;
-import ru.sportsresults.importing.TimingCsvParser;
+import ru.sportsresults.importing.ImportInputConfig;
 
-import java.io.ByteArrayInputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -20,11 +17,11 @@ class ImportApplyFilePreparationService {
 
     private static final int MAX_FILE_BYTES = 25 * 1024 * 1024;
 
-    private final TimingCsvParser parser;
+    private final FlexibleImportFileService flexibleImportFileService;
     private final ImportValidator validator;
 
-    ImportApplyFilePreparationService(TimingCsvParser parser, ImportValidator validator) {
-        this.parser = parser;
+    ImportApplyFilePreparationService(FlexibleImportFileService flexibleImportFileService, ImportValidator validator) {
+        this.flexibleImportFileService = flexibleImportFileService;
         this.validator = validator;
     }
 
@@ -38,23 +35,33 @@ class ImportApplyFilePreparationService {
         return sha256(contents);
     }
 
-    PreparedImportFile prepare(byte[] contents, String fileSha256) {
+    ImportInputConfig deserializeConfig(String json) {
+        return flexibleImportFileService.deserializeConfig(json);
+    }
+
+    PreparedImportFile prepare(
+            Long eventId,
+            String sourceFilename,
+            byte[] contents,
+            String fileSha256,
+            ImportInputConfig inputConfig
+    ) {
         TimingCsvParseResult parsed;
-        try (InputStreamReader reader = new InputStreamReader(
-                new ByteArrayInputStream(contents), StandardCharsets.UTF_8
-        )) {
-            parsed = parser.parse(reader);
+        try {
+            parsed = flexibleImportFileService.parse(eventId, sourceFilename, contents, inputConfig);
         } catch (TimingCsvFormatException exception) {
-            throw new InvalidRequestException("INVALID_CSV_HEADER", exception.getMessage());
+            throw new InvalidRequestException("INVALID_IMPORT_FILE", exception.getMessage());
         } catch (Exception exception) {
-            throw new InvalidRequestException("IMPORT_FILE_READ_FAILED", "CSV could not be read");
+            if (exception instanceof InvalidRequestException invalid) throw invalid;
+            if (exception instanceof RequestConflictException conflict) throw conflict;
+            throw new InvalidRequestException("IMPORT_FILE_READ_FAILED", "Import file could not be read");
         }
         List<ImportErrorDto> errors = new ArrayList<>();
         parsed.errors().forEach(error -> errors.add(new ImportErrorDto(
                 error.sourceRowNumber(), error.column(), error.message()
         )));
         errors.addAll(validator.validate(parsed.rows()));
-        return new PreparedImportFile(fileSha256, parsed, errors);
+        return new PreparedImportFile(fileSha256, parsed, errors, inputConfig);
     }
 
     private static String sha256(byte[] contents) {

@@ -123,6 +123,9 @@ public class ResultSearchRepositoryImpl implements ResultSearchRepository {
         if (criteria.categoryId() != null) {
             predicates.add(builder.equal(category.get("id"), criteria.categoryId()));
         }
+        if (!criteria.excludedResultIds().isEmpty()) {
+            predicates.add(builder.not(result.get("id").in(criteria.excludedResultIds())));
+        }
         if (criteria.clusterId() != null) {
             predicates.add(builder.equal(registration.get("cluster").get("id"), criteria.clusterId()));
         }

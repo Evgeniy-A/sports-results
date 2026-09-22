@@ -16,7 +16,7 @@ export function PublicEventPage({ slug }: { slug: string }) {
     const controller = new AbortController()
     api.eventBySlug(slug, controller.signal).then((loadedEvent) => {
       setEvent(loadedEvent)
-      setSection(defaultPublicEventSection(loadedEvent.resultsPublicationStatus))
+      setSection(defaultPublicEventSection(loadedEvent.races.some((race) => race.resultsPublished)))
     }).catch((reason: unknown) => {
       if (!controller.signal.aborted) {
         console.error('Event details request failed', reason)
@@ -29,7 +29,7 @@ export function PublicEventPage({ slug }: { slug: string }) {
   if (error) return <main><SiteHeader /><div className="state-message standalone">Мероприятие не найдено или ещё не опубликовано.</div></main>
   if (!event || !section) return <main><SiteHeader /><div className="state-message standalone">Загружаем мероприятие…</div></main>
 
-  const resultsPublished = event.resultsPublicationStatus === 'PUBLISHED'
+  const resultsPublished = event.races.some((race) => race.resultsPublished)
   const resultsActive = resultsPublished && section === 'results'
 
   return <main>

@@ -47,6 +47,8 @@ export const TIME_ZONE_OPTIONS = DEFINITIONS.map((option) => ({
   label: `${option.city} — ${utcOffset(option.value)}`,
 }))
 
+export const LOCATION_SUGGESTIONS = [...new Set(DEFINITIONS.map((option) => option.city))]
+
 export function utcOffset(timeZone: string, at = new Date()): string {
   try {
     const part = new Intl.DateTimeFormat('en-US', {
@@ -60,6 +62,7 @@ export function utcOffset(timeZone: string, at = new Date()): string {
 }
 
 export function timeZoneLabel(value: string): string {
+  if (!value) return 'Выберите часовой пояс'
   const known = TIME_ZONE_OPTIONS.find((option) => option.value === value)
   if (known) return known.label
   const city = value.split('/').at(-1)?.replaceAll('_', ' ') || 'Настроенный часовой пояс'

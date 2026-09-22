@@ -11,6 +11,8 @@ import ru.sportsresults.domain.AuditEntityType;
 import ru.sportsresults.domain.EventSeries;
 import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.EventSeriesRepository;
+import ru.sportsresults.repository.EventRepository;
+import ru.sportsresults.repository.EventSeriesStartTemplateRepository;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,22 +21,28 @@ import java.util.Objects;
 @Service
 public class EventSeriesService {
     private final EventSeriesRepository repository;
+    private final EventRepository eventRepository;
+    private final EventSeriesStartTemplateRepository startTemplateRepository;
     private final AdminChangeLogRepository auditRepository;
     private final SlugGenerator slugGenerator;
 
     public EventSeriesService(
             EventSeriesRepository repository,
+            EventRepository eventRepository,
+            EventSeriesStartTemplateRepository startTemplateRepository,
             AdminChangeLogRepository auditRepository,
             SlugGenerator slugGenerator
     ) {
         this.repository = repository;
+        this.eventRepository = eventRepository;
+        this.startTemplateRepository = startTemplateRepository;
         this.auditRepository = auditRepository;
         this.slugGenerator = slugGenerator;
     }
 
     @Transactional(readOnly = true)
     public List<EventSeriesDto> listAll() {
-        return repository.findAll().stream().map(EventSeriesService::toDto).toList();
+        return repository.findAll().stream().map(this::toDto).toList();
     }
 
     @Transactional
@@ -91,9 +99,11 @@ public class EventSeriesService {
         logs.add(log);
     }
 
-    private static EventSeriesDto toDto(EventSeries series) {
+    private EventSeriesDto toDto(EventSeries series) {
         return new EventSeriesDto(
                 series.getId(), series.getName(), series.getSlug(), series.getDescription(), series.isActive(),
+                eventRepository.countByEventSeriesId(series.getId()),
+                startTemplateRepository.countByEventSeriesId(series.getId()),
                 series.getCreatedAt(), series.getUpdatedAt()
         );
     }

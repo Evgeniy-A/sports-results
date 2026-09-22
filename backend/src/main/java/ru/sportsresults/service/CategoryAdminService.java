@@ -135,35 +135,24 @@ public class CategoryAdminService {
     }
 
     private void validate(Category candidate, Long excludedId) {
-        if (candidate.getMinAge() == null && candidate.getMaxAge() != null) {
-            throw new InvalidRequestException(
-                    "INVALID_CATEGORY_RANGE",
-                    "maxAge requires minAge"
-            );
-        }
-        if (candidate.getMinAge() != null && candidate.getMaxAge() != null
-                && candidate.getMaxAge() < candidate.getMinAge()) {
-            throw new InvalidRequestException(
-                    "INVALID_CATEGORY_RANGE",
-                    "maxAge must be greater than or equal to minAge"
-            );
-        }
-        if (!candidate.isEnabled() || candidate.getMinAge() == null) {
-            return;
-        }
-        boolean overlaps = categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(
-                        candidate.getRace().getId()).stream()
-                .filter(Category::isEnabled)
-                .filter(existing -> existing.getMinAge() != null)
-                .filter(existing -> !existing.getId().equals(excludedId))
-                .filter(existing -> gendersOverlap(existing.getGender(), candidate.getGender()))
-                .anyMatch(existing -> rangesOverlap(existing, candidate));
-        if (overlaps) {
-            throw new RequestConflictException(
-                    "CATEGORY_RANGE_OVERLAP",
-                    "Enabled age categories must not overlap for the same applicable gender"
-            );
-        }
+        CategoryDefinitionValidator.validate(
+                new CategoryDefinitionValidator.Rule(
+                        excludedId,
+                        candidate.getMinAge(),
+                        candidate.getMaxAge(),
+                        candidate.getGender(),
+                        candidate.isEnabled()
+                ),
+                categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(candidate.getRace().getId()).stream()
+                        .map(category -> new CategoryDefinitionValidator.Rule(
+                                category.getId(),
+                                category.getMinAge(),
+                                category.getMaxAge(),
+                                category.getGender(),
+                                category.isEnabled()
+                        ))
+                        .toList()
+        );
     }
 
     private void validateSourceName(Long raceId, String sourceName, Long excludedId) {
@@ -172,16 +161,6 @@ public class CategoryAdminService {
                 .ifPresent(existing -> {
                     throw duplicateSourceName();
                 });
-    }
-
-    private static boolean gendersOverlap(CategoryGender left, CategoryGender right) {
-        return left == null || right == null || left == right;
-    }
-
-    private static boolean rangesOverlap(Category left, Category right) {
-        int leftMaximum = left.getMaxAge() == null ? Integer.MAX_VALUE : left.getMaxAge();
-        int rightMaximum = right.getMaxAge() == null ? Integer.MAX_VALUE : right.getMaxAge();
-        return left.getMinAge() <= rightMaximum && right.getMinAge() <= leftMaximum;
     }
 
     private Race requireRace(Long raceId) {

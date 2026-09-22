@@ -47,6 +47,8 @@ public interface RegistrationRepository extends JpaRepository<Registration, Long
 
     boolean existsByCategoryId(Long categoryId);
 
+    boolean existsByRaceId(Long raceId);
+
     @Query("select count(registration) from Registration registration "
             + "where registration.race.event.id = :eventId and registration.retiredAt is null")
     long countByRaceEventId(@Param("eventId") Long eventId);

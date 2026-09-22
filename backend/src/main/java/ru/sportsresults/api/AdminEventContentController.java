@@ -105,6 +105,12 @@ public class AdminEventContentController {
         return raceService.update(eventId, raceId, request, principal.getName());
     }
 
+    @DeleteMapping("/races/{raceId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteRace(@PathVariable Long eventId, @PathVariable Long raceId, Principal principal) {
+        raceService.delete(eventId, raceId, principal.getName());
+    }
+
     @PostMapping("/races/{raceId}/results/draft")
     public RaceResultsPublicationDto draftRaceResults(
             @PathVariable Long eventId,

@@ -15,6 +15,11 @@ import java.util.Optional;
 public interface EventRepository extends JpaRepository<Event, Long>, EventCatalogRepository {
     boolean existsBySlug(String slug);
 
+    long countByEventSeriesId(Long eventSeriesId);
+
+    @EntityGraph(attributePaths = "eventSeries")
+    List<Event> findAllByEventSeriesIdOrderByIdAsc(Long eventSeriesId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select event from Event event where event.id = :eventId")
     Optional<Event> findByIdForUpdate(@Param("eventId") Long eventId);

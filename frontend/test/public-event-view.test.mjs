@@ -10,9 +10,9 @@ import {
 
 const race = (id, name, resultsPublished = true) => ({ id, name, resultsPublished })
 
-test('published results open results-first and draft opens event-info-first', () => {
-  assert.equal(defaultPublicEventSection('PUBLISHED'), 'results')
-  assert.equal(defaultPublicEventSection('DRAFT'), 'info')
+test('any published race opens results-first and all-draft races open event-info-first', () => {
+  assert.equal(defaultPublicEventSection(true), 'results')
+  assert.equal(defaultPublicEventSection(false), 'info')
 })
 
 test('default result ordering follows the configured sport time without inventing NONE standing', () => {

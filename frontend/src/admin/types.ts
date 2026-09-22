@@ -23,8 +23,47 @@ export interface EventSeries {
   slug: string
   description: string | null
   active: boolean
+  eventCount: number
+  startCount: number
   createdAt: string
   updatedAt: string
+}
+
+export interface BulkEventCommand {
+  eventSeriesId: number
+  date: string
+  events: Array<{ name: string; location: string; timeZone: string }>
+  starts: EventStartCommand[]
+}
+
+export interface BulkEventPreview {
+  eventSeriesId: number
+  templateName: string
+  date: string
+  requestedCount: number
+  creatableCount: number
+  startsPerEvent: number
+  totalStartCount: number
+  starts: Array<{
+    name: string
+    distanceMeters: number | null
+    sourceCode: string
+    publicVisible: boolean
+    awardConfigured: boolean
+  }>
+  events: Array<{
+    name: string
+    location: string
+    timeZone: string
+    creatable: boolean
+    duplicateInRequest: boolean
+    existingEventId: number | null
+  }>
+}
+
+export interface BulkCreateEventsResponse {
+  events: EventSummary[]
+  totalStartCount: number
 }
 
 export interface AdminCategory {
@@ -72,6 +111,57 @@ export type AwardPolicyUpdate = Pick<
   | 'excludeAbsoluteWinnersFromCategory'
 >
 
+export interface TemplateAwardPolicy extends AwardPolicyUpdate {
+  id: number
+}
+
+export interface TemplateCategory {
+  id: number
+  templateStartId: number
+  sourceName: string
+  displayName: string
+  minAge: number | null
+  maxAge: number | null
+  gender: 'MALE' | 'FEMALE' | null
+  displayOrder: number
+  enabled: boolean
+}
+
+export interface TemplateStart {
+  id: number
+  eventSeriesId: number
+  name: string
+  distanceMeters: number | null
+  displayOrder: number
+  publicVisible: boolean
+  awardPolicy: TemplateAwardPolicy | null
+  categories: TemplateCategory[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface EventStartCommand {
+  templateStartId: number | null
+  name: string
+  distanceMeters: number | null
+  sourceCode: string | null
+  publicVisible: boolean
+  awardPolicy: AwardPolicyUpdate | null
+}
+
+export interface CreateEventWithStartsCommand {
+  event: {
+    eventSeriesId: number
+    name: string
+    startsAt: string | null
+    endsAt: string | null
+    location: string | null
+    timeZone: string
+    publicationStatus: 'DRAFT'
+  }
+  starts: EventStartCommand[]
+}
+
 export interface ResultInquirySettings {
   enabled: boolean
   windowDays: number | null
@@ -106,6 +196,57 @@ export interface AdminResultDetails extends Omit<ResultListItem, 'category' | 'e
 }
 
 export type ImportMode = 'ADD_NEW' | 'UPDATE_EXISTING' | 'EMERGENCY_REPLACE'
+
+export type CanonicalImportField =
+  | 'BIB' | 'FIRST_NAME' | 'LAST_NAME' | 'FULL_NAME' | 'GENDER' | 'BIRTH_DATE'
+  | 'STATUS' | 'GUN_TIME' | 'CHIP_TIME' | 'CATEGORY' | 'CLUSTER' | 'RACE'
+  | 'OVERALL_PLACE' | 'GENDER_PLACE' | 'CATEGORY_PLACE'
+  | 'NET_OVERALL_PLACE' | 'NET_GENDER_PLACE' | 'NET_CATEGORY_PLACE'
+
+export interface ImportMappingProfile {
+  id: number
+  name: string
+  fileType: 'CSV' | 'XLSX'
+  headerSignature: string
+  mappings: Record<string, CanonicalImportField>
+  raceDiscriminatorHeader: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ImportFileAnalysis {
+  filename: string
+  fileType: 'CSV' | 'XLSX'
+  sportsResultsTemplate: boolean
+  legacyCsv: boolean
+  templateFormatVersion: number | null
+  metadataEventId: number | null
+  headerSignature: string
+  sheets: Array<{ name: string; rowCount: number; raceId: number | null }>
+  columns: Array<{
+    header: string
+    normalizedHeader: string
+    mappedField: CanonicalImportField | null
+    automatic: boolean
+    candidates: CanonicalImportField[]
+  }>
+  columnMappings: Record<string, CanonicalImportField>
+  canonicalFields: Array<{ field: CanonicalImportField; displayName: string; required: boolean }>
+  missingRequiredFields: CanonicalImportField[]
+  raceDiscriminatorHeader: string | null
+  raceValues: Array<{ sourceValue: string; raceId: number | null; raceName: string | null; automatic: boolean }>
+  resolvedRaceIds: number[]
+  suggestedProfile: ImportMappingProfile | null
+  diagnostics: Array<{ sheet: string | null; row: number | null; column: string | null; code: string; message: string }>
+  readyForValidation: boolean
+}
+
+export interface ImportInputOptions {
+  targetRaceId: number | null
+  columnMappings: Record<string, CanonicalImportField>
+  raceMappings: Record<string, number>
+  saveRaceMappings: boolean
+}
 
 export interface ImportPreview {
   operationId: string

@@ -89,12 +89,15 @@ public class EventDetailsService {
                     );
                 })
                 .toList();
+        boolean anyPublishedResults = flatRaces.stream().anyMatch(PublicRaceDto::resultsPublished);
+        ResultsPublicationStatus publicResultsStatus = anyPublishedResults
+                ? ResultsPublicationStatus.PUBLISHED
+                : ResultsPublicationStatus.DRAFT;
 
         return new EventDetailsDto(eventId, event.getEventSeries().getId(), event.getEventSeries().getName(),
                 event.getEventSeries().getSlug(), event.getName(), event.getSlug(), event.getStartsAt(), event.getEndsAt(),
                 event.getLocation(), event.getTimeZone(), EventPhaseCalculator.calculate(event, Instant.now()),
-                event.getPublicationStatus(), event.getResultsPublicationStatus(),
-                event.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED,
+                event.getPublicationStatus(), publicResultsStatus, anyPublishedResults,
                 participantInfoRepository.findByEventId(eventId).map(EventContentService::toDto).orElse(null),
                 scheduleRepository.findAllByEventIdOrderByStartsAtAscDisplayOrderAscIdAsc(eventId).stream()
                         .map(EventContentService::toDto).toList(),

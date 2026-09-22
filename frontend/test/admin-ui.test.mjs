@@ -5,14 +5,30 @@ import { localDateTimeToIso, toDateTimeLocal } from '../src/admin/time.ts'
 import { filterTimeZones, suggestTimeZone, timeZoneLabel } from '../src/admin/timeZones.ts'
 import { awardPolicyUpdate, withRankingBasis } from '../src/admin/awardPolicy.ts'
 import { ApiError, readJsonBody } from '../src/api/client.ts'
+import { duplicateLocationIds, normalizedLocation } from '../src/admin/bulkEvents.ts'
+import {
+  ADMIN_AUTH_SESSION_KEY,
+  clearAdminCredentials,
+  loadAdminCredentials,
+  notifyUnauthorized,
+  saveAdminCredentials,
+} from '../src/admin/adminAuthSession.ts'
 
 const source = async (path) => readFile(new URL(path, import.meta.url), 'utf8')
-const [app, adminApp, api, utils, events, eventPage, core, content, categories, results, imports, policy, issues, journal, timeZoneCombobox, css] = await Promise.all([
+const [app, adminApp, api, utils, events, templates, templateDetail, startComposer, categorySettings, awardPresentation, startDrafts, bulkEvents, inlineTemplate, eventPage, core, content, categories, results, imports, policy, issues, journal, timeZoneCombobox, css] = await Promise.all([
   source('../src/App.tsx'),
   source('../src/admin/AdminApp.tsx'),
   source('../src/admin/api.ts'),
   source('../src/admin/utils.ts'),
   source('../src/admin/pages/AdminEventsPage.tsx'),
+  source('../src/admin/pages/AdminTemplatesPage.tsx'),
+  source('../src/admin/pages/AdminTemplatePage.tsx'),
+  source('../src/admin/components/EventStartComposer.tsx'),
+  source('../src/admin/components/CategorySettings.tsx'),
+  source('../src/admin/awardPolicyPresentation.ts'),
+  source('../src/admin/eventStartDrafts.ts'),
+  source('../src/admin/pages/AdminBulkEventsPage.tsx'),
+  source('../src/admin/components/InlineTemplateCreator.tsx'),
   source('../src/admin/pages/AdminEventPage.tsx'),
   source('../src/admin/pages/EventCoreTabs.tsx'),
   source('../src/admin/pages/EventContentManager.tsx'),
@@ -32,37 +48,227 @@ test('admin route is isolated from the public application', () => {
   assert.match(app, /<AdminApp/)
   assert.match(adminApp, /\/admin\/events/)
   assert.match(adminApp, /\/admin\/support\/issues/)
+  assert.match(adminApp, /\/admin\/templates/)
+  assert.match(adminApp, /\/admin\/events\/bulk/)
 })
 
-test('Basic Auth credentials remain only in React runtime memory', () => {
-  assert.match(adminApp, /useState<AdminCredentials \| null>/)
+test('Basic Auth credentials persist only for the current tab session and logout clears them', () => {
+  const values = new Map()
+  const storage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  }
+  assert.equal(loadAdminCredentials(storage), null)
+  saveAdminCredentials({ username: 'admin', password: 'secret' }, storage)
+  assert.deepEqual(loadAdminCredentials(storage), { username: 'admin', password: 'secret' })
+  assert.ok(values.has(ADMIN_AUTH_SESSION_KEY))
+  clearAdminCredentials(storage)
+  assert.equal(loadAdminCredentials(storage), null)
+  assert.match(adminApp, /useState<AdminCredentials \| null>\(\(\) => loadAdminCredentials\(\)\)/)
+  assert.match(adminApp, /clearAdminCredentials\(\)/)
   assert.match(api, /Authorization.*basicAuthorization/s)
-  assert.doesNotMatch(`${adminApp}\n${api}`, /localStorage|sessionStorage|JWT/i)
+  assert.doesNotMatch(`${adminApp}\n${api}`, /localStorage|JWT/i)
+  assert.doesNotMatch(api, /queryString\([^)]*password|params\.set\(['"]password/i)
+})
+
+test('a real backend 401 clears the admin session through the common API client', () => {
+  let unauthorized = 0
+  notifyUnauthorized(403, () => { unauthorized += 1 })
+  assert.equal(unauthorized, 0)
+  notifyUnauthorized(401, () => { unauthorized += 1 })
+  assert.equal(unauthorized, 1)
+  assert.equal((api.match(/notifyUnauthorized\(response\.status, onUnauthorized\)/g) ?? []).length, 3)
 })
 
 test('event list, create and edit use protected typed APIs', () => {
   assert.match(api, /events:.*\/admin\/events/s)
   assert.match(api, /createEvent:/)
   assert.match(api, /updateEvent:/)
-  assert.match(events, /Создать мероприятие/)
+  for (const action of ['Создать мероприятие', 'Создать несколько мероприятий', 'Шаблоны']) assert.match(events, new RegExp(action))
   assert.match(core, /Настройка влияет на итоговый протокол/)
 })
 
-test('event creation keeps series selection and creation in one business flow', () => {
-  assert.match(events, /label="Серия мероприятий"/)
-  assert.match(events, /\+ Создать новую серию/)
-  assert.match(events, /label="Название серии"/)
-  assert.match(events, /api\.createEventSeries/)
-  assert.match(events, /onSeriesCreated\(created\)/)
-  assert.match(events, /setSeriesId\(String\(created\.id\)\)/)
-  assert.doesNotMatch(events, /Создать EventSeries/)
+test('event creation keeps template selection and inline creation in one business flow', () => {
+  assert.match(events, /label="Шаблон"/)
+  assert.match(inlineTemplate, /\+ Создать новый шаблон/)
+  assert.match(inlineTemplate, /label="Название шаблона"/)
+  assert.match(inlineTemplate, /api\.createEventSeries/)
+  assert.match(events, /onTemplateCreated\(created\)/)
+  assert.match(events, /setTemplateId\(String\(created\.id\)\)/)
+  assert.doesNotMatch(`${events}\n${core}\n${templates}\n${bulkEvents}\n${inlineTemplate}`, /Серия|серия/)
 })
 
 test('ordinary Event and series forms do not ask for a URL or submit a slug', () => {
   assert.doesNotMatch(events, /Адрес в URL|name, slug|setSlug/)
-  assert.match(events, /eventSeriesId: Number\(seriesId\), name,/)
+  assert.match(events, /eventSeriesId: Number\(templateId\), name,/)
   assert.doesNotMatch(eventGeneralTab, /Адрес в URL|slug: form\.slug|set\('slug'/)
-  assert.match(eventGeneralTab, /label="Серия мероприятий"/)
+  assert.match(eventGeneralTab, /label="Шаблон"/)
+})
+
+test('event table and empty state use template terminology and useful creation actions', () => {
+  assert.match(events, /<th>Шаблон<\/th>/)
+  assert.match(events, /Мероприятий пока нет/)
+  assert.match(events, /несколько городов сразу из шаблона/)
+  assert.doesNotMatch(events, /<th>Серия<\/th>|<th>Event<\/th>/)
+})
+
+test('templates screen supports list, empty state, create and stable-slug edit API', () => {
+  assert.match(templates, /<h1>Шаблоны<\/h1>/)
+  assert.match(templates, /Шаблонов пока нет/)
+  assert.match(templates, /\+ Новый шаблон/)
+  assert.match(templates, /api\.createEventSeries/)
+  assert.match(templates, /api\.updateEventSeries/)
+  assert.match(templates, /template\.eventCount/)
+  assert.match(templates, /template\.startCount/)
+  assert.doesNotMatch(templates, /slug|Удалить шаблон/)
+})
+
+test('template details provide start CRUD with ordered reusable definitions', () => {
+  assert.match(adminApp, /templateMatch/)
+  assert.match(templateDetail, /Старты шаблона/)
+  assert.match(templateDetail, /\+ Добавить старт/)
+  assert.match(templateDetail, /api\.createTemplateStart/)
+  assert.match(templateDetail, /api\.updateTemplateStart/)
+  assert.match(templateDetail, /api\.deleteTemplateStart/)
+  assert.match(templateDetail, /Это не изменит уже созданные мероприятия/)
+  for (const endpoint of ['templateStarts:', 'createTemplateStart:', 'updateTemplateStart:', 'deleteTemplateStart:']) {
+    assert.match(api, new RegExp(endpoint))
+  }
+  assert.doesNotMatch(templateDetail, /Код импорта|sourceCode/)
+  assert.match(startDrafts, /sourceCode: null/)
+})
+
+test('template start ordering uses drag drop and touch arrows without a numeric order field', () => {
+  assert.match(templateDetail, /draggable={!busy}/)
+  assert.match(templateDetail, /onDrop=\{\(\) => dropBefore/)
+  assert.match(templateDetail, /api\.reorderTemplateStarts/)
+  assert.match(templateDetail, /Поднять старт/)
+  assert.match(templateDetail, /Опустить старт/)
+  assert.doesNotMatch(`${templateDetail}\n${startComposer}`, /Field label="(?:Порядок|displayOrder)"/)
+  assert.doesNotMatch(`${templateDetail}\n${startComposer}`, /type="number"[^>]*(?:displayOrder|Порядок)/)
+})
+
+test('award editor separates absolute and category awards without NONE dropdown options', () => {
+  for (const status of ['Награждение: Абсолют', 'Награждение: Категории', 'Награждение: Абсолют + категории', 'Награждение не настроено']) {
+    assert.ok(`${templateDetail}\n${startComposer}\n${awardPresentation}`.includes(status))
+  }
+  assert.match(templateDetail, /updateTemplateAwardPolicy/)
+  assert.match(templateDetail, /deleteTemplateAwardPolicy/)
+  for (const value of ['GUN_TIME', 'CHIP_TIME', 'BY_GENDER', 'EVENT_DATE']) {
+    assert.match(startComposer, new RegExp(value))
+  }
+  assert.match(startComposer, /Награждение — абсолют/)
+  assert.match(startComposer, /checked=\{value\.primaryStandingMode !== 'NONE'\}/)
+  assert.match(startComposer, /<option value="ALL">Общее/)
+  assert.match(startComposer, /<option value="BY_GENDER">По полу/)
+  assert.doesNotMatch(startComposer, /<option value="NONE">/)
+  assert.doesNotMatch(startComposer, /Без официального зачёта|Без награждения/)
+  assert.match(startComposer, /Награждение по категориям/)
+  assert.match(startComposer, /Призовых мест в каждой категории/)
+  assert.match(startComposer, /Не награждать в возрастных категориях призёров абсолютного награждения/)
+  assert.match(startComposer, /rankingBasis === 'NONE'/)
+  assert.ok(startComposer.indexOf('Возраст считать') > startComposer.indexOf('value.categoryEnabled &&'))
+})
+
+test('template and Race award flows reuse category editing without navigation', () => {
+  assert.match(templateDetail, /<AwardEditor[\s\S]*categorySettings=\{<CategorySettings/)
+  assert.match(policy, /<AwardEditor[\s\S]*categorySettings=\{<CategorySettings/)
+  for (const action of ['createTemplateCategory', 'updateTemplateCategory', 'deleteTemplateCategory', 'templateCategories']) {
+    assert.match(`${api}\n${templateDetail}`, new RegExp(action))
+  }
+  assert.match(categorySettings, /Возрастные категории/)
+  assert.match(categorySettings, /\+ Добавить категорию/)
+  assert.match(categorySettings, />Изменить</)
+  assert.match(categorySettings, />Удалить</)
+  assert.match(categorySettings, /Название в файле/)
+  assert.match(categorySettings, /minAge/)
+  assert.match(categorySettings, /maxAge/)
+  assert.match(categorySettings, /gender/)
+  assert.match(categorySettings, /displayOrder/)
+  assert.match(categorySettings, /enabled/)
+})
+
+test('single Event creation copies selected starts and keeps the preview editable on back', () => {
+  assert.match(events, /api\.templateStarts/)
+  assert.match(events, /draftsFromTemplate/)
+  assert.match(startDrafts, /included: true/)
+  assert.match(startComposer, /checked=\{draft\.included\}/)
+  assert.match(events, /<EventStartComposer/)
+  assert.match(events, /Продолжить/)
+  assert.match(events, /Проверка перед созданием/)
+  assert.match(events, /setPreview\(false\)/)
+  assert.match(events, /createEventWithStarts/)
+  assert.match(api, /\/admin\/events\/with-starts/)
+})
+
+test('event composer allows event-only edits, extra starts and visual reordering', () => {
+  assert.match(startComposer, /origin: 'extra'/)
+  assert.match(startComposer, /\+ Добавить старт/)
+  assert.match(startComposer, /Удалить дополнительный старт/)
+  assert.match(startComposer, /Изменения применятся только к создаваемому мероприятию/)
+  assert.match(startComposer, /onDrop=\{\(\) => dropBefore/)
+  assert.doesNotMatch(`${startComposer}\n${events}`, /Код импорта|· Код:/)
+  assert.match(startComposer, /Дистанция, м/)
+})
+
+test('bulk creation uses one common start set and previews total materialization', () => {
+  assert.match(bulkEvents, /api\.templateStarts/)
+  assert.match(bulkEvents, /<EventStartComposer/)
+  assert.match(bulkEvents, /starts: startCommands\(starts\)/)
+  assert.match(bulkEvents, /preview\.totalStartCount/)
+  assert.match(bulkEvents, /preview\.starts\.map/)
+  assert.doesNotMatch(bulkEvents, /per-city|для каждого города/i)
+})
+
+test('template UX exposes user terminology rather than persistence entity names', () => {
+  const visibleCopy = `${templates}\n${templateDetail}\n${events}\n${bulkEvents}`
+  for (const term of ['EventSeries', 'TemplateStart', 'AwardPolicy', 'Race']) {
+    assert.doesNotMatch(visibleCopy, new RegExp(`>${term}<`))
+  }
+})
+
+test('bulk screen manages cities, explicit timezones and two-step Preview without losing draft state', () => {
+  assert.match(bulkEvents, /<h1>Создать несколько мероприятий<\/h1>/)
+  assert.match(bulkEvents, /\+ Добавить город/)
+  assert.match(bulkEvents, /LOCATION_SUGGESTIONS/)
+  assert.match(bulkEvents, /suggestTimeZone\(location\) \?\? ''/)
+  assert.match(bulkEvents, /rows\.every\(\(row\) => row\.location\.trim\(\) && row\.timeZone\)/)
+  assert.match(bulkEvents, /api\.previewBulkEvents/)
+  assert.match(bulkEvents, /api\.createBulkEvents/)
+  assert.match(bulkEvents, /onBack=\{\(\) => setPreview\(null\)\}/)
+  assert.match(bulkEvents, /Проверка перед созданием/)
+  assert.match(bulkEvents, /Часовой пояс:/)
+  assert.doesNotMatch(bulkEvents, /Показать Preview|>Preview<|Timezone:|проверьте Preview/)
+})
+
+test('existing Event starts support guarded deletion without affecting templates', () => {
+  assert.match(api, /deleteRace:/)
+  assert.match(api, /\/admin\/events\/\$\{eventId\}\/races\/\$\{raceId\}/)
+  assert.match(core, /Удалить старт/)
+  assert.match(core, /`Удалить старт «\$\{confirmedRace\?\.name/)
+  assert.match(core, /Старт будет удалён только из этого мероприятия\. Шаблон и другие мероприятия не изменятся\./)
+  assert.match(core, /resultsPublicationStatus === 'PUBLISHED'/)
+  for (const code of ['RACE_DELETE_PUBLISHED', 'RACE_DELETE_HAS_RESULTS', 'RACE_DELETE_HAS_REGISTRATIONS', 'RACE_DELETE_HAS_DEPENDENCIES']) {
+    assert.match(utils, new RegExp(code))
+  }
+})
+
+test('bulk duplicate detection normalizes case, whitespace and yo', () => {
+  assert.equal(normalizedLocation('  Орёл   Центр '), 'орел центр')
+  const duplicates = duplicateLocationIds([
+    { id: 1, location: 'Москва', timeZone: 'Europe/Moscow' },
+    { id: 2, location: '  москва ', timeZone: 'Europe/Moscow' },
+    { id: 3, location: 'Казань', timeZone: 'Europe/Moscow' },
+  ])
+  assert.deepEqual([...duplicates].sort(), [1, 2])
+  assert.match(bulkEvents, /disabled=\{busy \|\| !ready\}/)
+})
+
+test('admin heading actions wrap and become full-width without mobile overflow', () => {
+  assert.match(css, /\.admin-heading-actions[^}]*flex-wrap:\s*wrap/)
+  assert.match(css, /@media \(max-width: 520px\).*\.admin-heading-actions/s)
+  assert.match(css, /\.admin-heading-actions > \*[^}]*width:\s*100%/)
 })
 
 test('event content CRUD uses protected APIs and FileStorage-backed document downloads', () => {
@@ -105,10 +311,16 @@ test('an unambiguous Event location suggests a timezone without locking the sele
   assert.match(timeZoneCombobox, /select\(suggestedValue\)/)
 })
 
-test('event page exposes the complete operator tab model', () => {
-  for (const label of ['Основное', 'Старты', 'Категории и стартовые волны', 'Участники', 'Результаты', 'Загрузка результатов', 'Обращения', 'Зачёт и награждение', 'Публикация']) {
+test('event page separates Event configuration from result operations', () => {
+  for (const label of ['Мероприятие', 'Результаты', 'Основное', 'Старты', 'Награждение и категории', 'Информация участникам', 'Загрузка', 'Участники', 'Обращения']) {
     assert.match(eventPage, new RegExp(label))
   }
+  assert.match(eventPage, /EVENT_TABS/)
+  assert.match(eventPage, /RESULT_TABS/)
+  assert.doesNotMatch(eventPage, /Категории и стартовые волны|tab === 'publication'|Доступ к результатам/)
+  assert.match(core, /Публикация мероприятия/)
+  assert.match(core, /Результаты публикуются отдельно для каждого старта/)
+  assert.match(eventPage, /publishedRaceCount/)
 })
 
 test('Start UI uses the final Race-only contract while preserving explicit publication', () => {
@@ -119,18 +331,16 @@ test('Start UI uses the final Race-only contract while preserving explicit publi
   assert.doesNotMatch(core, /Адрес в URL|slug: form\.slug|sportFormatId:/)
   assert.match(core, /Вернуть в черновик/)
   assert.match(core, /Опубликовать/)
+  assert.doesNotMatch(core, /Код импорта|sourceCode/)
   assert.doesNotMatch(core, /auto-?draft/i)
   assert.doesNotMatch(api, /sportFormats:|createSportFormat:|sportFormatId|entryMode/)
 })
 
-test('category and start-wave CRUD preserve their distinct meanings', () => {
-  assert.match(categories, /Добавить категорию/)
-  assert.match(categories, /CATEGORY_IN_USE|Категория используется|историческими данными/)
-  assert.match(categories, /Стартовые волны/)
+test('categories remain in award workflow while start waves are not ordinary Event settings', () => {
+  assert.match(policy, /CategorySettings/)
+  assert.match(categorySettings, /Добавить категорию/)
+  assert.doesNotMatch(eventPage, /EventCategoriesTab|CategoriesClustersTab|Категории и стартовые волны/)
   assert.match(categories, /стартовая волна не рассчитывается/)
-  assert.match(categories, /Field label="Старт"/)
-  assert.match(categories, /item\.name/)
-  assert.match(categories, /младше 18 лет/)
 })
 
 test('participants are an Event-wide admin view without a fabricated Event place', () => {
@@ -161,12 +371,41 @@ test('import exposes three explicit modes and never auto-syncs them', () => {
   assert.doesNotMatch(imports, /Синхронизировать всё/)
 })
 
-test('import Preview is separate from Apply and emergency replace needs typed confirmation', () => {
-  assert.match(imports, /Построить Preview/)
+test('flexible import keeps data verification separate from Apply and emergency replace needs typed confirmation', () => {
+  assert.match(imports, /Рекомендуемый формат/)
+  assert.match(imports, /Другой файл хронометражиста/)
+  assert.match(imports, /Скачать шаблон Excel/)
+  assert.match(imports, /Сопоставление колонок/)
+  assert.match(imports, /Сопоставление стартов/)
+  assert.match(imports, /Название формата файла/)
+  assert.match(imports, /Найти старты в файле/)
+  assert.match(imports, /Запомнить сопоставление стартов/)
+  assert.match(imports, /Сопоставлено стартов:/)
+  assert.match(imports, /Проверить данные/)
+  assert.match(imports, /4\. Проверка данных/)
+  assert.doesNotMatch(imports, /Построить Preview/)
+  assert.match(api, /imports\/template\.xlsx/)
+  assert.match(api, /imports\/analyze/)
+  assert.match(api, /import-mapping-profiles/)
+  assert.match(api, /form\.append\('options', JSON\.stringify\(options\)\)/)
+  assert.match(imports, /Файл не является актуальным шаблоном Sports Results/)
   assert.match(imports, /blockingErrorsPresent/)
   assert.match(imports, /api\.importApply/)
   assert.match(imports, /confirmation === 'ЗАМЕНИТЬ'/)
-  assert.match(utils, /IMPORT_PREVIEW_STALE.*Выполните Preview заново/s)
+  assert.match(utils, /IMPORT_PREVIEW_STALE.*Повторите проверку данных/s)
+  assert.match(utils, /STALE_EVENT_TEMPLATE.*Структура мероприятия изменилась/s)
+  assert.doesNotMatch(imports, /Race\.sourceCode|ImportBatch|backend plan/)
+})
+
+test('import presentation translates technical decisions and category or cluster changes', () => {
+  for (const label of ['Готово', 'Требуется проверка', 'Готово к применению', 'Есть блокирующие ошибки', 'Без изменений']) {
+    assert.match(utils, new RegExp(label))
+  }
+  assert.match(imports, /NEW_REGISTRATION: 'Участник будет добавлен'/)
+  assert.match(imports, /categoryDefinition: 'Категория'/)
+  assert.match(imports, /Будет создана:/)
+  assert.match(imports, /clusterDefinition: 'Стартовая волна'/)
+  assert.match(imports, /Проверка данных обновлена/)
 })
 
 test('recalculation pending, Preview and Apply remain explicit', () => {
@@ -181,7 +420,7 @@ test('AwardPolicy stays backend-owned and published Start is never auto-drafted'
   assert.match(policy, /единственный источник правил официального протокола/)
   assert.match(policy, /GUN_TIME/)
   assert.match(policy, /CHIP_TIME/)
-  assert.match(policy, /NONE/)
+  assert.match(`${policy}\n${startComposer}`, /NONE/)
   assert.match(policy, /Сохранение настроек не меняет статус публикации автоматически/)
   assert.match(policy, /Field label="Старт"/)
   assert.match(policy, /item\.name/)

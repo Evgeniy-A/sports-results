@@ -15,6 +15,8 @@ public interface ResultRepository extends JpaRepository<Result, Long>, ResultSea
 
     List<Result> findAllByRegistrationIdIn(Collection<Long> registrationIds);
 
+    boolean existsByRegistrationRaceId(Long raceId);
+
     @Override
     @EntityGraph(attributePaths = {
             "registration",

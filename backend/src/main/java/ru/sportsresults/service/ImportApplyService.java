@@ -2,6 +2,7 @@ package ru.sportsresults.service;
 
 import org.springframework.stereotype.Service;
 import ru.sportsresults.api.dto.ImportApplyResponseDto;
+import ru.sportsresults.importing.ImportInputConfig;
 import ru.sportsresults.repository.ImportOperationRepository;
 
 import java.util.UUID;
@@ -12,15 +13,18 @@ public class ImportApplyService {
     private final ImportApplyFilePreparationService filePreparationService;
     private final ImportApplyTransactionService transactionService;
     private final ImportOperationRepository operationRepository;
+    private final FlexibleImportFileService flexibleImportFileService;
 
     public ImportApplyService(
             ImportApplyFilePreparationService filePreparationService,
             ImportApplyTransactionService transactionService,
-            ImportOperationRepository operationRepository
+            ImportOperationRepository operationRepository,
+            FlexibleImportFileService flexibleImportFileService
     ) {
         this.filePreparationService = filePreparationService;
         this.transactionService = transactionService;
         this.operationRepository = operationRepository;
+        this.flexibleImportFileService = flexibleImportFileService;
     }
 
     public ImportApplyResponseDto apply(
@@ -44,7 +48,14 @@ public class ImportApplyService {
         if (!previewMetadata.getFileSha256().equals(fileSha256)) {
             throw new RequestConflictException("FILE_MISMATCH", "Uploaded file differs from the previewed file");
         }
-        PreparedImportFile prepared = filePreparationService.prepare(contents, fileSha256);
+        ImportInputConfig inputConfig = flexibleImportFileService.deserializeConfig(previewMetadata.getInputConfig());
+        PreparedImportFile prepared = filePreparationService.prepare(
+                eventId,
+                previewMetadata.getSourceFilename(),
+                contents,
+                fileSha256,
+                inputConfig
+        );
         return transactionService.apply(eventId, operationId, prepared, actor.strip());
     }
 }

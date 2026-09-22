@@ -8,6 +8,8 @@ public record EventSeriesDto(
         String slug,
         String description,
         boolean active,
+        long eventCount,
+        long startCount,
         Instant createdAt,
         Instant updatedAt
 ) {

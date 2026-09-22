@@ -9,21 +9,30 @@ import ru.sportsresults.domain.*;
 import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.AwardPolicyRepository;
 import ru.sportsresults.repository.RaceRepository;
+import ru.sportsresults.repository.RegistrationRepository;
+import ru.sportsresults.repository.ResultRepository;
 
 @Service
 public class RaceAdminService {
     private final RaceRepository raceRepository;
     private final AwardPolicyRepository awardPolicyRepository;
+    private final RegistrationRepository registrationRepository;
+    private final ResultRepository resultRepository;
     private final AdminChangeLogRepository auditRepository;
     private final EventResultDataMutationGuard mutationGuard;
     private final SlugGenerator slugGenerator;
 
     public RaceAdminService(RaceRepository raceRepository,
-                            AwardPolicyRepository awardPolicyRepository, AdminChangeLogRepository auditRepository,
+                            AwardPolicyRepository awardPolicyRepository,
+                            RegistrationRepository registrationRepository,
+                            ResultRepository resultRepository,
+                            AdminChangeLogRepository auditRepository,
                             EventResultDataMutationGuard mutationGuard,
                             SlugGenerator slugGenerator) {
         this.raceRepository = raceRepository;
         this.awardPolicyRepository = awardPolicyRepository;
+        this.registrationRepository = registrationRepository;
+        this.resultRepository = resultRepository;
         this.auditRepository = auditRepository;
         this.mutationGuard = mutationGuard;
         this.slugGenerator = slugGenerator;
@@ -38,19 +47,12 @@ public class RaceAdminService {
                 ? slugGenerator.uniqueSlug(request.name(), "start",
                         candidate -> raceRepository.existsByEventIdAndSlug(eventId, candidate))
                 : request.slug().strip();
-        applyFields(race, request, slug);
+        String sourceCode = normalizeSourceCode(request.sourceCode());
+        if (sourceCode == null) sourceCode = uniqueInternalSourceCode(eventId, slug);
+        applyFields(race, request, slug, sourceCode);
         try {
             raceRepository.saveAndFlush(race);
-            AwardPolicy policy = new AwardPolicy();
-            policy.setRace(race);
-            policy.setRankingBasis(RankingBasis.CHIP_TIME);
-            policy.setPrimaryStandingMode(PrimaryStandingMode.ALL);
-            policy.setAbsolutePrizePlaces(0);
-            policy.setCategoryEnabled(false);
-            policy.setAgeCalculationMode(AgeCalculationMode.EVENT_DATE);
-            policy.setCategoryPrizePlaces(0);
-            policy.setExcludeAbsoluteWinnersFromCategory(false);
-            awardPolicyRepository.save(policy);
+            awardPolicyRepository.save(AwardPolicyService.createDefault(race));
             audit(actor, race.getId(), "created", null, race.getName());
             mutationGuard.bump(event);
             return toDto(race, false);
@@ -70,7 +72,8 @@ public class RaceAdminService {
         String slug = request.slug() == null || request.slug().isBlank()
                 ? race.getSlug()
                 : request.slug().strip();
-        applyFields(race, request, slug);
+        String sourceCode = normalizeSourceCode(request.sourceCode());
+        applyFields(race, request, slug, sourceCode == null ? race.getSourceCode() : sourceCode);
         try {
             Race saved = raceRepository.saveAndFlush(race);
             boolean categories = awardPolicyRepository.findByRaceId(raceId).map(AwardPolicy::isCategoryEnabled).orElse(false);
@@ -87,8 +90,55 @@ public class RaceAdminService {
         }
     }
 
-    private static void applyFields(Race race, UpsertRaceRequest request, String slug) {
-        race.setSourceCode(request.sourceCode().strip());
+    @Transactional
+    public void delete(Long eventId, Long raceId, String actor) {
+        Event event = mutationGuard.lock(eventId);
+        Race race = raceRepository.findByIdAndEventIdForUpdate(raceId, eventId)
+                .orElseThrow(() -> new ResourceNotFoundException("RACE_NOT_FOUND", "Race not found in this event"));
+        if (race.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED) {
+            throw new RequestConflictException(
+                    "RACE_DELETE_PUBLISHED", "Published Race results cannot be deleted"
+            );
+        }
+        if (resultRepository.existsByRegistrationRaceId(raceId)) {
+            throw new RequestConflictException(
+                    "RACE_DELETE_HAS_RESULTS", "Race with results cannot be deleted"
+            );
+        }
+        if (registrationRepository.existsByRaceId(raceId)) {
+            throw new RequestConflictException(
+                    "RACE_DELETE_HAS_REGISTRATIONS", "Race with registrations cannot be deleted"
+            );
+        }
+        if (raceRepository.hasDeleteBlockingDependencies(raceId)) {
+            throw new RequestConflictException(
+                    "RACE_DELETE_HAS_DEPENDENCIES", "Race has import, publication, or configuration history"
+            );
+        }
+        String deletedName = race.getName();
+        audit(actor, raceId, "deleted", deletedName, null);
+        try {
+            raceRepository.delete(race);
+            raceRepository.flush();
+            normalizeDisplayOrder(eventId);
+            mutationGuard.bump(event);
+        } catch (DataIntegrityViolationException exception) {
+            throw new RequestConflictException(
+                    "RACE_DELETE_HAS_DEPENDENCIES", "Race has dependent data and cannot be deleted"
+            );
+        }
+    }
+
+    private void normalizeDisplayOrder(Long eventId) {
+        java.util.List<Race> races = raceRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId);
+        for (int index = 0; index < races.size(); index++) {
+            races.get(index).setDisplayOrder(index);
+        }
+        raceRepository.saveAll(races);
+    }
+
+    private static void applyFields(Race race, UpsertRaceRequest request, String slug, String sourceCode) {
+        race.setSourceCode(sourceCode);
         race.setName(request.name().strip());
         race.setSlug(slug);
         race.setDistanceMeters(request.distanceMeters());
@@ -97,6 +147,20 @@ public class RaceAdminService {
         if (request.publicVisible() != null) {
             race.setPublicVisible(request.publicVisible());
         }
+    }
+
+    private String uniqueInternalSourceCode(Long eventId, String slug) {
+        String base = "internal-" + slug;
+        String candidate = base;
+        int suffix = 2;
+        while (raceRepository.existsByEventIdAndSourceCode(eventId, candidate)) {
+            candidate = base + "-" + suffix++;
+        }
+        return candidate;
+    }
+
+    private static String normalizeSourceCode(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
     }
 
     private static RaceDto toDto(Race race, boolean categoryEnabled) {

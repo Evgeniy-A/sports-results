@@ -17,10 +17,10 @@ test('event and legacy results routes reuse one smart public event page', () => 
   assert.match(deepLink, /<PublicEventPage slug=\{slug\}/)
 })
 
-test('results-first is controlled strictly by results publication status', () => {
-  assert.match(page, /event\.resultsPublicationStatus === 'PUBLISHED'/)
-  assert.match(page, /defaultPublicEventSection\(loadedEvent\.resultsPublicationStatus\)/)
-  assert.doesNotMatch(page, /event\.resultsPublished|totalElements|results\.length/)
+test('results-first is controlled by published Race results and supports partial publication', () => {
+  assert.match(page, /event\.races\.some\(\(race\) => race\.resultsPublished\)/)
+  assert.match(page, /defaultPublicEventSection\(loadedEvent\.races\.some/)
+  assert.doesNotMatch(page, /event\.resultsPublicationStatus === 'PUBLISHED'|totalElements|results\.length/)
   assert.match(page, /resultsPublished && <div id="results-view"/)
 })
 
@@ -32,9 +32,10 @@ test('published event exposes results and event-info tabs while retaining result
   assert.match(page, /hidden=\{section !== 'results'\}[\s\S]*<EventResults key=\{event\.id\} event=\{event\}/)
 })
 
-test('draft event renders information and never mounts the public results component', () => {
-  assert.match(info, /event\.resultsPublicationStatus === 'DRAFT'/)
-  assert.match(info, /Результаты будут опубликованы после мероприятия/)
+test('all-draft Race set renders information and never mounts the public results component', () => {
+  assert.match(info, /event\.races\.some\(\(race\) => race\.resultsPublished\)/)
+  assert.match(info, /Результаты пока не опубликованы/)
+  assert.doesNotMatch(info, /Результаты будут опубликованы после мероприятия/)
   assert.match(page, /resultsPublished && <div id="results-view"/)
 })
 

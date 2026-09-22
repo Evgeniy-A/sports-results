@@ -22,6 +22,7 @@ import ru.sportsresults.repository.ResultListProjection;
 import ru.sportsresults.repository.ResultRepository;
 import ru.sportsresults.repository.ResultSearchCriteria;
 import ru.sportsresults.repository.ResultSortField;
+import ru.sportsresults.repository.PublicCategoryProtocolRepository;
 import ru.sportsresults.repository.SplitRepository;
 import ru.sportsresults.repository.StartClusterRepository;
 
@@ -43,6 +44,7 @@ public class ResultQueryService {
     private final OfficialRankingService officialRankingService;
     private final StartClusterRepository startClusterRepository;
     private final AwardPolicyRepository awardPolicyRepository;
+    private final PublicCategoryProtocolRepository publicCategoryProtocolRepository;
 
     public ResultQueryService(
             EventRepository eventRepository,
@@ -52,7 +54,8 @@ public class ResultQueryService {
             ResultDtoMapper mapper,
             OfficialRankingService officialRankingService,
             StartClusterRepository startClusterRepository,
-            AwardPolicyRepository awardPolicyRepository
+            AwardPolicyRepository awardPolicyRepository,
+            PublicCategoryProtocolRepository publicCategoryProtocolRepository
     ) {
         this.eventRepository = eventRepository;
         this.raceRepository = raceRepository;
@@ -62,6 +65,7 @@ public class ResultQueryService {
         this.officialRankingService = officialRankingService;
         this.startClusterRepository = startClusterRepository;
         this.awardPolicyRepository = awardPolicyRepository;
+        this.publicCategoryProtocolRepository = publicCategoryProtocolRepository;
     }
 
     @Transactional(readOnly = true)
@@ -95,11 +99,14 @@ public class ResultQueryService {
         RankingBasis officialBasis = officialBasis(race);
         ResultSortField sortField = parsePublicSort(sort, officialBasis);
         Sort.Direction sortDirection = parseDirection(direction);
+        List<Long> excludedResultIds = categoryId == null
+                ? List.of()
+                : publicCategoryProtocolRepository.findExcludedPrimaryPrizeWinnerIds(eventId, raceId, categoryId);
 
         Page<ResultListProjection> resultPage = resultRepository.search(
                 new ResultSearchCriteria(
                         eventId, raceId, name, bib, gender, categoryId, clusterId, publicStatus,
-                        officialBasis, true
+                        officialBasis, true, excludedResultIds
                 ),
                 page,
                 size,
@@ -168,7 +175,7 @@ public class ResultQueryService {
         Page<ResultListProjection> resultPage = resultRepository.search(
                 new ResultSearchCriteria(
                         eventId, raceId, name, bib, gender, categoryId, clusterId, status,
-                        resolvedBasis, false
+                        resolvedBasis, false, List.of()
                 ),
                 page,
                 size,
@@ -263,7 +270,6 @@ public class ResultQueryService {
 
     private void requirePublishedEvent(Long eventId) {
         if (eventRepository.findByIdAndPublicationStatus(eventId, EventPublicationStatus.PUBLISHED)
-                .filter(event -> event.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED)
                 .filter(event -> event.getEventSeries().isActive())
                 .isEmpty()) {
             throw new ResourceNotFoundException("EVENT_NOT_FOUND", "Published event not found");

@@ -8,7 +8,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 public record UpsertRaceRequest(
-        @NotBlank @Size(max = 255) String sourceCode,
+        @Size(max = 255) String sourceCode,
         @NotBlank @Size(max = 255) String name,
         @Size(max = 160)
         @Pattern(regexp = "[a-z0-9]+(?:-[a-z0-9]+)*", message = "must be a lowercase URL slug")

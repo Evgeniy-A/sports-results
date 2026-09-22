@@ -7,11 +7,13 @@ import { AdminLink, navigateAdmin } from '../router'
 import { adminErrorMessage } from '../utils'
 import { localDateTimeToIso } from '../time'
 import { AdminNotice, AdminPagination, Drawer, Field, Loadable, StatusBadge } from '../components/AdminUi'
+import { InlineTemplateCreator } from '../components/InlineTemplateCreator'
 import { TimeZoneCombobox } from '../components/TimeZoneCombobox'
+import { EventStartComposer } from '../components/EventStartComposer'
+import { draftsFromTemplate, startCommands } from '../eventStartDrafts'
+import type { EventStartDraft } from '../eventStartDrafts'
 
-interface Props {
-  api: AdminApi
-}
+interface Props { api: AdminApi }
 
 const EMPTY_PAGE: PageResponse<EventSummary> = {
   content: [], page: 0, size: 25, totalElements: 0, totalPages: 0, sort: 'startsAt', direction: 'desc',
@@ -19,7 +21,7 @@ const EMPTY_PAGE: PageResponse<EventSummary> = {
 
 export function AdminEventsPage({ api }: Props) {
   const [events, setEvents] = useState(EMPTY_PAGE)
-  const [series, setSeries] = useState<EventSeries[]>([])
+  const [templates, setTemplates] = useState<EventSeries[]>([])
   const [name, setName] = useState('')
   const [location, setLocation] = useState('')
   const [publicationStatus, setPublicationStatus] = useState('')
@@ -29,91 +31,72 @@ export function AdminEventsPage({ api }: Props) {
   const [createOpen, setCreateOpen] = useState(false)
 
   const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+    setLoading(true); setError(null)
     try {
-      const [eventPage, allSeries] = await Promise.all([
-        api.events({ name, location, publicationStatus, page, size: 25 }),
-        api.eventSeries(),
+      const [eventPage, allTemplates] = await Promise.all([
+        api.events({ name, location, publicationStatus, page, size: 25 }), api.eventSeries(),
       ])
-      setEvents(eventPage)
-      setSeries(allSeries)
-    } catch (reason) {
-      setError(adminErrorMessage(reason))
-    } finally {
-      setLoading(false)
-    }
+      setEvents(eventPage); setTemplates(allTemplates)
+    } catch (reason) { setError(adminErrorMessage(reason)) } finally { setLoading(false) }
   }, [api, location, name, page, publicationStatus])
 
   useEffect(() => { void load() }, [load])
-
-  const applyFilters = (event: FormEvent) => {
-    event.preventDefault()
-    setPage(0)
-    void load()
-  }
+  const addTemplate = (created: EventSeries) => setTemplates((current) => [...current, created]
+    .sort((left, right) => left.name.localeCompare(right.name, 'ru')))
+  const applyFilters = (event: FormEvent) => { event.preventDefault(); setPage(0); void load() }
 
   return <>
     <div className="admin-page-heading">
-      <div><p className="admin-eyebrow">Управление</p><h1>Мероприятия</h1><p>Создание, настройки и публикация спортивных событий.</p></div>
-      <button className="admin-button-primary" type="button" onClick={() => setCreateOpen(true)}>Создать мероприятие</button>
+      <div><p className="admin-eyebrow">Управление</p><h1>Мероприятия</h1><p>Создавайте отдельные мероприятия или несколько городов сразу на основе шаблона.</p></div>
+      <div className="admin-heading-actions">
+        <button className="admin-button-primary" type="button" onClick={() => setCreateOpen(true)}>+ Создать мероприятие</button>
+        <AdminLink className="admin-button-secondary" href="/admin/events/bulk">Создать несколько мероприятий</AdminLink>
+        <AdminLink className="admin-button-secondary" href="/admin/templates">Шаблоны</AdminLink>
+      </div>
     </div>
 
     <form className="admin-filter-bar" onSubmit={applyFilters}>
       <Field label="Название"><input value={name} onChange={(event) => setName(event.target.value)} placeholder="Например, M52" /></Field>
       <Field label="Город"><input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Город или место" /></Field>
-      <Field label="Статус">
-        <select value={publicationStatus} onChange={(event) => setPublicationStatus(event.target.value)}>
-          <option value="">Все</option><option value="DRAFT">Черновик</option><option value="PUBLISHED">Опубликовано</option><option value="ARCHIVED">Архив</option>
-        </select>
-      </Field>
+      <Field label="Статус"><select value={publicationStatus} onChange={(event) => setPublicationStatus(event.target.value)}><option value="">Все</option><option value="DRAFT">Черновик</option><option value="PUBLISHED">Опубликовано</option><option value="ARCHIVED">Архив</option></select></Field>
       <button className="admin-button-secondary" type="submit">Найти</button>
     </form>
 
-    <Loadable loading={loading} error={error} empty={!events.content.length}>
-      <div className="admin-table-wrap">
-        <table className="admin-table">
-          <thead><tr><th>Мероприятие</th><th>Дата</th><th>Место</th><th>Серия</th><th>Event</th><th>Результаты</th><th /></tr></thead>
+    <Loadable loading={loading} error={error}>
+      {events.content.length ? <>
+        <div className="admin-table-wrap"><table className="admin-table">
+          <thead><tr><th>Мероприятие</th><th>Дата</th><th>Место</th><th>Шаблон</th><th>Публикация мероприятия</th><th /></tr></thead>
           <tbody>{events.content.map((event) => <tr key={event.id}>
             <td><strong>{event.name}</strong><small>/{event.slug}</small></td>
             <td>{event.startsAt ? new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeZone: event.timeZone }).format(new Date(event.startsAt)) : 'Дата не указана'}</td>
-            <td>{event.location ?? '—'}</td>
-            <td>{event.eventSeriesName}</td>
+            <td>{event.location ?? '—'}</td><td>{event.eventSeriesName}</td>
             <td><StatusBadge value={event.publicationStatus} /></td>
-            <td><StatusBadge value={event.resultsPublicationStatus} /></td>
             <td><AdminLink className="admin-row-link" href={`/admin/events/${event.id}`}>Открыть</AdminLink></td>
           </tr>)}</tbody>
-        </table>
-      </div>
-      <AdminPagination page={events.page} totalPages={events.totalPages} onChange={setPage} />
+        </table></div>
+        <AdminPagination page={events.page} totalPages={events.totalPages} onChange={setPage} />
+      </> : <section className="admin-empty">
+        <h2>Мероприятий пока нет</h2><p>Создайте одно мероприятие или несколько городов сразу из шаблона.</p>
+        <div className="admin-empty-actions"><button className="admin-button-primary" type="button" onClick={() => setCreateOpen(true)}>+ Создать мероприятие</button><AdminLink className="admin-button-secondary" href="/admin/events/bulk">Создать несколько</AdminLink></div>
+      </section>}
     </Loadable>
 
-    {createOpen && <CreateEventDrawer
-      api={api}
-      series={series}
-      onSeriesCreated={(created) => setSeries((current) => [...current, created]
-        .sort((left, right) => left.name.localeCompare(right.name, 'ru')))}
-      onClose={() => setCreateOpen(false)}
-    />}
+    {createOpen && <CreateEventDrawer api={api} templates={templates} onTemplateCreated={addTemplate} onClose={() => setCreateOpen(false)} />}
   </>
 }
 
-function CreateEventDrawer({ api, series, onSeriesCreated, onClose }: {
-  api: AdminApi
-  series: EventSeries[]
-  onSeriesCreated: (series: EventSeries) => void
-  onClose: () => void
+function CreateEventDrawer({ api, templates, onTemplateCreated, onClose }: {
+  api: AdminApi; templates: EventSeries[]; onTemplateCreated: (template: EventSeries) => void; onClose: () => void
 }) {
   const [name, setName] = useState('')
-  const [seriesId, setSeriesId] = useState(series[0]?.id ? String(series[0].id) : '')
-  const [seriesCreatorOpen, setSeriesCreatorOpen] = useState(series.length === 0)
-  const [newSeriesName, setNewSeriesName] = useState('')
-  const [seriesBusy, setSeriesBusy] = useState(false)
-  const [seriesError, setSeriesError] = useState<string | null>(null)
+  const [templateId, setTemplateId] = useState(templates[0]?.id ? String(templates[0].id) : '')
   const [startsAt, setStartsAt] = useState('')
   const [endsAt, setEndsAt] = useState('')
   const [location, setLocation] = useState('')
   const [timeZone, setTimeZone] = useState('Europe/Moscow')
+  const [starts, setStarts] = useState<EventStartDraft[]>([])
+  const [startsLoading, setStartsLoading] = useState(false)
+  const [preview, setPreview] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -123,73 +106,51 @@ function CreateEventDrawer({ api, series, onSeriesCreated, onClose }: {
     return () => window.removeEventListener('beforeunload', warn)
   }, [name])
 
-  const submit = async (event: FormEvent) => {
+  useEffect(() => {
+    if (!templateId) { setStarts([]); return }
+    let cancelled = false
+    setStartsLoading(true); setError(null); setPreview(false)
+    api.templateStarts(Number(templateId))
+      .then((loaded) => { if (!cancelled) setStarts(draftsFromTemplate(loaded)) })
+      .catch((reason) => { if (!cancelled) setError(adminErrorMessage(reason)) })
+      .finally(() => { if (!cancelled) setStartsLoading(false) })
+    return () => { cancelled = true }
+  }, [api, templateId])
+
+  const showPreview = (event: FormEvent) => {
     event.preventDefault()
-    if (!seriesId) { setError('Сначала выберите или создайте серию мероприятий.'); return }
+    if (!templateId) { setError('Сначала выберите или создайте шаблон.'); return }
+    if (startCommands(starts).some((start) => !start.name)) { setError('У каждого включённого старта должно быть название.'); return }
+    setError(null); setPreview(true)
+  }
+  const create = async () => {
+    if (!templateId) return
     setBusy(true); setError(null)
     try {
-      const created = await api.createEvent({
-        eventSeriesId: Number(seriesId), name,
-        startsAt: localDateTimeToIso(startsAt, timeZone), endsAt: localDateTimeToIso(endsAt, timeZone),
-        location: location || null, timeZone, publicationStatus: 'DRAFT',
+      const created = await api.createEventWithStarts({
+        event: { eventSeriesId: Number(templateId), name,
+          startsAt: localDateTimeToIso(startsAt, timeZone), endsAt: localDateTimeToIso(endsAt, timeZone),
+          location: location || null, timeZone, publicationStatus: 'DRAFT' },
+        starts: startCommands(starts),
       })
-      navigateAdmin(`/admin/events/${created.id}`)
-    } catch (reason) {
-      setError(adminErrorMessage(reason))
-    } finally {
-      setBusy(false)
-    }
+      navigateAdmin(`/admin/events/${created.event.id}`)
+    } catch (reason) { setError(adminErrorMessage(reason)); setPreview(false) }
+    finally { setBusy(false) }
   }
+  const templateCreated = (created: EventSeries) => { onTemplateCreated(created); setTemplateId(String(created.id)) }
 
-  const createSeries = async () => {
-    if (!newSeriesName.trim()) { setSeriesError('Укажите название серии.'); return }
-    setSeriesBusy(true); setSeriesError(null)
-    try {
-      const created = await api.createEventSeries({
-        name: newSeriesName.trim(), description: null, active: true,
-      })
-      onSeriesCreated(created)
-      setSeriesId(String(created.id))
-      setNewSeriesName('')
-      setSeriesCreatorOpen(false)
-    } catch (reason) {
-      setSeriesError(adminErrorMessage(reason))
-    } finally {
-      setSeriesBusy(false)
-    }
-  }
-
-  return <Drawer title="Новое мероприятие" onClose={onClose}>
-    <form className="admin-form" onSubmit={submit}>
-      {error && <AdminNotice tone="danger">{error}</AdminNotice>}
+  const selectedStarts = startCommands(starts)
+  return <Drawer title="Новое мероприятие" onClose={onClose}><form className="admin-form" onSubmit={showPreview}>
+    {error && <AdminNotice tone="danger">{error}</AdminNotice>}
+    {!preview ? <>
       <Field label="Название"><input required maxLength={255} value={name} onChange={(event) => setName(event.target.value)} /></Field>
-      <Field label="Серия мероприятий" hint="Выберите бренд или цикл, к которому относится мероприятие."><select required value={seriesId} onChange={(event) => setSeriesId(event.target.value)}><option value="">Выберите серию</option>{series.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-      <button
-        type="button"
-        className="admin-link-button admin-create-series-toggle"
-        aria-expanded={seriesCreatorOpen}
-        onClick={() => { setSeriesCreatorOpen((open) => !open); setSeriesError(null) }}
-      >+ Создать новую серию</button>
-      {seriesCreatorOpen && <section className="admin-inline-create" aria-label="Создание серии мероприятий">
-        <Field label="Название серии"><input
-          maxLength={255}
-          value={newSeriesName}
-          onChange={(event) => setNewSeriesName(event.target.value)}
-          onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void createSeries() } }}
-          placeholder="Например, Гонка Героев"
-        /></Field>
-        {seriesError && <AdminNotice tone="danger">{seriesError}</AdminNotice>}
-        <div className="admin-form-actions">
-          <button className="admin-button-secondary" type="button" disabled={seriesBusy || !newSeriesName.trim()} onClick={() => void createSeries()}>{seriesBusy ? 'Создаём…' : 'Создать серию'}</button>
-          <button className="admin-link-button" type="button" disabled={seriesBusy} onClick={() => { setSeriesCreatorOpen(false); setSeriesError(null) }}>Отмена</button>
-        </div>
-      </section>}
+      <Field label="Шаблон" hint="Шаблон объединяет мероприятия одного бренда и может использоваться повторно."><select required value={templateId} onChange={(event) => setTemplateId(event.target.value)}><option value="">Выберите шаблон</option>{templates.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+      <InlineTemplateCreator api={api} initiallyOpen={templates.length === 0} onCreated={templateCreated} />
       <div className="admin-form-grid"><Field label="Начало"><input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} /></Field><Field label="Окончание"><input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} /></Field></div>
       <Field label="Город / место"><input maxLength={255} value={location} onChange={(event) => setLocation(event.target.value)} /></Field>
-      <Field label="Часовой пояс" hint="Выберите город с подходящим местным временем">
-        <TimeZoneCombobox value={timeZone} location={location} onChange={setTimeZone} />
-      </Field>
-      <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy || seriesBusy} type="submit">{busy ? 'Создаём…' : 'Создать'}</button><button className="admin-button-secondary" type="button" onClick={onClose}>Отмена</button></div>
-    </form>
-  </Drawer>
+      <Field label="Часовой пояс" hint="Выберите город с подходящим местным временем"><TimeZoneCombobox value={timeZone} location={location} onChange={setTimeZone} /></Field>
+      {startsLoading ? <p>Загружаем старты шаблона…</p> : <EventStartComposer value={starts} onChange={setStarts} />}
+      <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy || startsLoading} type="submit">Продолжить</button><button className="admin-button-secondary" type="button" onClick={onClose}>Отмена</button></div>
+    </> : <section className="admin-event-preview"><p className="admin-eyebrow">Проверка перед созданием</p><h2>{name}</h2><p><strong>Шаблон:</strong> {templates.find((item) => String(item.id) === templateId)?.name}<br /><strong>Город / место:</strong> {location || '—'}</p><h3>Будут созданы старты</h3>{selectedStarts.length ? <ol>{selectedStarts.map((start) => <li key={`${start.templateStartId}-${start.sourceCode}-${start.name}`}><strong>{start.name}</strong><span>{start.distanceMeters === null ? 'Дистанция не указана' : `${start.distanceMeters} м`} · Награждение: {start.awardPolicy ? 'настроено' : 'штатные настройки'}</span></li>)}</ol> : <p>Мероприятие будет создано без стартов.</p>}<div className="admin-form-actions"><button className="admin-button-secondary" type="button" disabled={busy} onClick={() => setPreview(false)}>Назад</button><button className="admin-button-primary" type="button" disabled={busy} onClick={() => void create()}>{busy ? 'Создаём…' : 'Создать мероприятие'}</button></div></section>}
+  </form></Drawer>
 }

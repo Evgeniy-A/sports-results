@@ -213,6 +213,8 @@ public class ImportPreviewPlanner {
         );
         if (cluster.cluster() != null) {
             effects.add(diff("cluster", null, displayCluster(cluster.cluster())));
+        } else if (cluster.proposedDisplayName() != null) {
+            effects.add(diff("clusterDefinition", null, cluster.proposedDisplayName()));
         }
         return row(row, bib, participantName, targetRaceRef, null,
                 ImportPreviewDecision.NEW, ImportPreviewAction.INSERT,
@@ -288,10 +290,16 @@ public class ImportPreviewPlanner {
                             categoryBlock.code(), categoryBlock.message(), List.of());
                 }
             }
+            List<ImportPreviewResponseDto.FieldDiff> effects = new ArrayList<>(
+                    categoryDefinitionDiffs(row, targetRace, snapshot.categories())
+            );
+            if (cluster.proposedDisplayName() != null) {
+                effects.add(diff("clusterDefinition", null, cluster.proposedDisplayName()));
+            }
             return row(row, bib, participantName, targetRaceRef, null,
                     ImportPreviewDecision.NEW, action(mode, ImportPreviewDecision.NEW, null),
                     "NEW_REGISTRATION", "No current registration has this event bib",
-                    categoryDefinitionDiffs(row, targetRace, snapshot.categories()));
+                    effects);
         }
         if (candidates.size() > 1) {
             return row(row, bib, participantName, targetRaceRef, null,
@@ -395,9 +403,15 @@ public class ImportPreviewPlanner {
 
         if (cluster.state() == SourceFieldState.VALUE) {
             String oldCluster = displayCluster(candidate.cluster());
-            String newCluster = displayCluster(cluster.cluster());
-            if (!Objects.equals(candidate.cluster() == null ? null : candidate.cluster().id(), cluster.cluster().id())) {
+            String newCluster = cluster.cluster() == null
+                    ? cluster.proposedDisplayName()
+                    : displayCluster(cluster.cluster());
+            if (cluster.cluster() == null
+                    || !Objects.equals(candidate.cluster() == null ? null : candidate.cluster().id(), cluster.cluster().id())) {
                 diffs.add(diff("cluster", oldCluster, newCluster));
+            }
+            if (cluster.proposedDisplayName() != null) {
+                diffs.add(diff("clusterDefinition", null, cluster.proposedDisplayName()));
             }
         }
 
@@ -480,10 +494,10 @@ public class ImportPreviewPlanner {
         boolean anyColumn = fields.stream().anyMatch(field -> !field.isAbsent());
         boolean anyValue = fields.stream().anyMatch(SourceField::hasValue);
         if (!anyColumn) {
-            return new ClusterResolution(SourceFieldState.ABSENT, null, null, null);
+            return new ClusterResolution(SourceFieldState.ABSENT, null, null, null, null);
         }
         if (!anyValue) {
-            return new ClusterResolution(SourceFieldState.EMPTY, null, null, null);
+            return new ClusterResolution(SourceFieldState.EMPTY, null, null, null, null);
         }
 
         List<ImportPreviewDatabaseSnapshot.ClusterSnapshot> targetClusters = clusters.stream()
@@ -491,10 +505,10 @@ public class ImportPreviewPlanner {
                 .filter(cluster -> matches(row, cluster))
                 .toList();
         if (targetClusters.size() == 1) {
-            return new ClusterResolution(SourceFieldState.VALUE, targetClusters.getFirst(), null, null);
+            return new ClusterResolution(SourceFieldState.VALUE, targetClusters.getFirst(), null, null, null);
         }
         if (targetClusters.size() > 1) {
-            return new ClusterResolution(SourceFieldState.VALUE, null,
+            return new ClusterResolution(SourceFieldState.VALUE, null, null,
                     "AMBIGUOUS_START_CLUSTER", "Source cluster matches more than one target race cluster");
         }
 
@@ -502,18 +516,12 @@ public class ImportPreviewPlanner {
                 .filter(cluster -> cluster.raceId().equals(targetRace.id()))
                 .anyMatch(cluster -> matchesAny(row, cluster));
         if (targetIdentifiersConflict) {
-            return new ClusterResolution(SourceFieldState.VALUE, null,
+            return new ClusterResolution(SourceFieldState.VALUE, null, null,
                     "START_CLUSTER_IDENTIFIERS_CONFLICT", "Source cluster identifiers refer to different clusters");
         }
-        boolean crossRace = clusters.stream()
-                .filter(cluster -> !cluster.raceId().equals(targetRace.id()))
-                .anyMatch(cluster -> matches(row, cluster));
-        if (crossRace) {
-            return new ClusterResolution(SourceFieldState.VALUE, null,
-                    "CROSS_RACE_START_CLUSTER", "Source cluster belongs to another race");
-        }
-        return new ClusterResolution(SourceFieldState.VALUE, null,
-                "UNKNOWN_START_CLUSTER", "Source cluster is not configured in the target race");
+        return new ClusterResolution(
+                SourceFieldState.VALUE, null, proposedClusterDisplayName(row), null, null
+        );
     }
 
     private static boolean matches(TimingResultImportRow row, ImportPreviewDatabaseSnapshot.ClusterSnapshot cluster) {
@@ -702,8 +710,14 @@ public class ImportPreviewPlanner {
         return List.of(diff("race", displayRace(current), displayRace(target)));
     }
 
+    private static String proposedClusterDisplayName(TimingResultImportRow row) {
+        if (row.clusterNameSource().hasValue()) return row.clusterNameSource().value();
+        if (row.clusterSourceNameSource().hasValue()) return row.clusterSourceNameSource().value();
+        return row.clusterCodeSource().hasValue() ? row.clusterCodeSource().value() : null;
+    }
+
     private static String displayCluster(ImportPreviewDatabaseSnapshot.ClusterSnapshot cluster) {
-        return cluster == null ? null : cluster.id() + ":" + cluster.displayName();
+        return cluster == null ? null : cluster.displayName();
     }
 
     private static List<ImportPreviewResponseDto.FieldDiff> categoryDefinitionDiffs(
@@ -979,6 +993,7 @@ public class ImportPreviewPlanner {
     private record ClusterResolution(
             SourceFieldState state,
             ImportPreviewDatabaseSnapshot.ClusterSnapshot cluster,
+            String proposedDisplayName,
             String errorCode,
             String errorMessage
     ) {

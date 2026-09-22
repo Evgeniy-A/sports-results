@@ -93,7 +93,7 @@ public class AwardPolicyService {
         return toDto(saved);
     }
 
-    private static void apply(AwardPolicy policy, UpdateAwardPolicyRequest request) {
+    static void apply(AwardPolicy policy, UpdateAwardPolicyRequest request) {
         policy.setRankingBasis(request.rankingBasis());
         policy.setPrimaryStandingMode(request.primaryStandingMode());
         policy.setAbsolutePrizePlaces(request.absolutePrizePlaces());
@@ -117,6 +117,27 @@ public class AwardPolicyService {
                     "NONE requires no primary/category standing and zero prize places"
             );
         }
+    }
+
+    static AwardPolicy createDefault(Race race) {
+        AwardPolicy policy = new AwardPolicy();
+        policy.setRace(race);
+        policy.setRankingBasis(RankingBasis.CHIP_TIME);
+        policy.setPrimaryStandingMode(PrimaryStandingMode.ALL);
+        policy.setAbsolutePrizePlaces(0);
+        policy.setCategoryEnabled(false);
+        policy.setAgeCalculationMode(ru.sportsresults.domain.AgeCalculationMode.EVENT_DATE);
+        policy.setCategoryPrizePlaces(0);
+        policy.setExcludeAbsoluteWinnersFromCategory(false);
+        return policy;
+    }
+
+    static AwardPolicy create(Race race, UpdateAwardPolicyRequest request) {
+        validate(request);
+        AwardPolicy policy = new AwardPolicy();
+        policy.setRace(race);
+        apply(policy, request);
+        return policy;
     }
 
     private static void change(List<AdminChangeLog> logs, String actor, Long id, String field, Object oldValue, Object newValue) {

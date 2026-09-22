@@ -84,6 +84,11 @@ public class ImportOperation {
     private String previewSummary;
 
     @NotNull
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "input_config", nullable = false, columnDefinition = "jsonb")
+    private String inputConfig = "{}";
+
+    @NotNull
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -167,6 +172,8 @@ public class ImportOperation {
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public String getPreviewSummary() { return previewSummary; }
     public void setPreviewSummary(String previewSummary) { this.previewSummary = previewSummary; }
+    public String getInputConfig() { return inputConfig; }
+    public void setInputConfig(String inputConfig) { this.inputConfig = inputConfig; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

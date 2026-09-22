@@ -1,11 +1,16 @@
 import { ApiError, readJsonBody } from '../api/client'
 import { apiUrl } from '../api/baseUrl.ts'
+import { notifyUnauthorized } from './adminAuthSession'
 import type {
   AdminCategory,
   AdminCredentials,
   AdminResultDetails,
   AwardPolicyUpdate,
   AwardPolicy,
+  BulkCreateEventsResponse,
+  BulkEventCommand,
+  BulkEventPreview,
+  CreateEventWithStartsCommand,
   EventIssueDetail,
   EventIssueItem,
   EventDocument,
@@ -14,6 +19,9 @@ import type {
   EventSeries,
   EventSummary,
   ImportApplyResult,
+  ImportFileAnalysis,
+  ImportInputOptions,
+  ImportMappingProfile,
   ImportMode,
   ImportPreview,
   IssueStatus,
@@ -28,6 +36,9 @@ import type {
   ResultListItem,
   ShareBatch,
   StartCluster,
+  TemplateAwardPolicy,
+  TemplateCategory,
+  TemplateStart,
 } from './types'
 
 function basicAuthorization(credentials: AdminCredentials): string {
@@ -55,12 +66,14 @@ async function adminRequest<T>(
   path: string,
   init: RequestInit = {},
   allowEmpty = false,
+  onUnauthorized?: () => void,
 ): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
   headers.set('Authorization', basicAuthorization(credentials))
   const response = await fetch(apiUrl(path), { ...init, headers })
   if (!response.ok) {
+    notifyUnauthorized(response.status, onUnauthorized)
     const payload = await response.json().catch(() => null) as {
       code?: unknown
       message?: unknown
@@ -80,11 +93,12 @@ async function adminRequest<T>(
   return await readJsonBody<T>(response, allowEmpty) as T
 }
 
-async function adminBlob(credentials: AdminCredentials, path: string): Promise<Blob> {
+async function adminBlob(credentials: AdminCredentials, path: string, onUnauthorized?: () => void): Promise<Blob> {
   const response = await fetch(apiUrl(path), {
     headers: { Authorization: basicAuthorization(credentials) },
   })
   if (!response.ok) {
+    notifyUnauthorized(response.status, onUnauthorized)
     const payload = await response.json().catch(() => null) as { code?: string; message?: string } | null
     throw new ApiError(response.status, payload?.message ?? `HTTP ${response.status}`, payload?.code ?? null)
   }
@@ -105,8 +119,8 @@ export interface AdminExportArtifact {
   shareExpiresAt: string | null
 }
 
-export function createAdminApi(credentials: AdminCredentials) {
-  const request = <T>(path: string, init?: RequestInit, allowEmpty = false) => adminRequest<T>(credentials, path, init, allowEmpty)
+export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: () => void) {
+  const request = <T>(path: string, init?: RequestInit, allowEmpty = false) => adminRequest<T>(credentials, path, init, allowEmpty, onUnauthorized)
   return {
     events: (query: {
       name?: string
@@ -118,6 +132,13 @@ export function createAdminApi(credentials: AdminCredentials) {
     }) => request<PageResponse<EventSummary>>(`/admin/events${queryString(query)}`),
     event: (eventId: number) => request<EventSummary>(`/admin/events/${eventId}`),
     createEvent: (body: object) => request<EventSummary>('/admin/events', { method: 'POST', ...json(body) }),
+    createEventWithStarts: (body: CreateEventWithStartsCommand) => request<{ event: EventSummary; starts: Race[] }>(
+      '/admin/events/with-starts', { method: 'POST', ...json(body) },
+    ),
+    previewBulkEvents: (body: BulkEventCommand) =>
+      request<BulkEventPreview>('/admin/events/bulk/preview', { method: 'POST', ...json(body) }),
+    createBulkEvents: (body: BulkEventCommand) =>
+      request<BulkCreateEventsResponse>('/admin/events/bulk', { method: 'POST', ...json(body) }),
     updateEvent: (eventId: number, body: object) =>
       request<EventSummary>(`/admin/events/${eventId}`, { method: 'PUT', ...json(body) }),
     updateEventPublication: (eventId: number, body: object) =>
@@ -125,11 +146,60 @@ export function createAdminApi(credentials: AdminCredentials) {
     eventSeries: () => request<EventSeries[]>('/admin/event-series'),
     createEventSeries: (body: object) =>
       request<EventSeries>('/admin/event-series', { method: 'POST', ...json(body) }),
+    updateEventSeries: (seriesId: number, body: object) =>
+      request<EventSeries>(`/admin/event-series/${seriesId}`, { method: 'PUT', ...json(body) }),
+    templateStarts: (seriesId: number) =>
+      request<TemplateStart[]>(`/admin/event-series/${seriesId}/start-templates`),
+    createTemplateStart: (seriesId: number, body: object) => request<TemplateStart>(
+      `/admin/event-series/${seriesId}/start-templates`, { method: 'POST', ...json(body) },
+    ),
+    updateTemplateStart: (seriesId: number, startId: number, body: object) => request<TemplateStart>(
+      `/admin/event-series/${seriesId}/start-templates/${startId}`, { method: 'PUT', ...json(body) },
+    ),
+    reorderTemplateStarts: (seriesId: number, templateStartIds: number[]) => request<TemplateStart[]>(
+      `/admin/event-series/${seriesId}/start-templates/reorder`,
+      { method: 'PUT', ...json({ templateStartIds }) },
+    ),
+    deleteTemplateStart: (seriesId: number, startId: number) => request<void>(
+      `/admin/event-series/${seriesId}/start-templates/${startId}`, { method: 'DELETE' }, true,
+    ),
+    templateAwardPolicy: (seriesId: number, startId: number) => request<TemplateAwardPolicy>(
+      `/admin/event-series/${seriesId}/start-templates/${startId}/award-policy`,
+    ),
+    updateTemplateAwardPolicy: (seriesId: number, startId: number, body: AwardPolicyUpdate) =>
+      request<TemplateAwardPolicy>(
+        `/admin/event-series/${seriesId}/start-templates/${startId}/award-policy`,
+        { method: 'PUT', ...json(body) },
+      ),
+    deleteTemplateAwardPolicy: (seriesId: number, startId: number) => request<void>(
+      `/admin/event-series/${seriesId}/start-templates/${startId}/award-policy`,
+      { method: 'DELETE' }, true,
+    ),
+    templateCategories: (seriesId: number, startId: number) => request<TemplateCategory[]>(
+      `/admin/event-series/${seriesId}/start-templates/${startId}/categories`,
+    ),
+    createTemplateCategory: (seriesId: number, startId: number, body: object) =>
+      request<TemplateCategory>(
+        `/admin/event-series/${seriesId}/start-templates/${startId}/categories`,
+        { method: 'POST', ...json(body) },
+      ),
+    updateTemplateCategory: (seriesId: number, startId: number, categoryId: number, body: object) =>
+      request<TemplateCategory>(
+        `/admin/event-series/${seriesId}/start-templates/${startId}/categories/${categoryId}`,
+        { method: 'PUT', ...json(body) },
+      ),
+    deleteTemplateCategory: (seriesId: number, startId: number, categoryId: number) => request<void>(
+      `/admin/event-series/${seriesId}/start-templates/${startId}/categories/${categoryId}`,
+      { method: 'DELETE' }, true,
+    ),
     races: (eventId: number) => request<Race[]>(`/admin/events/${eventId}/races`),
     createRace: (eventId: number, body: object) =>
       request<Race>(`/admin/events/${eventId}/races`, { method: 'POST', ...json(body) }),
     updateRace: (eventId: number, raceId: number, body: object) =>
       request<Race>(`/admin/events/${eventId}/races/${raceId}`, { method: 'PUT', ...json(body) }),
+    deleteRace: (eventId: number, raceId: number) => request<void>(
+      `/admin/events/${eventId}/races/${raceId}`, { method: 'DELETE' }, true,
+    ),
     publishRace: (eventId: number, raceId: number) => request(
       `/admin/events/${eventId}/races/${raceId}/results/publish`,
       { method: 'POST' },
@@ -217,7 +287,7 @@ export function createAdminApi(credentials: AdminCredentials) {
       `/admin/events/${eventId}/documents/${documentId}`, { method: 'DELETE' }, true,
     ),
     documentContent: (eventId: number, documentId: number) =>
-      adminBlob(credentials, `/admin/events/${eventId}/documents/${documentId}/content`),
+      adminBlob(credentials, `/admin/events/${eventId}/documents/${documentId}/content`, onUnauthorized),
     results: (eventId: number, query: object) =>
       request<PageResponse<ResultListItem>>(`/admin/events/${eventId}/results${queryString(query)}`),
     result: (resultId: number) => request<AdminResultDetails>(`/admin/results/${resultId}`),
@@ -236,16 +306,50 @@ export function createAdminApi(credentials: AdminCredentials) {
       mode: ImportMode,
       raceIds: number[],
       file: File,
+      options?: ImportInputOptions,
       rowLimit = 200,
     ) => {
       const form = new FormData()
       form.append('file', file)
+      if (options) form.append('options', JSON.stringify(options))
       const query = queryString({ mode, raceIds, rowLimit })
       return request<ImportPreview>(`/admin/events/${eventId}/imports/preview${query}`, {
         method: 'POST',
         body: form,
       })
     },
+    importTemplate: (eventId: number) => adminBlob(
+      credentials, `/admin/events/${eventId}/imports/template.xlsx`, onUnauthorized,
+    ),
+    analyzeImport: (eventId: number, file: File, targetRaceId?: number, options?: ImportInputOptions) => {
+      const form = new FormData()
+      form.append('file', file)
+      if (options) form.append('options', JSON.stringify(options))
+      return request<ImportFileAnalysis>(
+        `/admin/events/${eventId}/imports/analyze${queryString({ targetRaceId })}`,
+        { method: 'POST', body: form },
+      )
+    },
+    importMappingProfiles: () => request<ImportMappingProfile[]>('/admin/import-mapping-profiles'),
+    createImportMappingProfile: (body: {
+      name: string
+      fileType: 'CSV' | 'XLSX'
+      headerSignature: string
+      mappings: ImportInputOptions['columnMappings']
+      raceDiscriminatorHeader: string | null
+    }) => request<ImportMappingProfile>('/admin/import-mapping-profiles', { method: 'POST', ...json(body) }),
+    updateImportMappingProfile: (profileId: number, body: {
+      name: string
+      fileType: 'CSV' | 'XLSX'
+      headerSignature: string
+      mappings: ImportInputOptions['columnMappings']
+      raceDiscriminatorHeader: string | null
+    }) => request<ImportMappingProfile>(
+      `/admin/import-mapping-profiles/${profileId}`, { method: 'PUT', ...json(body) },
+    ),
+    deleteImportMappingProfile: (profileId: number) => request<void>(
+      `/admin/import-mapping-profiles/${profileId}`, { method: 'DELETE' }, true,
+    ),
     importApply: (eventId: number, operationId: string, file: File) => {
       const form = new FormData()
       form.append('file', file)
@@ -308,6 +412,7 @@ export function createAdminApi(credentials: AdminCredentials) {
         }),
       })
       if (!response.ok) {
+        notifyUnauthorized(response.status, onUnauthorized)
         const payload = await response.json().catch(() => null) as { code?: string; message?: string } | null
         throw new ApiError(response.status, payload?.message ?? `HTTP ${response.status}`, payload?.code ?? null)
       }

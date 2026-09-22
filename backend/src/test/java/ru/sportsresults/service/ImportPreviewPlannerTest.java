@@ -237,12 +237,20 @@ class ImportPreviewPlannerTest {
         assertConflict(planWithClusters(List.of(
                 row(2, "60", "A", SourceField.value(DOB), SourceField.empty(), 1_000, "Ivan")
         ), List.of(current)), "START_CLUSTER_CLEAR_NOT_ALLOWED");
-        assertConflict(planWithClusters(List.of(
+        ImportPreviewPlan unknownCluster = planWithClusters(List.of(
                 row(2, "60", "A", SourceField.value(DOB), SourceField.value("UNKNOWN"), 1_000, "Ivan")
-        ), List.of(current)), "UNKNOWN_START_CLUSTER");
-        assertConflict(planWithClusters(List.of(
+        ), List.of(current));
+        assertThat(find(unknownCluster, 2).decision()).isEqualTo(ImportPreviewDecision.EXISTING_CHANGED);
+        assertThat(find(unknownCluster, 2).futureAction()).isEqualTo(ImportPreviewAction.UPDATE);
+        assertThat(find(unknownCluster, 2).diffs()).extracting(ImportPreviewResponseDto.FieldDiff::field)
+                .containsExactly("cluster", "clusterDefinition");
+
+        ImportPreviewPlan raceScopedCluster = planWithClusters(List.of(
                 row(2, "60", "A", SourceField.value(DOB), SourceField.value("B1"), 1_000, "Ivan")
-        ), List.of(current)), "CROSS_RACE_START_CLUSTER");
+        ), List.of(current));
+        assertThat(find(raceScopedCluster, 2).decision()).isEqualTo(ImportPreviewDecision.EXISTING_CHANGED);
+        assertThat(find(raceScopedCluster, 2).diffs()).extracting(ImportPreviewResponseDto.FieldDiff::field)
+                .containsExactly("cluster", "clusterDefinition");
 
         ImportPreviewPlan validNew = planWithClusters(List.of(
                 row(2, "NEW", "A", SourceField.value(DOB), SourceField.value("A1"), 1_000, "Ivan")

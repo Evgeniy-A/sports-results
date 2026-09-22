@@ -4,6 +4,9 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.ContentDisposition;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,10 +19,17 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.multipart.MultipartFile;
 import ru.sportsresults.api.dto.CreateEventRequest;
+import ru.sportsresults.api.dto.BulkCreateEventsRequest;
+import ru.sportsresults.api.dto.BulkCreateEventsResponseDto;
+import ru.sportsresults.api.dto.BulkEventPreviewDto;
+import ru.sportsresults.api.dto.CreateEventWithStartsRequest;
 import ru.sportsresults.api.dto.EventDto;
+import ru.sportsresults.api.dto.EventWithStartsDto;
 import ru.sportsresults.api.dto.ImportReportDto;
 import ru.sportsresults.api.dto.ImportPreviewResponseDto;
 import ru.sportsresults.api.dto.ImportApplyResponseDto;
+import ru.sportsresults.api.dto.ImportFileAnalysisDto;
+import ru.sportsresults.importing.ImportInputConfig;
 import ru.sportsresults.domain.ImportOperationMode;
 import ru.sportsresults.domain.EventPublicationStatus;
 import ru.sportsresults.domain.ResultsPublicationStatus;
@@ -34,8 +44,12 @@ import ru.sportsresults.service.ImportService;
 import ru.sportsresults.service.ImportPreviewService;
 import ru.sportsresults.service.ImportApplyService;
 import ru.sportsresults.service.InvalidRequestException;
+import ru.sportsresults.service.FlexibleImportFileService;
+import ru.sportsresults.service.GeneratedImportTemplate;
+import ru.sportsresults.service.TimingXlsxTemplateService;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.util.List;
 import java.util.UUID;
@@ -49,17 +63,23 @@ public class AdminEventController {
     private final ImportService importService;
     private final ImportPreviewService importPreviewService;
     private final ImportApplyService importApplyService;
+    private final FlexibleImportFileService flexibleImportFileService;
+    private final TimingXlsxTemplateService timingXlsxTemplateService;
 
     public AdminEventController(
             EventService eventService,
             ImportService importService,
             ImportPreviewService importPreviewService,
-            ImportApplyService importApplyService
+            ImportApplyService importApplyService,
+            FlexibleImportFileService flexibleImportFileService,
+            TimingXlsxTemplateService timingXlsxTemplateService
     ) {
         this.eventService = eventService;
         this.importService = importService;
         this.importPreviewService = importPreviewService;
         this.importApplyService = importApplyService;
+        this.flexibleImportFileService = flexibleImportFileService;
+        this.timingXlsxTemplateService = timingXlsxTemplateService;
     }
 
     @GetMapping
@@ -90,6 +110,25 @@ public class AdminEventController {
     @ResponseStatus(HttpStatus.CREATED)
     public EventDto createEvent(@Valid @RequestBody CreateEventRequest request) {
         return eventService.createEvent(request);
+    }
+
+    @PostMapping("/with-starts")
+    @ResponseStatus(HttpStatus.CREATED)
+    public EventWithStartsDto createEventWithStarts(
+            @Valid @RequestBody CreateEventWithStartsRequest request
+    ) {
+        return eventService.createEventWithStarts(request);
+    }
+
+    @PostMapping("/bulk/preview")
+    public BulkEventPreviewDto previewBulkEvents(@Valid @RequestBody BulkCreateEventsRequest request) {
+        return eventService.previewBulkEvents(request);
+    }
+
+    @PostMapping("/bulk")
+    @ResponseStatus(HttpStatus.CREATED)
+    public BulkCreateEventsResponseDto createBulkEvents(@Valid @RequestBody BulkCreateEventsRequest request) {
+        return eventService.createBulkEvents(request);
     }
 
     @PutMapping("/{eventId}/publication")
@@ -135,6 +174,35 @@ public class AdminEventController {
         }
     }
 
+    @GetMapping("/{eventId}/imports/template.xlsx")
+    public ResponseEntity<byte[]> downloadImportTemplate(@PathVariable Long eventId) {
+        GeneratedImportTemplate template = timingXlsxTemplateService.generate(eventId);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ))
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename(template.filename(), StandardCharsets.UTF_8).build().toString())
+                .body(template.contents());
+    }
+
+    @PostMapping(path = "/{eventId}/imports/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ImportFileAnalysisDto analyzeImport(
+            @PathVariable Long eventId,
+            @RequestPart("file") MultipartFile file,
+            @RequestParam(required = false) Long targetRaceId,
+            @RequestParam(required = false) String options
+    ) {
+        try {
+            return flexibleImportFileService.analyze(
+                    eventId, file.getOriginalFilename(), file.getBytes(), targetRaceId,
+                    flexibleImportFileService.deserializeConfig(options)
+            );
+        } catch (IOException exception) {
+            throw new InvalidRequestException("UPLOAD_READ_FAILED", "Uploaded file could not be read");
+        }
+    }
+
     @PostMapping(path = "/{eventId}/imports/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ImportPreviewResponseDto previewImport(
             @PathVariable Long eventId,
@@ -142,6 +210,7 @@ public class AdminEventController {
             @RequestParam ImportOperationMode mode,
             @RequestParam List<Long> raceIds,
             @RequestParam(required = false) Integer rowLimit,
+            @RequestParam(required = false) String options,
             Principal principal
     ) {
         try {
@@ -152,7 +221,8 @@ public class AdminEventController {
                     mode,
                     raceIds,
                     rowLimit,
-                    principal.getName()
+                    principal.getName(),
+                    flexibleImportFileService.deserializeConfig(options)
             );
         } catch (IOException exception) {
             throw new InvalidRequestException("UPLOAD_READ_FAILED", "Uploaded file could not be read");

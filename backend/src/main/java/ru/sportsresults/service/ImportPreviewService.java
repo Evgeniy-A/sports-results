@@ -6,12 +6,9 @@ import ru.sportsresults.domain.ImportOperation;
 import ru.sportsresults.domain.ImportOperationMode;
 import ru.sportsresults.importing.TimingCsvFormatException;
 import ru.sportsresults.importing.TimingCsvParseResult;
-import ru.sportsresults.importing.TimingCsvParser;
+import ru.sportsresults.importing.ImportInputConfig;
 import tools.jackson.databind.ObjectMapper;
 
-import java.io.ByteArrayInputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -31,7 +28,7 @@ public class ImportPreviewService {
     private static final int MAX_DUPLICATE_GROUPS = 50;
     private static final int MAX_DUPLICATE_ROWS_PER_GROUP = 20;
 
-    private final TimingCsvParser parser;
+    private final FlexibleImportFileService flexibleImportFileService;
     private final ImportValidator validator;
     private final ImportPreviewSnapshotLoader snapshotLoader;
     private final ImportPreviewPlanner planner;
@@ -39,14 +36,14 @@ public class ImportPreviewService {
     private final ObjectMapper objectMapper;
 
     public ImportPreviewService(
-            TimingCsvParser parser,
+            FlexibleImportFileService flexibleImportFileService,
             ImportValidator validator,
             ImportPreviewSnapshotLoader snapshotLoader,
             ImportPreviewPlanner planner,
             ImportOperationLifecycleService operationLifecycleService,
             ObjectMapper objectMapper
     ) {
-        this.parser = parser;
+        this.flexibleImportFileService = flexibleImportFileService;
         this.validator = validator;
         this.snapshotLoader = snapshotLoader;
         this.planner = planner;
@@ -62,6 +59,22 @@ public class ImportPreviewService {
             List<Long> raceIds,
             Integer requestedRowLimit,
             String actor
+    ) {
+        return preview(
+                eventId, originalFilename, contents, mode, raceIds, requestedRowLimit, actor,
+                ImportInputConfig.legacy()
+        );
+    }
+
+    public ImportPreviewResponseDto preview(
+            Long eventId,
+            String originalFilename,
+            byte[] contents,
+            ImportOperationMode mode,
+            List<Long> raceIds,
+            Integer requestedRowLimit,
+            String actor,
+            ImportInputConfig inputConfig
     ) {
         if (mode == null) {
             throw new InvalidRequestException("IMPORT_MODE_REQUIRED", "Import mode is required");
@@ -80,14 +93,14 @@ public class ImportPreviewService {
         String fileSha256 = sha256(contents);
 
         TimingCsvParseResult parsed;
-        try (InputStreamReader reader = new InputStreamReader(
-                new ByteArrayInputStream(contents), StandardCharsets.UTF_8
-        )) {
-            parsed = parser.parse(reader);
+        try {
+            parsed = flexibleImportFileService.parse(eventId, filename, contents, inputConfig);
         } catch (TimingCsvFormatException exception) {
-            throw new InvalidRequestException("INVALID_CSV_HEADER", exception.getMessage());
+            throw new InvalidRequestException("INVALID_IMPORT_FILE", exception.getMessage());
         } catch (Exception exception) {
-            throw new InvalidRequestException("IMPORT_FILE_READ_FAILED", "CSV could not be read");
+            if (exception instanceof InvalidRequestException invalid) throw invalid;
+            if (exception instanceof RequestConflictException conflict) throw conflict;
+            throw new InvalidRequestException("IMPORT_FILE_READ_FAILED", "Import file could not be read");
         }
 
         ImportPreviewDatabaseSnapshot snapshot = snapshotLoader.load(eventId);
@@ -126,7 +139,8 @@ public class ImportPreviewService {
                 snapshot.resultDataRevision(),
                 plan.planDigest(),
                 actor.strip(),
-                summary(plan)
+                summary(plan),
+                flexibleImportFileService.serializeConfig(inputConfig)
         );
 
         return new ImportPreviewResponseDto(

@@ -1,6 +1,6 @@
 # Sports Results Backend
 
-Spring Boot API for importing timing CSV snapshots, publishing event protocols, and calculating configurable award standings.
+Spring Boot API for importing timing CSV/XLSX files, publishing event protocols, and calculating configurable award standings.
 
 ## Local startup
 
@@ -19,7 +19,7 @@ Defaults from `compose.yaml` can be overridden with `DB_URL`, `DB_USERNAME`, and
 
 Browser CORS is restricted to the comma-separated exact origins in `CORS_ALLOWED_ORIGINS`; the local default is `http://127.0.0.1:5173,http://localhost:5173`, and wildcard origins are rejected. A deployed frontend must add its stable Cloudflare Pages/custom-domain origin. This API policy is separate from the object-storage bucket CORS required for direct attachment uploads.
 
-Flyway applies V1–V24 automatically. V4 enables PostgreSQL `pg_trgm`, so the migration user needs permission to create that extension. Hibernate validates rather than creates the schema.
+Flyway applies V1–V27 automatically. V4 enables PostgreSQL `pg_trgm`, so the migration user needs permission to create that extension. Hibernate validates rather than creates the schema.
 
 - API documentation: <http://localhost:8080/swagger-ui.html>
 - OpenAPI JSON: <http://localhost:8080/v3/api-docs>
@@ -91,6 +91,9 @@ curl.exe -u "admin:$env:ADMIN_PASSWORD" -H "Content-Type: application/json" `
 curl.exe -u "admin:$env:ADMIN_PASSWORD" -F "file=@../samples/results_m52_2025.csv" `
   http://localhost:8080/api/admin/events/1/imports
 ```
+
+For operator-driven imports, download the Event-specific workbook from
+`GET /api/admin/events/{eventId}/imports/template.xlsx`. Its hidden metadata keeps sheets bound to the intended Event and Race even when visible sheet names or order change. External CSV/XLSX files first go through `POST /api/admin/events/{eventId}/imports/analyze`; confirmed column and Race mappings are then sent as `options` to the existing preview endpoint. Saved mappings are managed under `/api/admin/import-mapping-profiles`. Both recommended templates and external files reuse the same preview/apply pipeline; applying always reparses the original bytes with the stored configuration.
 
 The Stage A preview endpoint is separate and read-only for Registration/Result data. It requires an explicit mode and one or more Race ids, stores only bounded operation metadata, and returns classifications, field diffs, totals, and blocking diagnostics. It does not apply the proposed changes.
 
