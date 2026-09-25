@@ -2,12 +2,13 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { AdminApi } from '../api'
-import type { EventSeries, EventSummary, ParticipantInfo, Race, ResultInquirySettings } from '../types'
+import type { EventSeries, EventSummary, ParticipantInfo, Race } from '../types'
 import { adminErrorMessage } from '../utils'
 import { localDateTimeToIso, toDateTimeLocal } from '../time'
 import { AdminNotice, ConfirmDialog, Drawer, Field, StatusBadge } from '../components/AdminUi'
 import { TimeZoneCombobox } from '../components/TimeZoneCombobox'
 import { EventContentManager } from './EventContentManager'
+import { ResultInquirySettingsCard } from '../components/ResultInquirySettingsCard'
 
 export function EventGeneralTab({ api, event, series, races, onChanged }: {
   api: AdminApi
@@ -76,6 +77,8 @@ export function EventGeneralTab({ api, event, series, races, onChanged }: {
       </form>
     </section>
 
+    <ResultInquirySettingsCard api={api} event={event} />
+
     <section className="admin-card"><div className="admin-card-heading"><div><h2>Публикация мероприятия</h2><p>Управляет только публичной информацией о мероприятии. Результаты публикуются отдельно для каждого старта.</p></div><StatusBadge value={event.publicationStatus} /></div>
       <div className="admin-form-grid"><Field label="Статус мероприятия"><select value={publicationStatus} onChange={(change) => setPublicationStatus(change.target.value as EventSummary['publicationStatus'])}><option value="DRAFT">Черновик</option><option value="PUBLISHED">Опубликовано</option><option value="ARCHIVED">Архив</option></select></Field></div>
       <div className="admin-form-actions"><button className="admin-button-primary" type="button" disabled={busy === 'publication' || publicationStatus === event.publicationStatus} onClick={() => void savePublication()}>Сохранить публикацию</button></div>
@@ -84,23 +87,15 @@ export function EventGeneralTab({ api, event, series, races, onChanged }: {
 }
 
 export function EventInformationTab({ api, event }: { api: AdminApi; event: EventSummary }) {
-  const [inquiry, setInquiry] = useState<ResultInquirySettings | null>(null)
   const [info, setInfo] = useState<ParticipantInfo | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null)
 
   useEffect(() => {
-    Promise.all([api.resultInquiry(event.id), api.participantInfo(event.id)])
-      .then(([inquiryValue, infoValue]) => { setInquiry(inquiryValue); setInfo(infoValue) })
+    api.participantInfo(event.id)
+      .then((infoValue) => { setInfo(infoValue) })
       .catch((reason) => setMessage({ tone: 'danger', text: adminErrorMessage(reason) }))
   }, [api, event.id])
-
-  const saveInquiry = async (submit: FormEvent) => {
-    submit.preventDefault(); if (!inquiry) return; setBusy('inquiry'); setMessage(null)
-    try { setInquiry(await api.updateResultInquiry(event.id, inquiry)); setMessage({ tone: 'success', text: 'Настройки обращений сохранены.' }) }
-    catch (reason) { setMessage({ tone: 'danger', text: adminErrorMessage(reason) }) }
-    finally { setBusy(null) }
-  }
   const saveInfo = async (submit: FormEvent) => {
     submit.preventDefault(); if (!info) return; setBusy('info'); setMessage(null)
     try {
@@ -122,11 +117,6 @@ export function EventInformationTab({ api, event }: { api: AdminApi; event: Even
       <Field label="Как добраться"><textarea value={info.locationDescription ?? ''} onChange={(change) => setInfo({ ...info, locationDescription: change.target.value || null })} /></Field>
       <Field label="Дополнительная информация"><textarea value={info.additionalInfo ?? ''} onChange={(change) => setInfo({ ...info, additionalInfo: change.target.value || null })} /></Field>
       <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy === 'info'}>Сохранить информацию</button></div>
-    </form></section>}
-    {inquiry && <section className="admin-card"><div className="admin-card-heading"><div><h2>Обращения по результатам</h2><p>Публичная форма работает только в рассчитанное backend окно.</p></div></div><form className="admin-form" onSubmit={saveInquiry}>
-      <label className="admin-check"><input type="checkbox" checked={inquiry.enabled} onChange={(change) => setInquiry({ ...inquiry, enabled: change.target.checked })} /><span>Разрешить обращения</span></label>
-      <div className="admin-form-grid"><Field label="Окно после окончания, дней"><input type="number" min="1" required={inquiry.enabled} value={inquiry.windowDays ?? ''} onChange={(change) => setInquiry({ ...inquiry, windowDays: change.target.value ? Number(change.target.value) : null })} /></Field><Field label="Email организатора"><input type="email" required={inquiry.enabled} value={inquiry.email ?? ''} onChange={(change) => setInquiry({ ...inquiry, email: change.target.value || null })} /></Field></div>
-      <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy === 'inquiry'}>Сохранить настройки</button></div>
     </form></section>}
     <EventContentManager api={api} eventId={event.id} />
   </div>
@@ -171,7 +161,7 @@ export function StartsTab({ api, event, races, onChanged, onOpen }: {
     {races.length ? <div className="admin-race-grid">{races.map((race) => <article className="admin-race-card" key={race.id}>
       <div><h4>{race.name}</h4><p>Дистанция: {formatDistance(race.distanceMeters)}</p><p>Начало: {formatStart(race.startsAt, event.timeZone)}</p></div>
       <div className="admin-inline-badges"><StatusBadge value={race.resultsPublicationStatus} />{!race.publicVisible && <span className="admin-badge admin-badge-neutral">Скрыт</span>}{race.resultRecalculationRequired && <span className="admin-badge admin-badge-warning">Нужен пересчёт</span>}</div>
-      <div className="admin-row-actions"><button className="admin-link-button" onClick={() => onOpen(race.id)}>Открыть</button><button className="admin-link-button" onClick={() => setRaceEditor(race)}>Редактировать</button>{race.resultsPublicationStatus === 'PUBLISHED' ? <button className="admin-link-button danger" onClick={() => setConfirm({ kind: 'draft', id: race.id })}>Вернуть в черновик</button> : <button className="admin-link-button" onClick={() => setConfirm({ kind: 'publish', id: race.id })}>Опубликовать</button>}<button className="admin-link-button danger" disabled={race.resultsPublicationStatus === 'PUBLISHED'} title={race.resultsPublicationStatus === 'PUBLISHED' ? 'Сначала верните результаты в черновик' : undefined} onClick={() => setConfirm({ kind: 'delete', id: race.id })}>Удалить старт</button></div>
+      <div className="admin-row-actions admin-race-actions"><button className="admin-button-primary admin-button-compact" onClick={() => onOpen(race.id)}>Открыть</button><button className="admin-button-secondary admin-button-compact" onClick={() => setRaceEditor(race)}>Редактировать</button>{race.resultsPublicationStatus === 'PUBLISHED' ? <button className="admin-button-subtle admin-button-compact" onClick={() => setConfirm({ kind: 'draft', id: race.id })}>Вернуть в черновик</button> : <button className="admin-button-subtle admin-button-compact" onClick={() => setConfirm({ kind: 'publish', id: race.id })}>Опубликовать</button>}<button className="admin-button-danger-outline admin-button-compact" disabled={race.resultsPublicationStatus === 'PUBLISHED'} title={race.resultsPublicationStatus === 'PUBLISHED' ? 'Сначала верните результаты в черновик' : undefined} onClick={() => setConfirm({ kind: 'delete', id: race.id })}>Удалить</button></div>
     </article>)}</div> : <div className="admin-empty">У мероприятия пока нет стартов.</div>}
     {raceEditor && <RaceDrawer api={api} eventId={event.id} timeZone={event.timeZone} nextDisplayOrder={nextDisplayOrder(races)} value={raceEditor === 'new' ? null : raceEditor} onClose={() => setRaceEditor(null)} onSaved={async () => { setRaceEditor(null); await onChanged() }} />}
     {confirm && <ConfirmDialog title={confirm.kind === 'draft' ? 'Вернуть результаты в черновик?' : confirm.kind === 'delete' ? `Удалить старт «${confirmedRace?.name ?? ''}»?` : 'Опубликовать результаты?'} description={confirm.kind === 'draft' ? 'Публичный протокол этого старта станет недоступен. Данные не удаляются.' : confirm.kind === 'delete' ? 'Старт будет удалён только из этого мероприятия. Шаблон и другие мероприятия не изменятся.' : 'Backend проверит готовность протокола и необходимость пересчёта.'} confirmLabel={confirm.kind === 'publish' ? 'Опубликовать' : confirm.kind === 'delete' ? 'Удалить старт' : 'Вернуть в черновик'} danger={confirm.kind !== 'publish'} busy={busy} onConfirm={() => void runConfirm()} onClose={() => setConfirm(null)} />}

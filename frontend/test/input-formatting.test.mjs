@@ -9,6 +9,7 @@ import {
 } from '../src/utils/inputFormatting.ts'
 import { parseRussianBirthDate } from '../src/utils/resultInquiry.ts'
 import { parseClaimedTime } from '../src/utils/resultIssue.ts'
+import { formatDuration } from '../src/utils/format.ts'
 
 const autoformatSource = await readFile(
   new URL('../src/components/DigitAutoformatInput.tsx', import.meta.url),
@@ -20,6 +21,10 @@ const panelSource = await readFile(
 )
 const dialogSource = await readFile(
   new URL('../src/components/ResultIssueDialog.tsx', import.meta.url),
+  'utf8',
+)
+const resultEditorSource = await readFile(
+  new URL('../src/admin/components/AdminResultEditor.tsx', import.meta.url),
   'utf8',
 )
 
@@ -61,6 +66,23 @@ test('sporting duration digits and formatted paste use HH:MM:SS[.mmm]', () => {
   assert.equal(formatDurationInput('123:45:56.789'), '123:45:56.789')
 })
 
+test('sporting duration autoformat restarts after complete clearing', () => {
+  assert.deepEqual(formatInputEdit('', 0, formatDurationInput), { value: '', caret: 0 })
+  assert.deepEqual(formatInputEdit('012345678', 9, formatDurationInput), {
+    value: '01:23:45.678', caret: 12,
+  })
+  assert.equal(formatDurationInput(''), '')
+  assert.equal(formatDurationInput('012345678'), '01:23:45.678')
+  assert.equal(formatDurationInput('01:23:45.678'), '01:23:45.678')
+})
+
+test('sporting duration display always uses millisecond precision', () => {
+  assert.equal(formatDuration(1_000), '00:00:01.000')
+  assert.equal(formatDuration(1_001), '00:00:01.001')
+  assert.equal(formatDuration(2_029_340), '00:33:49.340')
+  assert.equal(formatDuration(90_765_120), '25:12:45.120')
+})
+
 test('duration validation rejects invalid minutes and seconds and preserves milliseconds', () => {
   assert.equal(parseClaimedTime(formatDurationInput('016045')), null)
   assert.equal(parseClaimedTime(formatDurationInput('012360')), null)
@@ -76,4 +98,6 @@ test('both DOB surfaces and claimed duration share the numeric-friendly input', 
   assert.match(autoformatSource, /selectionStart/)
   assert.match(autoformatSource, /setSelectionRange/)
   assert.match(dialogSource, /placeholder="ЧЧ:ММ:СС\.ммм"/)
+  assert.match(resultEditorSource, /DigitAutoformatInput[\s\S]*formatter=\{formatDurationInput\}/)
+  assert.doesNotMatch(resultEditorSource, /aria-label="Официальное время"[\s\S]*onChange=/)
 })

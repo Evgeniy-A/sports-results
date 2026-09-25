@@ -27,10 +27,11 @@ public class ResultIssueHistoryService {
             ResultIssueStatus from,
             ResultIssueStatus to,
             String actor,
+            String comment,
             Instant at
     ) {
         if (from != to) {
-            append(issue, ResultIssueHistoryAction.STATUS_CHANGED, from, to, actor, null, at);
+            append(issue, ResultIssueHistoryAction.STATUS_CHANGED, from, to, actor, normalize(comment), at);
         }
     }
 
@@ -56,5 +57,9 @@ public class ResultIssueHistoryService {
         history.setReason(reason);
         history.setCreatedAt(at);
         repository.save(history);
+    }
+
+    private static String normalize(String value) {
+        return value == null || value.isBlank() ? null : value.strip();
     }
 }

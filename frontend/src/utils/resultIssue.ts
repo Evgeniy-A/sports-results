@@ -1,4 +1,5 @@
 import type { ResultCorrectionReason, ResultInquiryAvailability } from '../api/types'
+import { formatInquiryDeadline } from './resultInquiry.ts'
 
 export type ResultIssueVerificationDecision =
   | { state: 'VERIFICATION_FAILED' }
@@ -43,10 +44,20 @@ export function localDateTimeToInstant(value: string): string | null {
 
 export function resultIssueAvailabilityMessage(
   availability: ResultInquiryAvailability,
+  deadline?: string,
+  timeZone = 'UTC',
 ): string | null {
-  if (availability === 'CLOSED') return 'Срок подачи обращений по результатам завершён.'
+  if (availability === 'CLOSED') {
+    const formattedDeadline = formatInquiryDeadline(deadline, timeZone)
+    return formattedDeadline
+      ? `Срок подачи обращений завершён. Обращения принимались до ${formattedDeadline}.`
+      : 'Срок подачи обращений завершён.'
+  }
   if (availability === 'NOT_OPEN_YET') {
-    return 'Подача обращений по результатам ещё не началась.'
+    return 'Приём обращений ещё не открыт.'
+  }
+  if (availability === 'DISABLED') {
+    return 'Приём обращений по результатам закрыт организатором.'
   }
   return null
 }

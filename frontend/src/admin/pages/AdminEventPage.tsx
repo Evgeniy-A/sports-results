@@ -10,6 +10,7 @@ import { EventResultsAdminTab } from './EventResultsAdminTab'
 import { EventImportTab } from './EventImportTab'
 import { EventAwardTab } from './EventPolicyTabs'
 import { EventIssuesTab } from './EventIssuesTab'
+import { EventResultsPublicationTab } from './EventResultsPublicationTab'
 
 const EVENT_TABS = [
   ['main', 'Основное'],
@@ -22,6 +23,7 @@ const RESULT_TABS = [
   ['import', 'Загрузка'],
   ['participants', 'Участники'],
   ['results', 'Результаты'],
+  ['publication', 'Публикация результатов'],
   ['issues', 'Обращения'],
 ] as const
 
@@ -85,6 +87,7 @@ export function AdminEventPage({ api, eventId, requestedTab, requestedRaceId }: 
         {tab === 'info' && <EventInformationTab api={api} event={event} />}
         {tab === 'participants' && <EventResultsAdminTab api={api} event={event} races={races} mode="participants" />}
         {tab === 'results' && <EventResultsAdminTab api={api} event={event} races={races} mode="results" />}
+        {tab === 'publication' && <EventResultsPublicationTab api={api} event={event} races={races} onChanged={reload} />}
         {tab === 'import' && <EventImportTab api={api} event={event} races={races} />}
         {tab === 'issues' && <EventIssuesTab api={api} event={event} />}
         {tab === 'award' && <EventAwardTab api={api} event={event} races={races} initialRaceId={Number(requestedRaceId) || undefined} onChanged={reload} />}

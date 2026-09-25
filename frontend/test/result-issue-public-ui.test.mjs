@@ -15,6 +15,7 @@ const dialogSource = await readFile(new URL('../src/components/ResultIssueDialog
 const detailsSource = await readFile(new URL('../src/components/ResultDetailsDialog.tsx', import.meta.url), 'utf8')
 const eventResultsSource = await readFile(new URL('../src/components/EventResults.tsx', import.meta.url), 'utf8')
 const attachmentSource = await readFile(new URL('../src/components/ResultIssueAttachmentField.tsx', import.meta.url), 'utf8')
+const supportFallbackSource = await readFile(new URL('../src/components/ResultIssueSupportFallback.tsx', import.meta.url), 'utf8')
 const clientSource = await readFile(new URL('../src/api/client.ts', import.meta.url), 'utf8')
 const directUploadSource = await readFile(new URL('../src/api/directUpload.ts', import.meta.url), 'utf8')
 
@@ -46,20 +47,77 @@ test('successful DOB verification detects an active issue before rendering the f
   assert.match(dialogSource, /активное обращение №\{duplicateIssueId\}/)
 })
 
+test('successful DOB verification keeps the ordinary in-app Result Issue form', () => {
+  const verificationBlock = dialogSource.match(/const submitVerification[\s\S]*?const submitIssue/)?.[0] ?? ''
+  assert.match(verificationBlock, /setVerifiedBirthDate\(apiBirthDate\)/)
+  assert.match(verificationBlock, /setDialogState\('FORM'\)/)
+  assert.match(dialogSource, /dialogState === 'FORM' && <form/)
+  assert.match(dialogSource, /createMissingResultIssue|createResultCorrectionIssue/)
+  assert.match(dialogSource, /dialogState === 'VERIFY' && \(verificationFailed/)
+})
+
 test('a duplicate-bib verification can enter the same form without asking twice', () => {
   assert.match(eventResultsSource, /verifiedInquiryBirthDate/)
   assert.match(eventResultsSource, /verified\.lookupState === 'RESULT_NOT_PUBLIC' \? birthDate : null/)
   assert.match(panelSource, /initialVerifiedBirthDate=\{verifiedBirthDate\}/)
 })
 
-test('failed DOB prevents issue creation and presents organizer support guidance', () => {
+test('failed DOB prevents issue creation and presents retry plus shared support fallback', () => {
   const verificationBlock = dialogSource.match(/const submitVerification[\s\S]*?const submitIssue/)?.[0] ?? ''
   assert.match(verificationBlock, /decision\.state === 'VERIFICATION_FAILED'/)
   assert.match(verificationBlock, /setVerificationFailed\(true\)/)
+  assert.doesNotMatch(verificationBlock, /verified\.contactEmail/)
   assert.doesNotMatch(verificationBlock, /createMissingResultIssue|createResultCorrectionIssue/)
-  assert.match(dialogSource, /Введённая дата рождения не совпадает/)
-  assert.match(dialogSource, /supportUrl &&/)
-  assert.doesNotMatch(dialogSource, /heroleague|if.*hero/i)
+  assert.match(dialogSource, /Дата рождения не совпала с данными регистрации/)
+  assert.match(dialogSource, /ResultIssueSupportFallback/)
+  assert.match(panelSource, /onRetryVerification=\{retryBirthDateVerification\}/)
+  assert.match(panelSource, /issueKind="MISSING_RESULT"/)
+  assert.doesNotMatch(`${dialogSource}\n${panelSource}`, /email=\{|mailto:/)
+})
+
+test('failed DOB fallback disables prepare for empty text and enables it for meaningful text', () => {
+  assert.match(supportFallbackSource, /Опишите ситуацию/)
+  assert.match(supportFallbackSource, /if \(!hasMeaningfulSupportDescription\(description\)\) return/)
+  assert.match(supportFallbackSource, /disabled=\{!hasMeaningfulSupportDescription\(description\)\}/)
+  assert.match(supportFallbackSource, /Подготовить обращение/)
+})
+
+test('prepared fallback locks HeroLeague support until a successful copy', () => {
+  assert.match(supportFallbackSource, /Обращение подготовлено/)
+  assert.match(supportFallbackSource, /Скопируйте подготовленный текст/)
+  assert.match(supportFallbackSource, /поле «Ваш вопрос»/)
+  assert.match(supportFallbackSource, /copyInquiryText\(preparedMessage\.text\)/)
+  assert.match(supportFallbackSource, /copyState === 'success'[\s\S]*?<a className="support-link-button"/)
+  assert.match(supportFallbackSource, /: <button className="support-link-button" type="button" disabled>/)
+  assert.match(supportFallbackSource, /https:\/\/heroleague\.ru\/feedback|HERO_LEAGUE_SUPPORT_URL/)
+  assert.match(supportFallbackSource, /target="_blank"/)
+  assert.match(supportFallbackSource, /rel="noopener noreferrer"/)
+  assert.match(supportFallbackSource, /Изменить описание/)
+  assert.match(supportFallbackSource, /setPreparedMessage\(null\)/)
+  assert.match(supportFallbackSource, /Текст скопирован\. Теперь перейдите в поддержку/)
+  assert.doesNotMatch(supportFallbackSource, /mailto:|contactEmail|resultInquiryEmail|email/i)
+  assert.doesNotMatch(supportFallbackSource, /birthDate|verifiedBirthDate|registrationId|resultId|storageKey/)
+})
+
+test('DOB inputs are absent on both fallback steps', () => {
+  assert.doesNotMatch(supportFallbackSource, /DigitAutoformatInput|aria-label="Дата рождения"|placeholder="ДД\.ММ\.ГГГГ"/)
+  assert.match(dialogSource, /dialogState === 'VERIFY' && \(verificationFailed[\s\S]*?ResultIssueSupportFallback[\s\S]*?: <>[\s\S]*?DigitAutoformatInput/)
+  const panelFallback = panelSource.match(/if \(inquiry\.lookupState === 'VERIFICATION_FAILED'\)[\s\S]*?const canContact/)?.[0] ?? ''
+  assert.doesNotMatch(panelFallback, /DigitAutoformatInput|aria-label="Дата рождения"/)
+})
+
+test('retry DOB is available on both fallback steps and clears local fallback state', () => {
+  assert.equal(supportFallbackSource.match(/Попробовать подтвердить дату ещё раз/g)?.length, 2)
+  assert.match(supportFallbackSource, /const retryVerification = \(\) => \{[\s\S]*setDescription\(''\)[\s\S]*setPreparedMessage\(null\)[\s\S]*setCopyState\('idle'\)[\s\S]*onRetryVerification\(\)/)
+  assert.match(dialogSource, /onRetryVerification=\{retryBirthDateVerification\}/)
+  assert.match(dialogSource, /const retryBirthDateVerification = \(\) => \{[\s\S]*setVerificationFailed\(false\)/)
+  assert.match(panelSource, /const retryBirthDateVerification = \(\) => \{[\s\S]*setRetrying\(true\)/)
+})
+
+test('changing description returns to step one and locks support again', () => {
+  assert.match(supportFallbackSource, /Изменить описание/)
+  assert.match(supportFallbackSource, /setPreparedMessage\(null\)\s*setCopyState\('idle'\)/)
+  assert.match(supportFallbackSource, /copyState === 'success'[\s\S]*?: <button[^>]*disabled/)
 })
 
 test('MISSING_RESULT form sends known context and only user-editable facts', () => {
@@ -139,12 +197,19 @@ test('RESULT_STATUS, RACE_OR_FORMAT and OTHER rely on the required comment', () 
   assert.doesNotMatch(dialogSource, /correctionReason === 'RESULT_STATUS'[\s\S]{0,120}claimedTime/)
 })
 
-test('CLOSED and NOT_OPEN_YET use backend availability while DISABLED has no CTA', () => {
-  assert.equal(resultIssueAvailabilityMessage('CLOSED'), 'Срок подачи обращений по результатам завершён.')
-  assert.equal(resultIssueAvailabilityMessage('NOT_OPEN_YET'), 'Подача обращений по результатам ещё не началась.')
-  assert.equal(resultIssueAvailabilityMessage('DISABLED'), null)
+test('CLOSED, NOT_OPEN_YET and DISABLED expose distinct backend-driven states without a CTA', () => {
+  assert.equal(resultIssueAvailabilityMessage('CLOSED'), 'Срок подачи обращений завершён.')
+  assert.equal(resultIssueAvailabilityMessage('NOT_OPEN_YET'), 'Приём обращений ещё не открыт.')
+  assert.equal(resultIssueAvailabilityMessage('DISABLED'), 'Приём обращений по результатам закрыт организатором.')
+  assert.match(
+    resultIssueAvailabilityMessage('CLOSED', '2026-09-27T21:00:00Z', 'Europe/Moscow') ?? '',
+    /Обращения принимались до 28\.09\.2026 включительно/,
+  )
   assert.match(detailsSource, /inquiry\?\.inquiryAvailability === 'OPEN'/)
-  assert.doesNotMatch(detailsSource, /new Date\(|deadline/)
+  assert.match(detailsSource, /inquiry\.deadline, eventTimeZone/)
+  assert.match(supportFallbackSource, /if \(availability !== 'OPEN'\) return null/)
+  assert.match(dialogSource, /verificationAvailability \?\? inquiry\.inquiryAvailability/)
+  assert.match(panelSource, /!availability\.canContact/)
 })
 
 test('DOB stays out of URL, browser storage, issue message and logs', () => {

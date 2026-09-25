@@ -4,6 +4,7 @@ import type { EventDetails, PageResponse, ResultInquiryLookup, ResultListItem } 
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { formatDuration, statusLabel } from '../utils/format'
 import { defaultPublicResultSort, initialRaceSelection, publicResultRaces } from '../utils/publicEventView'
+import { scoringTimeHeading } from '../utils/rankingPresentation'
 import {
   LatestRequestGate,
   isRequestCancellation,
@@ -58,6 +59,7 @@ export function EventResults({ event }: { event: EventDetails }) {
   const rankingBasis = selectedRace?.rules?.rankingBasis ?? protocol.content[0]?.rankingBasis
   const hasOfficialStanding = rankingBasis !== undefined && rankingBasis !== 'NONE'
   const hasPublicResultRows = protocol.content.length > 0
+  const rankingMode = categoryId ? 'CATEGORY' : 'PRIMARY'
 
   const clearInquiryState = () => {
     protocolRequestGate.invalidate()
@@ -300,34 +302,18 @@ export function EventResults({ event }: { event: EventDetails }) {
       verifiedBirthDate={verifiedInquiryBirthDate}
       verifying={verifying}
       verificationError={verificationError}
-      publicResultsPresent={false}
       onVerify={verifyBirthDate}
       onClearVerification={() => setVerifiedInquiryBirthDate(null)}
     />}
 
     {selectedRace && !loading && !error && protocol.content.length > 0 && <>
-      <div className="table-wrap desktop-results"><table><thead><tr><th>{hasOfficialStanding ? 'Официальный зачёт' : 'Место'}</th><th>Стартовый №</th><th>Участник</th><th>Старт / дистанция</th><th>Статус</th><th><span className="time-heading">Официальное время{rankingBasis === 'GUN_TIME' && <b className="standing-badge">Зачёт</b>}</span></th><th><span className="time-heading">Чистое время{rankingBasis === 'CHIP_TIME' && <b className="standing-badge">Зачёт</b>}</span></th>{showCategoryColumn && <th>Категория</th>}</tr></thead><tbody>{protocol.content.map((result) => (
+      <div className="table-wrap desktop-results"><table><thead><tr><th>{hasOfficialStanding ? 'Официальный зачёт' : 'Место'}</th><th>Стартовый №</th><th>Участник</th><th>Старт / дистанция</th><th>Статус</th><th><span className="time-heading">{scoringTimeHeading(rankingBasis ?? 'NONE', 'GUN_TIME')}</span></th><th><span className="time-heading">{scoringTimeHeading(rankingBasis ?? 'NONE', 'CHIP_TIME')}</span></th>{showCategoryColumn && <th>Категория</th>}</tr></thead><tbody>{protocol.content.map((result) => (
         <tr key={result.resultId} tabIndex={0} onClick={() => setSelectedResultId(result.resultId)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === 'Enter') setSelectedResultId(result.resultId) }}>
-          <td className={hasOfficialStanding ? 'ranking-cell' : 'display-place-cell'}>{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} /> : <span className="display-place">{result.displayPosition ?? '—'}</span>}</td><td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td>{selectedRace.name}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${result.rankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.gunTimeMs)}</td><td className={`time ${result.rankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.chipTimeMs)}</td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
+          <td className={hasOfficialStanding ? 'ranking-cell' : 'display-place-cell'}>{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /> : <span className="display-place">{result.displayPosition ?? '—'}</span>}</td><td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td>{selectedRace.name}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${result.rankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.gunTimeMs)}</td><td className={`time ${result.rankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.chipTimeMs)}</td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
         </tr>
       ))}</tbody></table></div>
-      <div className="mobile-results">{protocol.content.map((result) => <button className="result-card" type="button" key={result.resultId} onClick={() => setSelectedResultId(result.resultId)}><span><strong>{result.displayName}</strong><small>№ {result.bib ?? '—'} · {selectedRace.name}{showCategoryColumn && result.category ? ` · ${result.category.name}` : ''}</small></span><span className={`time ${hasOfficialStanding ? 'time-primary' : ''}`}>{formatDuration(result.rankingBasis === 'CHIP_TIME' || (result.rankingBasis === 'NONE' && sort === 'chipTime') ? result.chipTimeMs : result.gunTimeMs)}</span><span className="card-achievements">{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} /> : <span className="display-place">Место {result.displayPosition ?? '—'}</span>}</span></button>)}</div>
+      <div className="mobile-results">{protocol.content.map((result) => <button className="result-card" type="button" key={result.resultId} onClick={() => setSelectedResultId(result.resultId)}><span><strong>{result.displayName}</strong><small>№ {result.bib ?? '—'} · {selectedRace.name}{showCategoryColumn && result.category ? ` · ${result.category.name}` : ''}</small></span><span className={`time ${hasOfficialStanding ? 'time-primary' : ''}`}>{formatDuration(result.rankingBasis === 'CHIP_TIME' || (result.rankingBasis === 'NONE' && sort === 'chipTime') ? result.chipTimeMs : result.gunTimeMs)}</span><span className="card-achievements">{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /> : <span className="display-place">Место {result.displayPosition ?? '—'}</span>}</span></button>)}</div>
     </>}
-
-    {selectedRace && !loading && !error && inquiry && hasPublicResultRows
-      && inquiry.missingResultActionAvailable && <ResultInquiryPanel
-        key={`${event.id}:${inquiry.bib}:${inquiry.lookupState}:with-public-results`}
-        eventId={event.id}
-        eventName={event.name}
-        eventTimeZone={event.timeZone}
-        inquiry={inquiry}
-        verifiedBirthDate={verifiedInquiryBirthDate}
-        verifying={verifying}
-        verificationError={verificationError}
-        publicResultsPresent
-        onVerify={verifyBirthDate}
-        onClearVerification={() => setVerifiedInquiryBirthDate(null)}
-      />}
 
     {selectedRace && <Pagination page={protocol.page} totalPages={protocol.totalPages} onChange={setPage} />}
     {selectedResultId !== null && selectedRace && <ResultDetailsDialog
@@ -336,6 +322,7 @@ export function EventResults({ event }: { event: EventDetails }) {
       eventTimeZone={event.timeZone}
       startName={selectedRace.name}
       categoryEnabled={showCategoryColumn}
+      rankingMode={rankingMode}
       onClose={() => setSelectedResultId(null)}
     />}
   </section>

@@ -81,6 +81,19 @@ class ResultIssueAttachmentScanOrchestratorTest {
                 .hasMessageContaining("uploaded attachments");
     }
 
+    @Test
+    void leavesPendingAttachmentUntouchedWhenNoScannerIsConfigured() {
+        ResultIssueAttachmentRepository repository = mock(ResultIssueAttachmentRepository.class);
+        ResultIssueAttachment attachment = uploadedPendingAttachment();
+        var writer = new ResultIssueAttachmentScanService(repository);
+        var orchestrator = new ResultIssueAttachmentScanOrchestrator(
+                repository, writer, Optional.empty()
+        );
+
+        assertThat(orchestrator.scanIfConfigured(41L)).isEmpty();
+        assertThat(attachment.getScanStatus()).isEqualTo(AttachmentScanStatus.PENDING);
+    }
+
     private static ResultIssueAttachmentScanOrchestrator orchestrator(
             ResultIssueAttachmentRepository repository,
             ResultIssueAttachmentScanService writer,

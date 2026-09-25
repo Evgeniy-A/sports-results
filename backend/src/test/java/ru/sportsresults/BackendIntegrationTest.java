@@ -58,6 +58,7 @@ import ru.sportsresults.domain.RegistrationEntryKind;
 import ru.sportsresults.domain.Result;
 import ru.sportsresults.domain.ResultIssueAttachment;
 import ru.sportsresults.domain.ResultInquiryAvailability;
+import ru.sportsresults.domain.ResultInquiryDeadlineMode;
 import ru.sportsresults.domain.ResultInquiryLookupState;
 import ru.sportsresults.domain.ResultCorrectionReason;
 import ru.sportsresults.domain.ResultIssueRequest;
@@ -95,6 +96,7 @@ import ru.sportsresults.service.AwardPolicyService;
 import ru.sportsresults.service.EventService;
 import ru.sportsresults.api.dto.UpdateAwardPolicyRequest;
 import ru.sportsresults.api.dto.UpdateEventRequest;
+import ru.sportsresults.api.dto.UpdateRegistrationRequest;
 import ru.sportsresults.api.dto.UpdateResultRequest;
 import ru.sportsresults.api.dto.UpdateResultInquirySettingsRequest;
 import ru.sportsresults.api.dto.UpsertRaceRequest;
@@ -903,11 +905,37 @@ class BackendIntegrationTest {
         assertThat(sameShaNewOperation.fileSha256()).isEqualTo(preview.fileSha256());
         assertThat(sameShaNewOperation.operationId()).isNotEqualTo(preview.operationId());
         assertThat(sameShaNewOperation.totals().newCount()).isZero();
-        assertThatThrownBy(() -> importApplyService.apply(
-                event.getId(), sameShaNewOperation.operationId(), csv, ADMIN_USERNAME
-        )).isInstanceOf(RequestConflictException.class)
-                .extracting(exception -> ((RequestConflictException) exception).getCode())
-                .isEqualTo("NO_APPLICABLE_CHANGES");
+        long batchCountBeforeNoOp = importBatchRepository.count();
+        long registrationCountBeforeNoOp = registrationRepository.countByRaceEventId(event.getId());
+        long resultCountBeforeNoOp = resultRepository.countByRegistrationRaceEventId(event.getId());
+        MockMultipartFile noOpFile = new MockMultipartFile(
+                "file", "same-again.csv", "text/csv", csv
+        );
+        mockMvc.perform(multipart(
+                        "/api/admin/events/{eventId}/imports/{operationId}/apply",
+                        event.getId(), sameShaNewOperation.operationId())
+                        .file(noOpFile)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PREVIEWED"))
+                .andExpect(jsonPath("$.mode").value("ADD_NEW"))
+                .andExpect(jsonPath("$.importBatchId").isEmpty())
+                .andExpect(jsonPath("$.insertedCount").value(0))
+                .andExpect(jsonPath("$.updatedCount").value(0))
+                .andExpect(jsonPath("$.existingSkippedCount").value(3))
+                .andExpect(jsonPath("$.unchangedCount").value(sameShaNewOperation.totals().unchangedCount()))
+                .andExpect(jsonPath("$.newRevision").value(baseRevision + 1))
+                .andExpect(jsonPath("$.appliedAt").isEmpty())
+                .andExpect(jsonPath("$.noOp").value(true));
+        assertThat(importBatchRepository.count()).isEqualTo(batchCountBeforeNoOp);
+        assertThat(registrationRepository.countByRaceEventId(event.getId()))
+                .isEqualTo(registrationCountBeforeNoOp);
+        assertThat(resultRepository.countByRegistrationRaceEventId(event.getId()))
+                .isEqualTo(resultCountBeforeNoOp);
+        assertThat(eventRepository.findById(event.getId()).orElseThrow().getResultDataRevision())
+                .isEqualTo(baseRevision + 1);
+        assertThat(importOperationRepository.findById(sameShaNewOperation.operationId()).orElseThrow().getStatus())
+                .isEqualTo(ImportOperationStatus.PREVIEWED);
     }
 
     @Test
@@ -1060,7 +1088,8 @@ class BackendIntegrationTest {
                 new ru.sportsresults.api.dto.UpdateRegistrationRequest(
                         registration.getDisplayName() + " corrected", registration.getFirstName(),
                         registration.getLastName(), registration.getBirthDate(), registration.getGender(),
-                        registration.getBib(), registration.getSourceCategory(), null, registration.getEntryKind()
+                        registration.getBib(), registration.getSourceCategory(), null, registration.getEntryKind(),
+                        registration.getCategory() == null ? null : registration.getCategory().getId()
                 ), ADMIN_USERNAME);
         assertThat(eventRepository.findById(event.getId()).orElseThrow().getResultDataRevision())
                 .isEqualTo(beforeRegistrationRevision + 1);
@@ -1411,11 +1440,27 @@ class BackendIntegrationTest {
         );
         assertThat(sameSha.fileSha256()).isEqualTo(preview.fileSha256());
         assertThat(sameSha.totals().changedCount()).isZero();
-        assertThatThrownBy(() -> importApplyService.apply(
+        long batchCountBeforeNoOp = importBatchRepository.count();
+        long registrationCountBeforeNoOp = registrationRepository.countByRaceEventId(event.getId());
+        long resultCountBeforeNoOp = resultRepository.countByRegistrationRaceEventId(event.getId());
+        long revisionBeforeNoOp = eventRepository.findById(event.getId()).orElseThrow().getResultDataRevision();
+        ImportApplyResponseDto noOp = importApplyService.apply(
                 eventId, sameSha.operationId(), csv, ADMIN_USERNAME
-        )).isInstanceOf(RequestConflictException.class)
-                .extracting(exception -> ((RequestConflictException) exception).getCode())
-                .isEqualTo("NO_APPLICABLE_CHANGES");
+        );
+        assertThat(noOp.noOp()).isTrue();
+        assertThat(noOp.status()).isEqualTo(ImportOperationStatus.PREVIEWED);
+        assertThat(noOp.importBatchId()).isNull();
+        assertThat(noOp.updatedCount()).isZero();
+        assertThat(noOp.unchangedCount()).isEqualTo(sameSha.totals().unchangedCount());
+        assertThat(noOp.newRevision()).isEqualTo(revisionBeforeNoOp);
+        assertThat(noOp.appliedAt()).isNull();
+        assertThat(importBatchRepository.count()).isEqualTo(batchCountBeforeNoOp);
+        assertThat(registrationRepository.countByRaceEventId(event.getId()))
+                .isEqualTo(registrationCountBeforeNoOp);
+        assertThat(resultRepository.countByRegistrationRaceEventId(event.getId()))
+                .isEqualTo(resultCountBeforeNoOp);
+        assertThat(eventRepository.findById(event.getId()).orElseThrow().getResultDataRevision())
+                .isEqualTo(revisionBeforeNoOp);
     }
 
     @Test
@@ -1450,7 +1495,8 @@ class BackendIntegrationTest {
         Result movingResult = resultRepository.findByRegistrationId(moving.getId()).orElseThrow();
         adminResultService.updateRegistration(moving.getId(), new ru.sportsresults.api.dto.UpdateRegistrationRequest(
                 moving.getDisplayName(), moving.getFirstName(), moving.getLastName(), moving.getBirthDate(),
-                moving.getGender(), moving.getBib(), moving.getSourceCategory(), clusterA.id(), moving.getEntryKind()
+                moving.getGender(), moving.getBib(), moving.getSourceCategory(), clusterA.id(), moving.getEntryKind(),
+                moving.getCategory() == null ? null : moving.getCategory().getId()
         ), ADMIN_USERNAME);
         moving = registrationRepository.findById(moving.getId()).orElseThrow();
         moving.setCategory(categoryA);
@@ -1527,7 +1573,8 @@ class BackendIntegrationTest {
         adminResultService.updateRegistration(registration.getId(), new ru.sportsresults.api.dto.UpdateRegistrationRequest(
                 registration.getDisplayName(), registration.getFirstName(), registration.getLastName(),
                 registration.getBirthDate(), registration.getGender(), registration.getBib(),
-                registration.getSourceCategory(), cluster.id(), registration.getEntryKind()
+                registration.getSourceCategory(), cluster.id(), registration.getEntryKind(),
+                registration.getCategory() == null ? null : registration.getCategory().getId()
         ), ADMIN_USERNAME);
         registration = registrationRepository.findById(registration.getId()).orElseThrow();
         Result result = resultRepository.findByRegistrationId(registration.getId()).orElseThrow();
@@ -1800,7 +1847,9 @@ class BackendIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled").value(false))
                 .andExpect(jsonPath("$.windowDays").value(org.hamcrest.Matchers.nullValue()))
-                .andExpect(jsonPath("$.email").value(org.hamcrest.Matchers.nullValue()));
+                .andExpect(jsonPath("$.email").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.availability").value("DISABLED"))
+                .andExpect(jsonPath("$.deadline").value(org.hamcrest.Matchers.nullValue()));
 
         mockMvc.perform(put("/api/admin/events/{eventId}/result-inquiry", event.getId())
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
@@ -1828,7 +1877,9 @@ class BackendIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled").value(true))
                 .andExpect(jsonPath("$.windowDays").value(5))
-                .andExpect(jsonPath("$.email").value("timing@example.org"));
+                .andExpect(jsonPath("$.email").value("timing@example.org"))
+                .andExpect(jsonPath("$.availability").value("OPEN"))
+                .andExpect(jsonPath("$.deadline").isString());
 
         Event configured = eventRepository.findById(event.getId()).orElseThrow();
         assertThat(configured.isResultInquiryEnabled()).isTrue();
@@ -1847,6 +1898,336 @@ class BackendIntegrationTest {
                         .content("{\"enabled\":false,\"windowDays\":null,\"email\":null}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enabled").value(false));
+    }
+
+    @Test
+    void createsEventWithResultIssueSettingsAndRecalculatesDeadlineOnUpdate() throws Exception {
+        EventSeries series = createSeries("Submission settings", "submission-settings-series");
+        Instant startsAt = Instant.now().minus(Duration.ofDays(2))
+                .truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        Instant endsAt = Instant.now().minus(Duration.ofDays(1))
+                .truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        String payload = objectMapper.writeValueAsString(Map.of(
+                "eventSeriesId", series.getId(),
+                "name", "Submission settings Event",
+                "startsAt", startsAt,
+                "endsAt", endsAt,
+                "timeZone", "Europe/Moscow",
+                "publicationStatus", "DRAFT",
+                "resultInquiry", Map.of(
+                        "enabled", true,
+                        "windowDays", 3,
+                        "email", "timing@example.org"
+                )
+        ));
+
+        MvcResult created = mockMvc.perform(post("/api/admin/events")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long eventId = objectMapper.readTree(created.getResponse().getContentAsByteArray()).get("id").asLong();
+        Instant threeDayDeadline = endsAt.atZone(java.time.ZoneId.of("Europe/Moscow"))
+                .toLocalDate().plusDays(3).atTime(java.time.LocalTime.MAX)
+                .atZone(java.time.ZoneId.of("Europe/Moscow")).toInstant();
+
+        mockMvc.perform(get("/api/admin/events/{eventId}/result-inquiry", eventId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.deadlineMode").value("AFTER_EVENT_DAYS"))
+                .andExpect(jsonPath("$.windowDays").value(3))
+                .andExpect(jsonPath("$.fixedDate").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.availability").value("OPEN"))
+                .andExpect(jsonPath("$.deadline").value(threeDayDeadline.toString()));
+
+        Instant sevenDayDeadline = endsAt.atZone(java.time.ZoneId.of("Europe/Moscow"))
+                .toLocalDate().plusDays(7).atTime(java.time.LocalTime.MAX)
+                .atZone(java.time.ZoneId.of("Europe/Moscow")).toInstant();
+        mockMvc.perform(put("/api/admin/events/{eventId}/result-inquiry", eventId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"windowDays\":7,\"email\":\"timing@example.org\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.windowDays").value(7))
+                .andExpect(jsonPath("$.deadline").value(sevenDayDeadline.toString()));
+    }
+
+    @Test
+    void copiesTemplateInquiryDefaultsOnceAndAllowsEventOverride() throws Exception {
+        EventSeries series = createSeries("Inquiry defaults", "inquiry-defaults-series");
+        String fiveDayDefaults = objectMapper.writeValueAsString(Map.of(
+                "name", series.getName(),
+                "slug", series.getSlug(),
+                "active", true,
+                "resultInquiryDefaults", Map.of(
+                        "enabled", true,
+                        "deadlineMode", "AFTER_EVENT_DAYS",
+                        "windowDays", 5,
+                        "email", "template@example.org"
+                )
+        ));
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}", series.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(fiveDayDefaults))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resultInquiryDefaults.windowDays").value(5));
+
+        String fromTemplate = objectMapper.writeValueAsString(Map.of(
+                "eventSeriesId", series.getId(),
+                "name", "Copied defaults event",
+                "startsAt", "2027-08-15T08:00:00Z",
+                "endsAt", "2027-08-15T13:00:00Z",
+                "timeZone", "Asia/Yekaterinburg",
+                "publicationStatus", "DRAFT"
+        ));
+        MvcResult copiedResult = mockMvc.perform(post("/api/admin/events")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(fromTemplate))
+                .andExpect(status().isCreated()).andReturn();
+        long copiedEventId = objectMapper.readTree(
+                copiedResult.getResponse().getContentAsByteArray()).get("id").asLong();
+        mockMvc.perform(get("/api/admin/events/{eventId}/result-inquiry", copiedEventId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.deadlineMode").value("AFTER_EVENT_DAYS"))
+                .andExpect(jsonPath("$.windowDays").value(5))
+                .andExpect(jsonPath("$.email").value("template@example.org"));
+
+        String tenDayDefaults = fiveDayDefaults
+                .replace("\"windowDays\":5", "\"windowDays\":10")
+                .replace("template@example.org", "changed-template@example.org");
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}", series.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(tenDayDefaults))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resultInquiryDefaults.windowDays").value(10))
+                .andExpect(jsonPath("$.resultInquiryDefaults.email").value("changed-template@example.org"));
+        mockMvc.perform(get("/api/admin/events/{eventId}/result-inquiry", copiedEventId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.windowDays").value(5))
+                .andExpect(jsonPath("$.email").value("template@example.org"));
+        Event copiedEvent = eventRepository.findById(copiedEventId).orElseThrow();
+        copiedEvent.setStartsAt(Instant.now().minus(Duration.ofDays(2)));
+        copiedEvent.setEndsAt(Instant.now().minus(Duration.ofDays(1)));
+        copiedEvent.setPublicationStatus(EventPublicationStatus.PUBLISHED);
+        copiedEvent.setResultsPublicationStatus(ru.sportsresults.domain.ResultsPublicationStatus.PUBLISHED);
+        eventRepository.saveAndFlush(copiedEvent);
+        importPublishedFixture(
+                copiedEventId, "copied-template-fallback.csv",
+                singleInquiryBibCsv("Copied", "finished").getBytes(StandardCharsets.UTF_8)
+        );
+        assertThat(resultInquiryService.verify(
+                copiedEventId, "1100", LocalDate.parse("1980-01-01")
+        ).contactEmail()).isEqualTo("template@example.org");
+
+        Map<String, Object> overridePayload = new LinkedHashMap<>();
+        overridePayload.put("eventSeriesId", series.getId());
+        overridePayload.put("name", "Overridden defaults event");
+        overridePayload.put("startsAt", "2027-08-16T08:00:00Z");
+        overridePayload.put("endsAt", "2027-08-16T13:00:00Z");
+        overridePayload.put("timeZone", "Asia/Yekaterinburg");
+        overridePayload.put("publicationStatus", "DRAFT");
+        overridePayload.put("resultInquiry", Map.of(
+                "enabled", true,
+                "deadlineMode", "AFTER_EVENT_DAYS",
+                "windowDays", 7,
+                "email", "override@example.org"
+        ));
+        MvcResult overriddenResult = mockMvc.perform(post("/api/admin/events")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(overridePayload)))
+                .andExpect(status().isCreated()).andReturn();
+        long overriddenEventId = objectMapper.readTree(
+                overriddenResult.getResponse().getContentAsByteArray()).get("id").asLong();
+        mockMvc.perform(get("/api/admin/events/{eventId}/result-inquiry", overriddenEventId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.windowDays").value(7))
+                .andExpect(jsonPath("$.email").value("override@example.org"));
+
+        String bulk = objectMapper.writeValueAsString(Map.of(
+                "eventSeriesId", series.getId(),
+                "date", "2027-09-01",
+                "events", List.of(
+                        Map.of("name", "Bulk Inquiry A", "location", "Bulk Inquiry A",
+                                "timeZone", "Europe/Moscow"),
+                        Map.of("name", "Bulk Inquiry B", "location", "Bulk Inquiry B",
+                                "timeZone", "Asia/Yekaterinburg")
+                )
+        ));
+        mockMvc.perform(post("/api/admin/events/bulk")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(bulk))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.events.length()").value(2));
+        assertThat(eventRepository.findAllByEventSeriesIdOrderByIdAsc(series.getId()).stream()
+                .filter(created -> created.getName().startsWith("Bulk Inquiry")).toList())
+                .allSatisfy(created -> {
+                    assertThat(created.isResultInquiryEnabled()).isTrue();
+                    assertThat(created.getResultInquiryDeadlineMode())
+                            .isEqualTo(ResultInquiryDeadlineMode.AFTER_EVENT_DAYS);
+                    assertThat(created.getResultInquiryWindowDays()).isEqualTo(10);
+                    assertThat(created.getResultInquiryEmail()).isEqualTo("changed-template@example.org");
+                });
+    }
+
+    @Test
+    void copiesFixedDateTemplateDefaultAndRejectsInvalidEventAndBulkDates() throws Exception {
+        EventSeries series = createSeries("Fixed inquiry defaults", "fixed-inquiry-defaults-series");
+        String defaults = objectMapper.writeValueAsString(Map.of(
+                "name", series.getName(),
+                "slug", series.getSlug(),
+                "active", true,
+                "resultInquiryDefaults", Map.of(
+                        "enabled", true,
+                        "deadlineMode", "FIXED_DATE",
+                        "fixedDate", "2027-08-20",
+                        "email", "fixed@example.org"
+                )
+        ));
+        mockMvc.perform(put("/api/admin/event-series/{seriesId}", series.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(defaults))
+                .andExpect(status().isOk());
+
+        String validEvent = objectMapper.writeValueAsString(Map.of(
+                "eventSeriesId", series.getId(),
+                "name", "Valid fixed date event",
+                "startsAt", "2027-08-15T08:00:00Z",
+                "endsAt", "2027-08-15T13:00:00Z",
+                "timeZone", "Asia/Yekaterinburg",
+                "publicationStatus", "DRAFT"
+        ));
+        MvcResult validResult = mockMvc.perform(post("/api/admin/events")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(validEvent))
+                .andExpect(status().isCreated()).andReturn();
+        long eventId = objectMapper.readTree(validResult.getResponse().getContentAsByteArray()).get("id").asLong();
+        mockMvc.perform(get("/api/admin/events/{eventId}/result-inquiry", eventId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deadlineMode").value("FIXED_DATE"))
+                .andExpect(jsonPath("$.fixedDate").value("2027-08-20"))
+                .andExpect(jsonPath("$.deadline").value("2027-08-20T18:59:59.999999999Z"));
+
+        String invalidEvent = validEvent.replace("Valid fixed date event", "Invalid fixed date event")
+                .replace("2027-08-15T08:00:00Z", "2027-08-21T08:00:00Z")
+                .replace("2027-08-15T13:00:00Z", "2027-08-21T13:00:00Z");
+        mockMvc.perform(post("/api/admin/events")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(invalidEvent))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("RESULT_INQUIRY_FIXED_DATE_BEFORE_EVENT"));
+
+        String bulk = objectMapper.writeValueAsString(Map.of(
+                "eventSeriesId", series.getId(),
+                "date", "2027-08-21",
+                "events", List.of(Map.of(
+                        "name", "Invalid bulk city",
+                        "location", "Invalid bulk city",
+                        "timeZone", "Asia/Yekaterinburg"
+                ))
+        ));
+        mockMvc.perform(post("/api/admin/events/bulk/preview")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(bulk))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("RESULT_INQUIRY_FIXED_DATE_BEFORE_EVENT"));
+    }
+
+    @Test
+    void manualDisableKeepsExistingIssueManageableAndReopenRequiresFutureDeadline() throws Exception {
+        Event event = createOpenInquiryEvent("Manageable submission window", "manageable-submission-window");
+        importPublishedFixture(
+                event.getId(), "manageable-window.csv", inquiryCsv().getBytes(StandardCharsets.UTF_8)
+        );
+        Registration publicRegistration = registrationRepository
+                .findAllByRaceEventIdAndBib(event.getId(), "817").getFirst();
+        Result publicResult = resultRepository.findByRegistrationId(publicRegistration.getId()).orElseThrow();
+        String correction = """
+                {"birthDate":"1990-01-01","correctionReason":"OTHER",
+                 "contactEmail":"runner@example.org","message":"Проверьте результат"}
+                """;
+        MvcResult created = mockMvc.perform(post(
+                        "/api/events/{eventId}/results/{resultId}/result-issue-requests",
+                        event.getId(), publicResult.getId())
+                        .contentType(MediaType.APPLICATION_JSON).content(correction))
+                .andExpect(status().isCreated())
+                .andReturn();
+        long issueId = objectMapper.readTree(created.getResponse().getContentAsByteArray()).get("issueId").asLong();
+
+        LocalDate futureFixedDate = LocalDate.now(java.time.ZoneId.of(event.getTimeZone())).plusDays(5);
+        var fixedMode = eventService.updateResultInquirySettings(
+                event.getId(),
+                new UpdateResultInquirySettingsRequest(
+                        true, ResultInquiryDeadlineMode.FIXED_DATE, 5, futureFixedDate, "timing@example.org"
+                ),
+                ADMIN_USERNAME
+        );
+        assertThat(fixedMode.deadlineMode()).isEqualTo(ResultInquiryDeadlineMode.FIXED_DATE);
+        assertThat(fixedMode.availability()).isEqualTo(ResultInquiryAvailability.OPEN);
+        assertThat(resultIssueRequestRepository.findById(issueId)).isPresent();
+
+        eventService.updateResultInquirySettings(event.getId(), new UpdateResultInquirySettingsRequest(
+                false, ResultInquiryDeadlineMode.FIXED_DATE, 5, futureFixedDate, "timing@example.org"
+        ), ADMIN_USERNAME);
+        mockMvc.perform(post(
+                        "/api/events/{eventId}/results/{resultId}/result-issue-requests",
+                        event.getId(), publicResult.getId())
+                        .contentType(MediaType.APPLICATION_JSON).content(correction))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RESULT_ISSUES_DISABLED"));
+
+        mockMvc.perform(put(
+                        "/api/admin/events/{eventId}/result-issue-requests/{issueId}/status",
+                        event.getId(), issueId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedStatus\":\"NEW\",\"status\":\"IN_PROGRESS\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("IN_PROGRESS"));
+        assertThat(resultIssueRequestRepository.findById(issueId).orElseThrow().getStatus())
+                .isEqualTo(ResultIssueStatus.IN_PROGRESS);
+
+        Event movedIntoPast = eventRepository.findById(event.getId()).orElseThrow();
+        movedIntoPast.setStartsAt(Instant.now().minus(Duration.ofDays(11)));
+        movedIntoPast.setEndsAt(Instant.now().minus(Duration.ofDays(10)));
+        eventRepository.saveAndFlush(movedIntoPast);
+        assertThatThrownBy(() -> eventService.updateResultInquirySettings(
+                event.getId(), new UpdateResultInquirySettingsRequest(true, 5, "timing@example.org"),
+                ADMIN_USERNAME
+        )).isInstanceOf(InvalidRequestException.class)
+                .extracting(exception -> ((InvalidRequestException) exception).getCode())
+                .isEqualTo("RESULT_INQUIRY_DEADLINE_EXPIRED");
+
+        var reopened = eventService.updateResultInquirySettings(
+                event.getId(), new UpdateResultInquirySettingsRequest(true, 15, "timing@example.org"),
+                ADMIN_USERNAME
+        );
+        assertThat(reopened.availability()).isEqualTo(ResultInquiryAvailability.OPEN);
+        String missing = """
+                {"bib":"0817","birthDate":"1991-02-03","contactEmail":"runner@example.org",
+                 "message":"Результат отсутствует"}
+                """;
+        mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
+                        .contentType(MediaType.APPLICATION_JSON).content(missing))
+                .andExpect(status().isCreated());
+
+        var shortened = eventService.updateResultInquirySettings(
+                event.getId(), new UpdateResultInquirySettingsRequest(true, 1, "timing@example.org"),
+                ADMIN_USERNAME
+        );
+        assertThat(shortened.availability()).isEqualTo(ResultInquiryAvailability.CLOSED);
+        mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
+                        .contentType(MediaType.APPLICATION_JSON).content(missing))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RESULT_ISSUES_CLOSED"));
+        assertThat(resultIssueRequestRepository.findById(issueId)).isPresent();
     }
 
     @Test
@@ -2008,6 +2389,7 @@ class BackendIntegrationTest {
 
         var wrongDob = resultInquiryService.verify(event.getId(), "1100", LocalDate.parse("1980-03-15"));
         assertThat(wrongDob.lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
+        assertThat(wrongDob.contactEmail()).isEqualTo("timing@example.org");
         assertThat(wrongDob.participantDisplayName()).isNull();
         assertThat(wrongDob.raceId()).isNull();
         assertThat(wrongDob.publicResultId()).isNull();
@@ -2047,6 +2429,7 @@ class BackendIntegrationTest {
                         .content("{\"bib\":\"1100\",\"birthDate\":\"1980-01-01\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.lookupState").value("VERIFICATION_FAILED"))
+                .andExpect(jsonPath("$.contactEmail").value("timing@example.org"))
                 .andExpect(jsonPath("$.activeIssue").doesNotExist());
 
         String newIssueJson = mockMvc.perform(post(
@@ -2287,6 +2670,83 @@ class BackendIntegrationTest {
     }
 
     @Test
+    void failedDobFallbackUsesOnlyTheEventEmailAndCannotBypassAvailability() {
+        Event afterDays = createOpenInquiryEvent("After-days fallback", "after-days-fallback");
+        eventService.updateResultInquirySettings(afterDays.getId(), new UpdateResultInquirySettingsRequest(
+                true, ResultInquiryDeadlineMode.AFTER_EVENT_DAYS, 5, null, "event-a@example.com"
+        ), ADMIN_USERNAME);
+        importPublishedFixture(
+                afterDays.getId(), "after-days-fallback.csv",
+                singleInquiryBibCsv("After", "finished").getBytes(StandardCharsets.UTF_8)
+        );
+        var afterDaysFailure = resultInquiryService.verify(
+                afterDays.getId(), "1100", LocalDate.parse("1980-01-01")
+        );
+        assertThat(afterDaysFailure.lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
+        assertThat(afterDaysFailure.inquiryAvailability()).isEqualTo(ResultInquiryAvailability.OPEN);
+        assertThat(afterDaysFailure.contactEmail()).isEqualTo("event-a@example.com");
+
+        Event fixedDate = createOpenInquiryEvent("Fixed-date fallback", "fixed-date-fallback");
+        LocalDate fixedDeadline = LocalDate.now(java.time.ZoneId.of(fixedDate.getTimeZone())).plusDays(2);
+        eventService.updateResultInquirySettings(fixedDate.getId(), new UpdateResultInquirySettingsRequest(
+                true, ResultInquiryDeadlineMode.FIXED_DATE, null, fixedDeadline, "event-b@example.com"
+        ), ADMIN_USERNAME);
+        importPublishedFixture(
+                fixedDate.getId(), "fixed-date-fallback.csv",
+                singleInquiryBibCsv("Fixed", "finished").getBytes(StandardCharsets.UTF_8)
+        );
+        var fixedDateFailure = resultInquiryService.verify(
+                fixedDate.getId(), "1100", LocalDate.parse("1980-01-01")
+        );
+        assertThat(fixedDateFailure.lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
+        assertThat(fixedDateFailure.inquiryAvailability()).isEqualTo(ResultInquiryAvailability.OPEN);
+        assertThat(fixedDateFailure.contactEmail()).isEqualTo("event-b@example.com");
+
+        eventService.updateResultInquirySettings(afterDays.getId(), new UpdateResultInquirySettingsRequest(
+                false, ResultInquiryDeadlineMode.AFTER_EVENT_DAYS, 5, null, "event-a@example.com"
+        ), ADMIN_USERNAME);
+        var disabledFailure = resultInquiryService.verify(
+                afterDays.getId(), "1100", LocalDate.parse("1980-01-01")
+        );
+        assertThat(disabledFailure.inquiryAvailability()).isEqualTo(ResultInquiryAvailability.DISABLED);
+        assertThat(disabledFailure.contactEmail()).isNull();
+
+        eventService.updateResultInquirySettings(fixedDate.getId(), new UpdateResultInquirySettingsRequest(
+                true,
+                ResultInquiryDeadlineMode.FIXED_DATE,
+                null,
+                LocalDate.now(java.time.ZoneId.of(fixedDate.getTimeZone())).minusDays(1),
+                "event-b@example.com"
+        ), ADMIN_USERNAME);
+        var closedFailure = resultInquiryService.verify(
+                fixedDate.getId(), "1100", LocalDate.parse("1980-01-01")
+        );
+        assertThat(closedFailure.inquiryAvailability()).isEqualTo(ResultInquiryAvailability.CLOSED);
+        assertThat(closedFailure.contactEmail()).isNull();
+
+        Event notOpen = createPublishedEvent("Not-open fallback", "not-open-fallback");
+        notOpen.setStartsAt(Instant.now().plus(Duration.ofDays(2)));
+        notOpen.setEndsAt(Instant.now().plus(Duration.ofDays(2)).plus(Duration.ofHours(2)));
+        notOpen = eventRepository.saveAndFlush(notOpen);
+        eventService.updateResultInquirySettings(notOpen.getId(), new UpdateResultInquirySettingsRequest(
+                true,
+                ResultInquiryDeadlineMode.FIXED_DATE,
+                null,
+                LocalDate.now(java.time.ZoneId.of(notOpen.getTimeZone())).plusDays(4),
+                "not-open@example.com"
+        ), ADMIN_USERNAME);
+        importPublishedFixture(
+                notOpen.getId(), "not-open-fallback.csv",
+                singleInquiryBibCsv("Future", "finished").getBytes(StandardCharsets.UTF_8)
+        );
+        var notOpenFailure = resultInquiryService.verify(
+                notOpen.getId(), "1100", LocalDate.parse("1980-01-01")
+        );
+        assertThat(notOpenFailure.inquiryAvailability()).isEqualTo(ResultInquiryAvailability.NOT_OPEN_YET);
+        assertThat(notOpenFailure.contactEmail()).isNull();
+    }
+
+    @Test
     void createsMissingResultIssuesWithoutTrustingRegistrationIdAndAllowsHistory() throws Exception {
         Event event = createOpenInquiryEvent("Missing result issues", "missing-result-issues");
         assertThat(importPublishedFixture(
@@ -2463,9 +2923,10 @@ class BackendIntegrationTest {
         expired.setStartsAt(Instant.now().minus(Duration.ofDays(5)));
         expired.setEndsAt(Instant.now().minus(Duration.ofDays(4)));
         expired = eventRepository.saveAndFlush(expired);
-        eventService.updateResultInquirySettings(expired.getId(), new UpdateResultInquirySettingsRequest(
-                true, 1, "timing@example.org"
-        ), ADMIN_USERNAME);
+        expired.setResultInquiryEnabled(true);
+        expired.setResultInquiryWindowDays(1);
+        expired.setResultInquiryEmail("timing@example.org");
+        eventRepository.saveAndFlush(expired);
         importPublishedFixture(
                 expired.getId(), "expired-issues.csv",
                 singleInquiryBibCsv("Просроченный", "notstarted").getBytes(StandardCharsets.UTF_8)
@@ -2872,7 +3333,7 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void confirmsStorageObjectAndBlocksDownloadUntilScannerReportsClean() throws Exception {
+    void confirmsStorageObjectAndAutomaticallyScansWhenScannerIsConfigured() throws Exception {
         Event event = createOpenInquiryEvent("Attachment lifecycle", "attachment-lifecycle");
         importPublishedFixture(
                 event.getId(), "attachment-lifecycle.csv",
@@ -2916,24 +3377,8 @@ class BackendIntegrationTest {
                         .header("X-Result-Issue-Upload-Token", issue.token()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.uploadStatus").value("UPLOADED"))
-                .andExpect(jsonPath("$.scanStatus").value("PENDING"));
+                .andExpect(jsonPath("$.scanStatus").value("CLEAN"));
 
-        assertThatThrownBy(() -> resultIssueAttachmentService.prepareAuthorizedDownload(attachmentId))
-                .isInstanceOf(RequestConflictException.class)
-                .hasMessageContaining("not available");
-        resultIssueAttachmentScanService.recordScanResult(
-                attachmentId, AttachmentScanStatus.INFECTED, "application/octet-stream"
-        );
-        assertThatThrownBy(() -> resultIssueAttachmentService.prepareAuthorizedDownload(attachmentId))
-                .isInstanceOf(RequestConflictException.class);
-        resultIssueAttachmentScanService.recordScanResult(
-                attachmentId, AttachmentScanStatus.SCAN_FAILED, null
-        );
-        assertThatThrownBy(() -> resultIssueAttachmentService.prepareAuthorizedDownload(attachmentId))
-                .isInstanceOf(RequestConflictException.class);
-        resultIssueAttachmentScanService.recordScanResult(
-                attachmentId, AttachmentScanStatus.CLEAN, "video/mp4"
-        );
         Instant beforeDownload = Instant.now();
         var download = resultIssueAttachmentService.prepareAuthorizedDownload(attachmentId);
         assertThat(download.url().toString()).startsWith("https://object-storage.invalid/download/");
@@ -3186,14 +3631,16 @@ class BackendIntegrationTest {
         mockMvc.perform(put(statusUrl, fixture.event().getId(), first.getId())
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"expectedStatus\":\"NEW\",\"status\":\"IN_PROGRESS\"}"))
+                        .content("{\"expectedStatus\":\"NEW\",\"status\":\"IN_PROGRESS\","+
+                                "\"comment\":\"Проверяю данные хронометража\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("IN_PROGRESS"))
                 .andExpect(jsonPath("$.resolvedAt").doesNotExist());
         mockMvc.perform(put(statusUrl, fixture.event().getId(), first.getId())
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"expectedStatus\":\"IN_PROGRESS\",\"status\":\"RESOLVED\"}"))
+                        .content("{\"expectedStatus\":\"IN_PROGRESS\",\"status\":\"RESOLVED\","+
+                                "\"comment\":\"Исправление проверено\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("RESOLVED"))
                 .andExpect(jsonPath("$.resolvedAt").exists());
@@ -3202,22 +3649,33 @@ class BackendIntegrationTest {
                         history -> history.getAction(),
                         history -> history.getFromStatus(),
                         history -> history.getToStatus(),
-                        history -> history.getActor()
+                        history -> history.getActor(),
+                        history -> history.getReason()
                 )
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple(
                                 ResultIssueHistoryAction.STATUS_CHANGED,
                                 ResultIssueStatus.NEW,
                                 ResultIssueStatus.IN_PROGRESS,
-                                ADMIN_USERNAME
+                                ADMIN_USERNAME,
+                                "Проверяю данные хронометража"
                         ),
                         org.assertj.core.groups.Tuple.tuple(
                                 ResultIssueHistoryAction.STATUS_CHANGED,
                                 ResultIssueStatus.IN_PROGRESS,
                                 ResultIssueStatus.RESOLVED,
-                                ADMIN_USERNAME
+                                ADMIN_USERNAME,
+                                "Исправление проверено"
                         )
                 );
+        mockMvc.perform(get("/api/admin/events/{eventId}/result-issue-requests/{issueId}",
+                        fixture.event().getId(), first.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RESOLVED"))
+                .andExpect(jsonPath("$.history.length()").value(2))
+                .andExpect(jsonPath("$.history[0].reason").value("Проверяю данные хронометража"))
+                .andExpect(jsonPath("$.history[1].reason").value("Исправление проверено"));
 
         transitionStatus(fixture, 1, ResultIssueStatus.NEW, ResultIssueStatus.IN_PROGRESS);
         transitionStatus(fixture, 1, ResultIssueStatus.IN_PROGRESS, ResultIssueStatus.REJECTED);
@@ -3266,6 +3724,58 @@ class BackendIntegrationTest {
         assertThat(unchangedRegistration.getDisplayName()).isEqualTo(registrationNameBefore);
         assertThat(resultRepository.count()).isEqualTo(resultCountBefore);
         assertThat(registrationRepository.count()).isEqualTo(registrationCountBefore);
+    }
+
+    @Test
+    void resultCorrectionUsesExistingMutationWithoutChangingIssueWorkflowOrSnapshot() throws Exception {
+        AdminIssueFixture fixture = createAdminIssueFixture("Issue result workspace", "issue-result-workspace", 5);
+        ResultIssueRequest issue = fixture.issues().get(4);
+        Result result = issue.getResult();
+        Duration snapshotGunTime = issue.getObservedGunTime();
+        String statusUrl = "/api/admin/events/{eventId}/result-issue-requests/{issueId}/status";
+
+        mockMvc.perform(get("/api/admin/events/{eventId}/result-issue-requests/{issueId}",
+                        fixture.event().getId(), issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("NEW"));
+        assertThat(resultIssueRequestRepository.findById(issue.getId()).orElseThrow().getStatus())
+                .isEqualTo(ResultIssueStatus.NEW);
+
+        mockMvc.perform(put(statusUrl, fixture.event().getId(), issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedStatus\":\"NEW\",\"status\":\"IN_PROGRESS\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(put("/api/admin/results/{resultId}", result.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "finished",
+                                  "gunTimeMs": 18000,
+                                  "chipTimeMs": 17500,
+                                  "overallPlace": null,
+                                  "genderPlace": null,
+                                  "categoryPlace": null,
+                                  "netOverallPlace": null,
+                                  "netGenderPlace": null,
+                                  "netCategoryPlace": null
+                                }
+                                """))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/admin/events/{eventId}/result-issue-requests/{issueId}",
+                        fixture.event().getId(), issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("IN_PROGRESS"))
+                .andExpect(jsonPath("$.result.gunTimeMs").value(18_000))
+                .andExpect(jsonPath("$.snapshot.observedGunTimeMs").value(snapshotGunTime.toMillis()));
+        ResultIssueRequest unchangedIssue = resultIssueRequestRepository.findById(issue.getId()).orElseThrow();
+        assertThat(unchangedIssue.getStatus()).isEqualTo(ResultIssueStatus.IN_PROGRESS);
+        assertThat(unchangedIssue.getObservedGunTime()).isEqualTo(snapshotGunTime);
     }
 
     @Test
@@ -3324,6 +3834,9 @@ class BackendIntegrationTest {
         mockMvc.perform(post(
                         downloadUrl,
                         fixture.event().getId(), issue.getId(), otherEventAttachment.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post(downloadUrl, fixture.event().getId(), issue.getId(), Long.MAX_VALUE)
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
                 .andExpect(status().isNotFound());
     }
@@ -4147,6 +4660,68 @@ class BackendIntegrationTest {
         assertThat(replacement.status()).isEqualTo(ImportBatchStatus.SUCCEEDED);
         assertThat(changeLogRepository.count()).isEqualTo(auditCount);
         assertThat(resultRepository.findById(result.getId())).isEmpty();
+    }
+
+    @Test
+    void adminCorrectionAssignsOnlyRaceCategoryAndOfficialRankingUsesCurrentResultFacts() {
+        Event event = createPublishedEvent("Admin correction ranking", "admin-correction-ranking");
+        importPublishedFixture(
+                event.getId(), "ranking.csv", rankingCsv().getBytes(StandardCharsets.UTF_8));
+        Race race = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
+        Race otherRace = raceRepository.findByEventIdAndSourceCode(event.getId(), "10 km").orElseThrow();
+        awardPolicyService.upsert(race.getId(), new UpdateAwardPolicyRequest(
+                RankingBasis.GUN_TIME, PrimaryStandingMode.ALL, 0, false,
+                AgeCalculationMode.EVENT_DATE, 0, false
+        ), ADMIN_USERNAME);
+
+        Category manualCategory = new Category();
+        manualCategory.setRace(race);
+        manualCategory.setSourceName("MANUAL-30");
+        manualCategory.setDisplayName("30–39 · мужчины");
+        manualCategory.setDisplayOrder(50);
+        manualCategory.setEnabled(true);
+        manualCategory = categoryRepository.saveAndFlush(manualCategory);
+        Category otherRaceCategory = categoryRepository
+                .findAllByRaceIdOrderByDisplayOrderAsc(otherRace.getId()).getFirst();
+
+        Registration registration = registrationRepository
+                .findAllByRaceIdAndBib(race.getId(), "1").getFirst();
+        adminResultService.updateRegistration(registration.getId(), new UpdateRegistrationRequest(
+                registration.getDisplayName(), registration.getFirstName(), registration.getLastName(),
+                registration.getBirthDate(), registration.getGender(), registration.getBib(),
+                registration.getSourceCategory(), null, registration.getEntryKind(), manualCategory.getId()
+        ), ADMIN_USERNAME);
+        assertThat(registrationRepository.findById(registration.getId()).orElseThrow().getCategory().getId())
+                .isEqualTo(manualCategory.getId());
+
+        assertThatThrownBy(() -> adminResultService.updateRegistration(
+                registration.getId(), new UpdateRegistrationRequest(
+                        registration.getDisplayName(), registration.getFirstName(), registration.getLastName(),
+                        registration.getBirthDate(), registration.getGender(), registration.getBib(),
+                        registration.getSourceCategory(), null, registration.getEntryKind(), otherRaceCategory.getId()
+                ), ADMIN_USERNAME
+        )).isInstanceOf(InvalidRequestException.class)
+                .hasMessageContaining("registration race");
+
+        var before = resultQueryService.search(
+                event.getId(), race.getId(), null, null, null, null, null,
+                0, 20, "gunTime", "asc");
+        assertThat(achievement(before.content(), "Ган Лидер", "ABSOLUTE").place()).isEqualTo(1);
+        Result result = resultRepository.findByRegistrationId(registration.getId()).orElseThrow();
+        Integer importedOverallPlace = result.getOverallPlace();
+        adminResultService.updateResult(result.getId(), new UpdateResultRequest(
+                result.getStatus(), 5_000L, result.getChipTime().toMillis(),
+                result.getOverallPlace(), result.getGenderPlace(), result.getCategoryPlace(),
+                result.getNetOverallPlace(), result.getNetGenderPlace(), result.getNetCategoryPlace()
+        ), ADMIN_USERNAME);
+
+        var after = resultQueryService.search(
+                event.getId(), race.getId(), null, null, null, null, null,
+                0, 20, "gunTime", "asc");
+        assertThat(achievement(after.content(), "Чип Лидер", "ABSOLUTE").place()).isEqualTo(1);
+        assertThat(achievement(after.content(), "Ган Лидер", "ABSOLUTE").place()).isEqualTo(2);
+        assertThat(resultRepository.findById(result.getId()).orElseThrow().getOverallPlace())
+                .isEqualTo(importedOverallPlace);
     }
 
     @Test
@@ -6335,7 +6910,8 @@ class BackendIntegrationTest {
         return new ru.sportsresults.api.dto.UpdateRegistrationRequest(
                 registration.getDisplayName(), registration.getFirstName(), registration.getLastName(),
                 registration.getBirthDate(), registration.getGender(), registration.getBib(),
-                registration.getSourceCategory(), clusterId, registration.getEntryKind());
+                registration.getSourceCategory(), clusterId, registration.getEntryKind(),
+                registration.getCategory() == null ? null : registration.getCategory().getId());
     }
 
     private static ResultListItemDto item(List<ResultListItemDto> items, String displayName) {
@@ -6670,7 +7246,7 @@ class BackendIntegrationTest {
                         eventId,
                         issueId,
                         new ru.sportsresults.api.dto.UpdateResultIssueStatusRequest(
-                                ResultIssueStatus.NEW, next
+                                ResultIssueStatus.NEW, next, null
                         ),
                         ADMIN_USERNAME
                 );
@@ -7087,7 +7663,7 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void emergencyReplacementRejectsAnEmptyNoOpWithoutRevisionOrBatch() {
+    void emergencyReplacementReturnsANoOpWithoutRevisionOrBatch() {
         Event event = createPublishedEvent("Stage F empty", "stage-f-empty");
         Long raceId = raceAdminService.create(
                 event.getId(),
@@ -7116,13 +7692,21 @@ class BackendIntegrationTest {
         assertThat(preview.emergencySummary().totals().sourceCount()).isZero();
         assertThat(preview.emergencySummary().totals().outOfScopeCount()).isOne();
 
-        assertThatThrownBy(() -> importApplyService.apply(
+        ImportApplyResponseDto noOp = importApplyService.apply(
                 event.getId(), preview.operationId(), empty, ADMIN_USERNAME
-        )).isInstanceOf(RequestConflictException.class)
-                .extracting(exception -> ((RequestConflictException) exception).getCode())
-                .isEqualTo("NO_APPLICABLE_CHANGES");
+        );
+        assertThat(noOp.noOp()).isTrue();
+        assertThat(noOp.status()).isEqualTo(ImportOperationStatus.PREVIEWED);
+        assertThat(noOp.importBatchId()).isNull();
+        assertThat(noOp.insertedCount()).isZero();
+        assertThat(noOp.retiredCount()).isZero();
+        assertThat(noOp.outOfScopeCount()).isOne();
+        assertThat(noOp.newRevision()).isEqualTo(revision);
+        assertThat(noOp.appliedAt()).isNull();
         assertThat(eventRepository.findById(event.getId()).orElseThrow().getResultDataRevision()).isEqualTo(revision);
         assertThat(importBatchRepository.count()).isZero();
+        assertThat(registrationRepository.countByRaceEventId(event.getId())).isZero();
+        assertThat(resultRepository.countByRegistrationRaceEventId(event.getId())).isZero();
         assertThat(importOperationRepository.findById(preview.operationId()).orElseThrow().getStatus())
                 .isEqualTo(ImportOperationStatus.PREVIEWED);
     }
@@ -7787,7 +8371,7 @@ class BackendIntegrationTest {
         adminResultIssueService.updateStatus(
                 fixture.event().getId(), issue.getId(),
                 new ru.sportsresults.api.dto.UpdateResultIssueStatusRequest(
-                        ResultIssueStatus.NEW, ResultIssueStatus.IN_PROGRESS
+                        ResultIssueStatus.NEW, ResultIssueStatus.IN_PROGRESS, null
                 ), ADMIN_USERNAME
         );
         resultIssueLifecycleService.archiveManual(

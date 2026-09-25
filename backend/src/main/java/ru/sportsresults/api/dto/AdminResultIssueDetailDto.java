@@ -29,9 +29,11 @@ public record AdminResultIssueDetailDto(
         AdminResultIssueSnapshotDto snapshot,
         AdminResultIssueRegistrationDto registration,
         AdminResultIssueResultDto result,
-        List<AdminResultIssueAttachmentDto> attachments
+        List<AdminResultIssueAttachmentDto> attachments,
+        List<GlobalResultIssueHistoryDto> history
 ) {
     public AdminResultIssueDetailDto {
         attachments = List.copyOf(attachments);
+        history = List.copyOf(history);
     }
 }

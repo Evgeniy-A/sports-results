@@ -59,6 +59,13 @@ public class ResultIssueAttachmentScanOrchestrator {
         );
     }
 
+    public Optional<AttachmentScanExecution> scanIfConfigured(Long attachmentId) {
+        if (scanner.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(scan(attachmentId));
+    }
+
     private ResultIssueAttachment requireAttachment(Long attachmentId) {
         return attachmentRepository.findById(attachmentId)
                 .orElseThrow(() -> new ResourceNotFoundException(

@@ -16,6 +16,7 @@ public record UpdateRegistrationRequest(
         @Size(max = 64) String bib,
         @Size(max = 255) String sourceCategory,
         Long clusterId,
-        @NotNull RegistrationEntryKind entryKind
+        @NotNull RegistrationEntryKind entryKind,
+        Long categoryId
 ) {
 }

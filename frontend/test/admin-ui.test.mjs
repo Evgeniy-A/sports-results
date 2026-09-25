@@ -6,6 +6,7 @@ import { filterTimeZones, suggestTimeZone, timeZoneLabel } from '../src/admin/ti
 import { awardPolicyUpdate, withRankingBasis } from '../src/admin/awardPolicy.ts'
 import { ApiError, readJsonBody } from '../src/api/client.ts'
 import { duplicateLocationIds, normalizedLocation } from '../src/admin/bulkEvents.ts'
+import { authorizeAndOpenAttachment } from '../src/admin/attachmentOpening.ts'
 import {
   ADMIN_AUTH_SESSION_KEY,
   clearAdminCredentials,
@@ -15,7 +16,7 @@ import {
 } from '../src/admin/adminAuthSession.ts'
 
 const source = async (path) => readFile(new URL(path, import.meta.url), 'utf8')
-const [app, adminApp, api, utils, events, templates, templateDetail, startComposer, categorySettings, awardPresentation, startDrafts, bulkEvents, inlineTemplate, eventPage, core, content, categories, results, imports, policy, issues, journal, timeZoneCombobox, css] = await Promise.all([
+const [app, adminApp, api, utils, events, templates, templateDetail, startComposer, categorySettings, awardPresentation, startDrafts, bulkEvents, inlineTemplate, eventPage, core, content, categories, results, resultEditor, imports, publication, policy, issues, issuePage, journal, timeZoneCombobox, css] = await Promise.all([
   source('../src/App.tsx'),
   source('../src/admin/AdminApp.tsx'),
   source('../src/admin/api.ts'),
@@ -34,9 +35,12 @@ const [app, adminApp, api, utils, events, templates, templateDetail, startCompos
   source('../src/admin/pages/EventContentManager.tsx'),
   source('../src/admin/pages/EventCategoriesTab.tsx'),
   source('../src/admin/pages/EventResultsAdminTab.tsx'),
+  source('../src/admin/components/AdminResultEditor.tsx'),
   source('../src/admin/pages/EventImportTab.tsx'),
+  source('../src/admin/pages/EventResultsPublicationTab.tsx'),
   source('../src/admin/pages/EventPolicyTabs.tsx'),
   source('../src/admin/pages/EventIssuesTab.tsx'),
+  source('../src/admin/pages/AdminEventIssuePage.tsx'),
   source('../src/admin/pages/AdminJournalPage.tsx'),
   source('../src/admin/components/TimeZoneCombobox.tsx'),
   source('../src/admin/admin.css'),
@@ -111,6 +115,29 @@ test('event table and empty state use template terminology and useful creation a
   assert.match(events, /Мероприятий пока нет/)
   assert.match(events, /несколько городов сразу из шаблона/)
   assert.doesNotMatch(events, /<th>Серия<\/th>|<th>Event<\/th>/)
+})
+
+test('event table fits desktop content and uses one keyboard-accessible row action', () => {
+  assert.match(events, /className="admin-event-row"/)
+  assert.match(events, /role="link"/)
+  assert.match(events, /tabIndex=\{0\}/)
+  assert.match(events, /keyEvent\.key !== 'Enter'.*keyEvent\.key !== ' '/s)
+  assert.doesNotMatch(events, /admin-row-link[^>]*href=\{`\/admin\/events/)
+  assert.match(css, /\.admin-events-table-wrap[^}]*overflow-x:\s*clip/)
+  assert.match(css, /\.admin-events-table[^}]*table-layout:\s*fixed/)
+})
+
+test('admin navigation is a closed-by-default overlay with complete keyboard dismissal', () => {
+  assert.match(adminApp, /useState\(false\)/)
+  assert.match(adminApp, /aria-expanded=\{sidebarOpen\}/)
+  assert.match(adminApp, /aria-controls="admin-navigation"/)
+  assert.match(adminApp, /admin-sidebar-scrim/)
+  assert.match(adminApp, /event\.key !== 'Escape'/)
+  assert.match(adminApp, /querySelector<HTMLAnchorElement>\('a\[href\]'\)\?\.focus\(\)/)
+  assert.match(adminApp, /onClick=\{\(\) => closeSidebar\(\)\}/)
+  assert.match(css, /\.admin-content[^}]*padding:[^}]*;/)
+  assert.doesNotMatch(css, /\.admin-content[^}]*margin-left:\s*244px/)
+  assert.match(css, /\.admin-sidebar-scrim[^}]*position:\s*fixed/)
 })
 
 test('templates screen supports list, empty state, create and stable-slug edit API', () => {
@@ -312,12 +339,13 @@ test('an unambiguous Event location suggests a timezone without locking the sele
 })
 
 test('event page separates Event configuration from result operations', () => {
-  for (const label of ['Мероприятие', 'Результаты', 'Основное', 'Старты', 'Награждение и категории', 'Информация участникам', 'Загрузка', 'Участники', 'Обращения']) {
+  for (const label of ['Мероприятие', 'Результаты', 'Основное', 'Старты', 'Награждение и категории', 'Информация участникам', 'Загрузка', 'Участники', 'Публикация результатов', 'Обращения']) {
     assert.match(eventPage, new RegExp(label))
   }
   assert.match(eventPage, /EVENT_TABS/)
   assert.match(eventPage, /RESULT_TABS/)
-  assert.doesNotMatch(eventPage, /Категории и стартовые волны|tab === 'publication'|Доступ к результатам/)
+  assert.doesNotMatch(eventPage, /Категории и стартовые волны|Доступ к результатам/)
+  assert.match(eventPage, /tab === 'publication'/)
   assert.match(core, /Публикация мероприятия/)
   assert.match(core, /Результаты публикуются отдельно для каждого старта/)
   assert.match(eventPage, /publishedRaceCount/)
@@ -331,9 +359,24 @@ test('Start UI uses the final Race-only contract while preserving explicit publi
   assert.doesNotMatch(core, /Адрес в URL|slug: form\.slug|sportFormatId:/)
   assert.match(core, /Вернуть в черновик/)
   assert.match(core, /Опубликовать/)
+  assert.match(core, /admin-button-primary admin-button-compact[\s\S]*?>Открыть/)
+  assert.match(core, /admin-button-secondary admin-button-compact[\s\S]*?>Редактировать/)
+  assert.match(core, /admin-button-subtle admin-button-compact/)
+  assert.match(core, /admin-button-danger-outline admin-button-compact[\s\S]*?>Удалить/)
   assert.doesNotMatch(core, /Код импорта|sourceCode/)
   assert.doesNotMatch(core, /auto-?draft/i)
   assert.doesNotMatch(api, /sportFormats:|createSportFormat:|sportFormatId|entryMode/)
+})
+
+test('result publication tab reuses Race publication state and APIs', () => {
+  assert.match(publication, /api\.results\(event\.id/)
+  assert.match(publication, /raceId: race\.id, page: 0, size: 1/)
+  assert.match(publication, /totalElements/)
+  assert.match(publication, /api\.publishRace/)
+  assert.match(publication, /api\.draftRace/)
+  assert.match(publication, /Публикация самого мероприятия не изменяется/)
+  assert.match(publication, /Статус мероприятия не изменится/)
+  assert.doesNotMatch(publication, /updateEventPublication|new publication|resultsPublished\s*=/i)
 })
 
 test('categories remain in award workflow while start waves are not ordinary Event settings', () => {
@@ -352,10 +395,11 @@ test('participants are an Event-wide admin view without a fabricated Event place
 })
 
 test('registration and result correction round-trip through backend', () => {
-  assert.match(results, /updateRegistration/)
-  assert.match(results, /updateResult/)
-  assert.match(results, /Frontend не пересчитывает официальный зачёт/)
-  assert.match(results, /Старт опубликован.*сразу изменит текущие публичные данные/s)
+  assert.match(results, /AdminResultEditor/)
+  assert.match(resultEditor, /updateRegistration/)
+  assert.match(resultEditor, /updateResult/)
+  assert.match(resultEditor, /Официальные места система рассчитывает/)
+  assert.match(resultEditor, /Старт опубликован.*сразу изменит текущие публичные данные/s)
 })
 
 test('import exposes three explicit modes and never auto-syncs them', () => {
@@ -395,6 +439,14 @@ test('flexible import keeps data verification separate from Apply and emergency 
   assert.match(utils, /IMPORT_PREVIEW_STALE.*Повторите проверку данных/s)
   assert.match(utils, /STALE_EVENT_TEMPLATE.*Структура мероприятия изменилась/s)
   assert.doesNotMatch(imports, /Race\.sourceCode|ImportBatch|backend plan/)
+})
+
+test('no-op import is informational and cannot be applied from the preview', () => {
+  assert.match(imports, /const noChangesToApply = preview !== null/)
+  assert.match(imports, /actionableCount === 0/)
+  assert.match(imports, /disabled=\{busy !== null \|\| noChangesToApply\}/)
+  assert.match(imports, /AdminNotice tone="info">Изменений для применения нет\./)
+  assert.match(imports, /if \(!preview \|\| !file \|\| preview\.blockingErrorsPresent \|\| noChangesToApply\) return/)
 })
 
 test('import presentation translates technical decisions and category or cluster changes', () => {
@@ -472,14 +524,109 @@ test('shared JSON reader handles 204 and declared empty bodies without hiding ma
   assert.doesNotMatch(api, /return response\.json\(\) as Promise<T>/)
 })
 
-test('Event issue queue separates snapshot, current state, archive and status', () => {
+test('Event issue queue opens a full-page Event-scoped workspace and preserves filters', () => {
   assert.match(issues, /Рабочая очередь обращений/)
-  assert.match(issues, /Состояние на момент обращения/)
-  assert.match(issues, /Текущее состояние/)
-  assert.match(issues, /archiveIssue/)
-  assert.match(issues, /!detail\.archive\.queueArchivedAt/)
-  assert.match(issues, /updateIssueStatus/)
-  assert.match(issues, /authorizeAttachment/)
+  assert.match(issues, /admin-clickable-row/)
+  assert.match(issues, /role="link"/)
+  assert.match(issues, /closest\('a, button, input, select, textarea'\)/)
+  assert.match(issues, /results\/issues\/\$\{issueId\}/)
+  assert.match(issues, /returnTo=/)
+  assert.match(issues, /queueUrl/)
+  assert.match(issues, /queueScope/)
+  assert.match(issues, /issuePage/)
+  assert.doesNotMatch(issues, />Открыть<|EventIssueDrawer|<Drawer/)
+  assert.match(adminApp, /eventIssueMatch/)
+  assert.match(adminApp, /AdminEventIssuePage/)
+})
+
+test('Event issue workspace shows immutable context and reuses the current Result editor', () => {
+  assert.match(issuePage, /Обращение участника/)
+  assert.match(issuePage, /Состояние на момент обращения/)
+  assert.match(issuePage, /Неизменяемый снимок/)
+  assert.match(issuePage, /AdminResultEditor/)
+  assert.match(issuePage, /hideBirthDate/)
+  assert.match(issuePage, /issueWorkspace/)
+  assert.doesNotMatch(issuePage, /Дата рождения|birthDate/)
+  assert.match(resultEditor, /api\.result\(resultId\)/)
+  assert.match(resultEditor, /api\.updateResult\(detail\.resultId/)
+  assert.match(resultEditor, /await load\(false\)/)
+  assert.match(resultEditor, /Статус обращения не изменён/)
+  assert.doesNotMatch(resultEditor, /updateIssueStatus/)
+})
+
+test('Result editor uses race-scoped structured participant fields and hides issue-only noise', () => {
+  assert.match(resultEditor, /api\.categories\(value\.raceId\)/)
+  assert.match(resultEditor, /Field label="Категория"[\s\S]*<select/)
+  assert.match(resultEditor, /Без категории/)
+  assert.match(resultEditor, /categoryId: registration\.categoryId \? Number/)
+  assert.match(resultEditor, /<option value="male">Мужчина<\/option>/)
+  assert.match(resultEditor, /<option value="female">Женщина<\/option>/)
+  assert.match(resultEditor, /<option value="">Не указан<\/option>/)
+  assert.match(resultEditor, /!issueWorkspace && <Field label="Тип участника"/)
+  assert.match(resultEditor, /issueWorkspace \? <p className="admin-muted">Исходная категория из файла/)
+})
+
+test('derived ranking fields are not editable in the shared Result editor', () => {
+  assert.doesNotMatch(resultEditor, /admin-place-grid/)
+  for (const field of ['overallPlace', 'genderPlace', 'categoryPlace', 'netOverallPlace', 'netGenderPlace', 'netCategoryPlace']) {
+    assert.doesNotMatch(resultEditor, new RegExp(`label=\\{?${field}`))
+  }
+  assert.match(resultEditor, /overallPlace: detail\.overallPlace/)
+})
+
+test('Result issue workspace presents reasons and workflow in Russian', () => {
+  assert.match(utils, /OFFICIAL_TIME: 'Официальное время'/)
+  assert.match(utils, /CHIP_TIME: 'Чистое время'/)
+  assert.match(issuePage, /Статус обращения/)
+  assert.doesNotMatch(issuePage, />Workflow|Workflow [^=]/)
+  assert.doesNotMatch(issuePage, />Bib|Bib \/ участник/)
+})
+
+test('claimed Result Issue values remain local until the shared editor is submitted', () => {
+  assert.match(resultEditor, /focusedGun.*OFFICIAL_TIME/s)
+  assert.match(resultEditor, /focusedChip.*CHIP_TIME/s)
+  assert.match(resultEditor, /Подставить заявленное/)
+  assert.match(resultEditor, /type="button"[^>]*onClick=.*claimedGunTimeMs/s)
+  assert.match(resultEditor, /type="button"[^>]*onClick=.*claimedChipTimeMs/s)
+  assert.match(resultEditor, /onSubmit=\{saveResult\}/)
+})
+
+test('issue workflow is explicit and attachments keep secure authorization', () => {
+  assert.match(issuePage, /Взять в работу/)
+  assert.match(issuePage, /Решить обращение/)
+  assert.match(issuePage, /Отклонить/)
+  assert.match(issuePage, /updateIssueStatus\(eventId, issueId, detail\.status, next, comment\)/)
+  assert.match(issuePage, /Комментарий специалиста/)
+  assert.match(issuePage, /Вложения: нет/)
+  assert.match(issuePage, /authorizeAttachment/)
+  assert.match(issuePage, /authorizeAndOpenAttachment/)
+  assert.match(issuePage, /История/)
+  assert.match(api, /comment: comment\.trim\(\) \|\| null/)
+})
+
+test('attachment opening uses the exact fresh authorization URL and ignores stale attachment URLs', async () => {
+  const freshUrl = 'http://127.0.0.1:9000/test-presigned-url'
+  const staleAttachment = { downloadUrl: 'https://object-storage.invalid/stale-presigned-url' }
+  const opened = []
+
+  await authorizeAndOpenAttachment(
+    async () => ({ downloadUrl: freshUrl }),
+    (...args) => opened.push(args),
+  )
+
+  assert.deepEqual(opened, [[freshUrl, '_blank', 'noopener,noreferrer']])
+  assert.notEqual(opened[0][0], staleAttachment.downloadUrl)
+  assert.match(api, /authorizeAttachment:[\s\S]*method: 'POST', cache: 'no-store'/)
+})
+
+test('attachment scan states stay Russian and opening is limited to uploaded clean files', () => {
+  assert.match(utils, /PENDING: 'Ожидает проверки'/)
+  assert.match(utils, /CLEAN: 'Проверено'/)
+  assert.match(issuePage, /attachment\.originalFileName/)
+  assert.match(issuePage, /attachment\.uploadStatus === 'UPLOADED' && attachment\.scanStatus === 'CLEAN'/)
+  assert.match(issuePage, />Открыть<\/button>/)
+  assert.match(issuePage, /authorizeAttachment\(eventId, issueId, attachmentId\)/)
+  assert.doesNotMatch(issuePage, /localhost:9000|result-issue-files/)
 })
 
 test('global journal keeps filters in URL and uses server-side pagination', () => {

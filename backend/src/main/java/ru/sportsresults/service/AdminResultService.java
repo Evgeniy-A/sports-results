@@ -6,9 +6,11 @@ import ru.sportsresults.api.dto.UpdateRegistrationRequest;
 import ru.sportsresults.api.dto.UpdateResultRequest;
 import ru.sportsresults.domain.AdminChangeLog;
 import ru.sportsresults.domain.AuditEntityType;
+import ru.sportsresults.domain.Category;
 import ru.sportsresults.domain.Registration;
 import ru.sportsresults.domain.Result;
 import ru.sportsresults.repository.AdminChangeLogRepository;
+import ru.sportsresults.repository.CategoryRepository;
 import ru.sportsresults.repository.RegistrationRepository;
 import ru.sportsresults.repository.ResultRepository;
 import ru.sportsresults.repository.StartClusterRepository;
@@ -30,6 +32,7 @@ public class AdminResultService {
     private final AdminChangeLogRepository changeLogRepository;
     private final AgeCategoryRecalculationService categoryRecalculationService;
     private final StartClusterRepository startClusterRepository;
+    private final CategoryRepository categoryRepository;
     private final EventResultDataMutationGuard mutationGuard;
 
     public AdminResultService(
@@ -38,6 +41,7 @@ public class AdminResultService {
             AdminChangeLogRepository changeLogRepository,
             AgeCategoryRecalculationService categoryRecalculationService,
             StartClusterRepository startClusterRepository,
+            CategoryRepository categoryRepository,
             EventResultDataMutationGuard mutationGuard
     ) {
         this.registrationRepository = registrationRepository;
@@ -45,6 +49,7 @@ public class AdminResultService {
         this.changeLogRepository = changeLogRepository;
         this.categoryRecalculationService = categoryRecalculationService;
         this.startClusterRepository = startClusterRepository;
+        this.categoryRepository = categoryRepository;
         this.mutationGuard = mutationGuard;
     }
 
@@ -94,7 +99,15 @@ public class AdminResultService {
                 registration.getEntryKind(), request.entryKind(), registration::setEntryKind);
 
         Long oldCategoryId = registration.getCategory() == null ? null : registration.getCategory().getId();
-        categoryRecalculationService.recalculateRegistration(registration);
+        if (request.categoryId() == null) {
+            categoryRecalculationService.recalculateRegistration(registration);
+        } else {
+            Category category = categoryRepository.findByIdAndRaceId(
+                            request.categoryId(), registration.getRace().getId())
+                    .orElseThrow(() -> new InvalidRequestException(
+                            "CATEGORY_RACE_MISMATCH", "category must belong to the registration race"));
+            registration.setCategory(category);
+        }
         Long newCategoryId = registration.getCategory() == null ? null : registration.getCategory().getId();
         if (!Objects.equals(oldCategoryId, newCategoryId)) {
             changes.add(log(actor, AuditEntityType.REGISTRATION, registrationId,

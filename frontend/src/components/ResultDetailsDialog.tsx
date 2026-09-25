@@ -6,6 +6,7 @@ import { publicCategoryName } from '../utils/publicEventView'
 import { resultIssueAvailabilityMessage } from '../utils/resultIssue'
 import { RankingAchievements } from './RankingAchievements'
 import { ResultIssueDialog } from './ResultIssueDialog'
+import type { RankingPresentationMode } from '../utils/rankingPresentation'
 
 interface Props {
   resultId: number
@@ -13,10 +14,11 @@ interface Props {
   eventTimeZone: string
   startName: string
   categoryEnabled: boolean
+  rankingMode: RankingPresentationMode
   onClose: () => void
 }
 
-export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startName, categoryEnabled, onClose }: Props) {
+export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startName, categoryEnabled, rankingMode, onClose }: Props) {
   const dialogRef = useRef<HTMLElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const [result, setResult] = useState<ResultDetails | null>(null)
@@ -89,7 +91,7 @@ export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startN
   }
 
   const availabilityMessage = inquiry
-    ? resultIssueAvailabilityMessage(inquiry.inquiryAvailability)
+    ? resultIssueAvailabilityMessage(inquiry.inquiryAvailability, inquiry.deadline, eventTimeZone)
     : null
   const categoryName = result ? publicCategoryName(categoryEnabled, result.category) : null
 
@@ -103,7 +105,7 @@ export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startN
           <p className="eyebrow">Карточка участника</p>
           <h2 id="result-title">{result.displayName}</h2>
           <div className="detail-badges"><span className="bib">№ {result.bib ?? '—'}</span><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></div>
-          {result.rankingBasis !== 'NONE' && <div className="detail-ranking"><h3>Официальный зачёт</h3><RankingAchievements achievements={result.rankingAchievements} /></div>}
+          {result.rankingBasis !== 'NONE' && <div className="detail-ranking"><h3>Официальный зачёт</h3><RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /></div>}
           <dl className="detail-grid">
             <div><dt>Старт</dt><dd>{startName}</dd></div>
             <div><dt>Пол</dt><dd>{formatGender(result.gender)}</dd></div>

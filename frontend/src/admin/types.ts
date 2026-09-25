@@ -8,9 +8,20 @@ import type {
   Race,
   RankingAchievement,
   ResultListItem,
+  ResultInquiryAvailability,
 } from '../api/types'
 
 export type { EventDocument, EventInfoBlock, EventScheduleItem, EventSummary, PageResponse, Race, ResultListItem }
+
+export type ResultInquiryDeadlineMode = 'AFTER_EVENT_DAYS' | 'FIXED_DATE'
+
+export interface ResultInquiryConfiguration {
+  enabled: boolean
+  deadlineMode: ResultInquiryDeadlineMode
+  windowDays: number | null
+  fixedDate: string | null
+  email: string | null
+}
 
 export interface AdminCredentials {
   username: string
@@ -25,6 +36,7 @@ export interface EventSeries {
   active: boolean
   eventCount: number
   startCount: number
+  resultInquiryDefaults: ResultInquiryConfiguration
   createdAt: string
   updatedAt: string
 }
@@ -158,14 +170,14 @@ export interface CreateEventWithStartsCommand {
     location: string | null
     timeZone: string
     publicationStatus: 'DRAFT'
+    resultInquiry: ResultInquiryConfiguration
   }
   starts: EventStartCommand[]
 }
 
-export interface ResultInquirySettings {
-  enabled: boolean
-  windowDays: number | null
-  email: string | null
+export interface ResultInquirySettings extends ResultInquiryConfiguration {
+  availability: ResultInquiryAvailability
+  deadline: string | null
 }
 
 export interface ParticipantInfo {
@@ -338,7 +350,7 @@ export interface ImportApplyResult {
   status: string
   mode: ImportMode
   eventId: number
-  importBatchId: number
+  importBatchId: number | null
   insertedCount: number
   updatedCount: number
   resultCreatedCount: number
@@ -349,7 +361,8 @@ export interface ImportApplyResult {
   retiredCount: number
   archivedIssueCount: number
   newRevision: number
-  appliedAt: string
+  appliedAt: string | null
+  noOp: boolean
 }
 
 export interface RecalculationPreview {
@@ -469,6 +482,15 @@ export interface EventIssueDetail {
     rankingAchievements: RankingAchievement[]
   }
   attachments: IssueAttachment[]
+  history: Array<{
+    historyId: number
+    action: string
+    fromStatus: IssueStatus | null
+    toStatus: IssueStatus | null
+    actor: string | null
+    reason: string | null
+    createdAt: string
+  }>
 }
 
 export interface JournalItem {

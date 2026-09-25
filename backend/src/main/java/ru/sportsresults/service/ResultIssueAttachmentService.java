@@ -43,19 +43,22 @@ public class ResultIssueAttachmentService {
     private final ResultIssueAttachmentCapabilityService capabilityService;
     private final AttachmentObjectStorage objectStorage;
     private final ResultIssueAttachmentProperties properties;
+    private final ResultIssueAttachmentScanOrchestrator scanOrchestrator;
 
     public ResultIssueAttachmentService(
             ResultIssueAttachmentRepository attachmentRepository,
             ResultIssueRequestRepository issueRepository,
             ResultIssueAttachmentCapabilityService capabilityService,
             AttachmentObjectStorage objectStorage,
-            ResultIssueAttachmentProperties properties
+            ResultIssueAttachmentProperties properties,
+            ResultIssueAttachmentScanOrchestrator scanOrchestrator
     ) {
         this.attachmentRepository = attachmentRepository;
         this.issueRepository = issueRepository;
         this.capabilityService = capabilityService;
         this.objectStorage = objectStorage;
         this.properties = properties;
+        this.scanOrchestrator = scanOrchestrator;
     }
 
     @Transactional
@@ -139,6 +142,7 @@ public class ResultIssueAttachmentService {
         attachment.setScanStatus(AttachmentScanStatus.PENDING);
         attachment.setUploadedAt(Instant.now());
         attachment = attachmentRepository.saveAndFlush(attachment);
+        scanOrchestrator.scanIfConfigured(attachment.getId());
         return status(attachment);
     }
 

@@ -371,10 +371,10 @@ export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: (
     ),
     eventIssue: (eventId: number, issueId: number) =>
       request<EventIssueDetail>(`/admin/events/${eventId}/result-issue-requests/${issueId}`),
-    updateIssueStatus: (eventId: number, issueId: number, expectedStatus: IssueStatus, status: IssueStatus) =>
+    updateIssueStatus: (eventId: number, issueId: number, expectedStatus: IssueStatus, status: IssueStatus, comment = '') =>
       request(`/admin/events/${eventId}/result-issue-requests/${issueId}/status`, {
         method: 'PUT',
-        ...json({ expectedStatus, status }),
+        ...json({ expectedStatus, status, comment: comment.trim() || null }),
       }),
     archiveIssue: (eventId: number, issueId: number, reason: 'MANUAL' | 'OTHER') => request(
       `/admin/events/${eventId}/result-issue-requests/${issueId}/archive`,
@@ -383,7 +383,7 @@ export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: (
     authorizeAttachment: (eventId: number, issueId: number, attachmentId: number) =>
       request<{ downloadUrl: string; expiresAt: string }>(
         `/admin/events/${eventId}/result-issue-requests/${issueId}/attachments/${attachmentId}/download-authorization`,
-        { method: 'POST' },
+        { method: 'POST', cache: 'no-store' },
       ),
     journal: (filters: JournalFilters) => request<PageResponse<JournalItem>>(
       `/admin/result-issue-requests${queryString({ ...filters, status: filters.status })}`,

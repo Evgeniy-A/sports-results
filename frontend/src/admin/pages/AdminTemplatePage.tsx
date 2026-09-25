@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { AdminApi } from '../api'
-import type { AwardPolicyUpdate, EventSeries, TemplateStart } from '../types'
+import type { AwardPolicyUpdate, EventSeries, ResultInquiryConfiguration, TemplateStart } from '../types'
 import { AdminLink } from '../router'
 import { adminErrorMessage } from '../utils'
 import { AdminNotice, ConfirmDialog, Drawer, Field, Loadable } from '../components/AdminUi'
@@ -10,6 +10,7 @@ import { AwardEditor } from '../components/EventStartComposer'
 import { CategorySettings } from '../components/CategorySettings'
 import { awardStatusLabel } from '../awardPolicyPresentation'
 import { defaultPolicy } from '../eventStartDrafts'
+import { ResultInquirySettingsFields } from '../components/ResultInquirySettingsFields'
 
 export function AdminTemplatePage({ api, templateId }: { api: AdminApi; templateId: number }) {
   const [template, setTemplate] = useState<EventSeries | null>(null)
@@ -72,6 +73,7 @@ export function AdminTemplatePage({ api, templateId }: { api: AdminApi; template
     <div className="admin-page-heading"><div><AdminLink href="/admin/templates">← Шаблоны</AdminLink><p className="admin-eyebrow">Шаблон</p><h1>{template?.name ?? 'Шаблон'}</h1><p>{template?.description || 'Повторно используемый набор стартов для новых мероприятий.'}</p></div><button className="admin-button-primary" type="button" onClick={() => setEditor('new')}>+ Добавить старт</button></div>
     {error && <AdminNotice tone="danger">{error}</AdminNotice>}
     <Loadable loading={loading} error={template ? null : error || 'Шаблон не найден'}>
+      {template && <TemplateInquirySettingsCard key={template.updatedAt} api={api} template={template} onSaved={setTemplate} />}
       <section className="admin-card"><div className="admin-section-toolbar"><div><h2>Старты шаблона</h2><p>Перетащите строки или используйте стрелки. Изменения не затронут уже созданные мероприятия.</p></div></div>
         {starts.length ? <div className="admin-template-starts">{starts.map((start, index) => <article
           className="admin-template-start"
@@ -91,6 +93,42 @@ export function AdminTemplatePage({ api, templateId }: { api: AdminApi; template
     {awardEditor && <TemplateAwardDrawer api={api} templateId={templateId} start={awardEditor} onClose={() => setAwardEditor(null)} onSaved={async () => { setAwardEditor(null); await load() }} />}
     {deleting && <ConfirmDialog title="Удалить старт из шаблона?" description="Это не изменит уже созданные мероприятия." confirmLabel="Удалить старт" danger busy={busy} onConfirm={() => void remove()} onClose={() => setDeleting(null)} />}
   </>
+}
+
+function TemplateInquirySettingsCard({ api, template, onSaved }: {
+  api: AdminApi
+  template: EventSeries
+  onSaved: (template: EventSeries) => void
+}) {
+  const [settings, setSettings] = useState<ResultInquiryConfiguration>({ ...template.resultInquiryDefaults })
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null)
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); setBusy(true); setMessage(null)
+    try {
+      const saved = await api.updateEventSeries(template.id, {
+        name: template.name,
+        slug: template.slug,
+        description: template.description,
+        active: template.active,
+        resultInquiryDefaults: settings,
+      })
+      setSettings(saved.resultInquiryDefaults)
+      onSaved(saved)
+      setMessage({ tone: 'success', text: 'Настройки шаблона сохранены.' })
+    } catch (reason) {
+      setMessage({ tone: 'danger', text: adminErrorMessage(reason) })
+    } finally { setBusy(false) }
+  }
+  return <section className="admin-card admin-inquiry-settings">
+    <div className="admin-card-heading"><div><h2>Обращения по результатам</h2><p>Значения по умолчанию для новых мероприятий.</p></div></div>
+    {message && <AdminNotice tone={message.tone}>{message.text}</AdminNotice>}
+    <form className="admin-form" onSubmit={submit}>
+      <ResultInquirySettingsFields value={settings} onChange={setSettings} enabledLabel="Принимать обращения" />
+      <p className="admin-form-help">Эти настройки будут скопированы в новые мероприятия из шаблона. Уже созданные мероприятия не изменятся.</p>
+      <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy}>{busy ? 'Сохраняем…' : 'Сохранить настройки'}</button></div>
+    </form>
+  </section>
 }
 
 function TemplateStartDrawer({ api, templateId, value, onClose, onSaved }: {

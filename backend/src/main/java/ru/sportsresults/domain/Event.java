@@ -16,6 +16,7 @@ import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 
 import java.time.Instant;
+import java.time.LocalDate;
 
 @Entity
 @Table(name = "events")
@@ -64,9 +65,17 @@ public class Event extends BaseEntity {
     @Column(name = "result_inquiry_enabled", nullable = false)
     private boolean resultInquiryEnabled;
 
+    @NotNull
+    @Enumerated(EnumType.STRING)
+    @Column(name = "result_inquiry_deadline_mode", nullable = false, length = 32)
+    private ResultInquiryDeadlineMode resultInquiryDeadlineMode = ResultInquiryDeadlineMode.AFTER_EVENT_DAYS;
+
     @Positive
     @Column(name = "result_inquiry_window_days")
     private Integer resultInquiryWindowDays;
+
+    @Column(name = "result_inquiry_fixed_date")
+    private LocalDate resultInquiryFixedDate;
 
     @Email
     @Size(max = 320)
@@ -153,6 +162,18 @@ public class Event extends BaseEntity {
 
     public void setResultInquiryWindowDays(Integer resultInquiryWindowDays) {
         this.resultInquiryWindowDays = resultInquiryWindowDays;
+    }
+
+    public ResultInquiryDeadlineMode getResultInquiryDeadlineMode() { return resultInquiryDeadlineMode; }
+
+    public void setResultInquiryDeadlineMode(ResultInquiryDeadlineMode resultInquiryDeadlineMode) {
+        this.resultInquiryDeadlineMode = resultInquiryDeadlineMode;
+    }
+
+    public LocalDate getResultInquiryFixedDate() { return resultInquiryFixedDate; }
+
+    public void setResultInquiryFixedDate(LocalDate resultInquiryFixedDate) {
+        this.resultInquiryFixedDate = resultInquiryFixedDate;
     }
 
     public String getResultInquiryEmail() { return resultInquiryEmail; }

@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import {
+  activeRankingAchievements,
+  genderAchievementClass,
+  scoringTimeHeading,
+} from '../src/utils/rankingPresentation.ts'
 
 const page = await readFile(new URL('../src/components/EventResults.tsx', import.meta.url), 'utf8')
 const client = await readFile(new URL('../src/api/client.ts', import.meta.url), 'utf8')
 const ranking = await readFile(new URL('../src/components/RankingAchievements.tsx', import.meta.url), 'utf8')
 const details = await readFile(new URL('../src/components/ResultDetailsDialog.tsx', import.meta.url), 'utf8')
 const types = await readFile(new URL('../src/api/types.ts', import.meta.url), 'utf8')
+const css = await readFile(new URL('../src/App.css', import.meta.url), 'utf8')
 
 test('public protocol has no gender column or ranking selector', () => {
   assert.doesNotMatch(page, /<th>Пол<\/th>/)
@@ -77,18 +83,34 @@ test('public results use only the flat Race-only contract and one Start selector
 
 test('one public protocol embeds official achievements without a second award view', () => {
   assert.match(page, /hasOfficialStanding \? 'Официальный зачёт' : 'Место'/)
-  assert.match(page, /RankingAchievements achievements=\{result\.rankingAchievements\}/)
+  assert.match(page, /RankingAchievements achievements=\{result\.rankingAchievements\} mode=\{rankingMode\}/)
   assert.doesNotMatch(page, /ProtocolTab|Наградной зачёт|api\.awards|result\.place/)
   assert.doesNotMatch(client, /\/awards|AwardStanding/)
 })
 
-test('achievement renderer supports none, one, or multiple backend achievements', () => {
-  assert.match(ranking, /achievements\.length === 0/)
-  assert.match(ranking, /achievements\.map/)
+test('achievement renderer keeps only the active standing without recalculating places', () => {
+  const achievements = [
+    { place: 3, type: 'GENDER', code: 'male', name: 'Мужчины', label: '3 место · мужчины', prize: true },
+    { place: 1, type: 'CATEGORY', code: '30-39', name: '30–39 · мужчины', label: '1 место · 30–39 · мужчины', prize: true },
+  ]
+  assert.deepEqual(activeRankingAchievements(achievements, 'PRIMARY'), [achievements[0]])
+  assert.deepEqual(activeRankingAchievements(achievements, 'CATEGORY'), [achievements[1]])
+  assert.equal(activeRankingAchievements([], 'PRIMARY').length, 0)
+  assert.match(ranking, /activeRankingAchievements\(achievements, mode\)/)
+  assert.match(ranking, /activeAchievements\.map/)
   assert.match(ranking, /achievement\.label/)
   assert.match(ranking, /achievement\.prize \? 'ranking-prize' : 'ranking-standing'/)
-  assert.doesNotMatch(ranking, /\.filter\(/)
   assert.match(ranking, /ranking-empty.*—/s)
+})
+
+test('sex all keeps gender achievements together and distinguishes badge colors', () => {
+  const male = { place: 1, type: 'GENDER', code: 'male', name: 'Мужчины', label: '1 место · мужчины', prize: true }
+  const female = { place: 1, type: 'GENDER', code: 'female', name: 'Женщины', label: '1 место · женщины', prize: true }
+  assert.equal(genderAchievementClass(male), 'ranking-gender-male')
+  assert.equal(genderAchievementClass(female), 'ranking-gender-female')
+  assert.match(css, /\.ranking-gender-male[^}]*background:\s*#e8ebef/)
+  assert.match(css, /\.ranking-gender-female[^}]*background:\s*#e5f0f8/)
+  assert.doesNotMatch(page, /setGender\('male'\).*setGender\('female'\)/s)
 })
 
 test('sorting offers user fields without the technical protocol-order option', () => {
@@ -102,15 +124,19 @@ test('sorting offers user fields without the technical protocol-order option', (
 
 test('ranking basis drives standing badge and column semantics', () => {
   assert.match(types, /'CHIP_TIME' \| 'GUN_TIME' \| 'NONE'/)
-  assert.match(page, /rankingBasis === 'GUN_TIME' \? ' · Зачёт'/)
-  assert.match(page, /rankingBasis === 'CHIP_TIME' \? ' · Зачёт'/)
+  assert.equal(scoringTimeHeading('GUN_TIME', 'GUN_TIME'), '⏱ Зачёт (офиц. время)')
+  assert.equal(scoringTimeHeading('GUN_TIME', 'CHIP_TIME'), 'Чистое время')
+  assert.equal(scoringTimeHeading('CHIP_TIME', 'CHIP_TIME'), '⏱ Зачёт (чистое время)')
+  assert.equal(scoringTimeHeading('CHIP_TIME', 'GUN_TIME'), 'Официальное время')
+  assert.match(page, /scoringTimeHeading\(rankingBasis \?\? 'NONE', 'GUN_TIME'\)/)
+  assert.match(page, /scoringTimeHeading\(rankingBasis \?\? 'NONE', 'CHIP_TIME'\)/)
   assert.match(page, /rankingBasis !== 'NONE'/)
   assert.match(page, /result\.displayPosition/)
   assert.match(page, /не является официальным спортивным местом/)
 })
 
 test('NONE hides official achievements in list and result details', () => {
-  assert.match(page, /hasOfficialStanding \? <RankingAchievements[\s\S]*result\.displayPosition/)
+  assert.match(page, /hasOfficialStanding \? <RankingAchievements[\s\S]*mode=\{rankingMode\}[\s\S]*result\.displayPosition/)
   assert.match(details, /result\.rankingBasis !== 'NONE'/)
   assert.match(details, /result\.rankingBasis === 'GUN_TIME'/)
   assert.match(details, /result\.rankingBasis === 'CHIP_TIME'/)

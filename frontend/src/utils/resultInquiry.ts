@@ -4,12 +4,23 @@ import type {
   ResultQuery,
 } from '../api/types'
 
-export interface InquiryEmailTemplate {
-  id: 'missing' | 'question'
-  label: string
-  subject: string
-  body: string
+export type DobFallbackIssueKind = 'RESULT_CORRECTION' | 'MISSING_RESULT'
+
+export interface DobVerificationSupportContext {
+  issueKind: DobFallbackIssueKind
+  eventName: string
+  startLabel: string
+  bib: string
+  participantName?: string | null
+  description: string
 }
+
+export interface InquirySupportMessage {
+  marker: '[RESULT_QUESTION]' | '[RESULT_MISSING]'
+  text: string
+}
+
+export const HERO_LEAGUE_SUPPORT_URL = 'https://heroleague.ru/feedback'
 
 export interface InquiryAvailabilityView {
   statusText: string
@@ -18,12 +29,16 @@ export interface InquiryAvailabilityView {
   canContact: boolean
 }
 
-export interface PublicResultsAndInquiryOutcome<T> {
+export interface PublicResultsPageLike {
+  content: readonly unknown[]
+}
+
+export interface PublicResultsAndInquiryOutcome<T extends PublicResultsPageLike> {
   publicResults: PromiseSettledResult<T>
   inquiry: PromiseSettledResult<ResultInquiryLookup | null>
 }
 
-export type PublicResultsAndInquiryResolution<T> =
+export type PublicResultsAndInquiryResolution<T extends PublicResultsPageLike> =
   | { state: 'CANCELLED' }
   | { state: 'PUBLIC_RESULTS_FAILED'; error: unknown }
   | {
@@ -56,23 +71,22 @@ export function shouldRequestResultInquiry(
   return Boolean(filters.bib?.trim())
 }
 
-export async function loadPublicResultsAndInquiry<T>(
+export async function loadPublicResultsAndInquiry<T extends PublicResultsPageLike>(
   filters: Omit<ResultQuery, 'raceId' | 'page' | 'size' | 'sort' | 'direction'>,
   loadPublicResults: () => Promise<T>,
   loadInquiry: () => Promise<ResultInquiryLookup>,
 ): Promise<PublicResultsAndInquiryOutcome<T>> {
-  const publicResultsRequest = invokeRequest(loadPublicResults)
-  const inquiryRequest = shouldRequestResultInquiry(filters)
-    ? invokeRequest(loadInquiry)
-    : Promise.resolve(null)
-  const [publicResults, inquiry] = await Promise.allSettled([
-    publicResultsRequest,
-    inquiryRequest,
+  const [publicResults] = await Promise.allSettled([invokeRequest(loadPublicResults)])
+  const shouldLoadInquiry = publicResults.status === 'fulfilled'
+    && publicResults.value.content.length === 0
+    && shouldRequestResultInquiry(filters)
+  const [inquiry] = await Promise.allSettled([
+    shouldLoadInquiry ? invokeRequest(loadInquiry) : Promise.resolve(null),
   ])
   return { publicResults, inquiry }
 }
 
-export function resolvePublicResultsAndInquiry<T>(
+export function resolvePublicResultsAndInquiry<T extends PublicResultsPageLike>(
   outcome: PublicResultsAndInquiryOutcome<T>,
 ): PublicResultsAndInquiryResolution<T> {
   if (outcome.publicResults.status === 'rejected') {
@@ -128,8 +142,9 @@ export function formatInquiryDeadline(deadline: string | undefined, timeZone: st
   const parsed = new Date(deadline)
   if (Number.isNaN(parsed.getTime())) return null
   return new Intl.DateTimeFormat('ru-RU', {
-    day: '2-digit', month: '2-digit', year: 'numeric', timeZone,
-  }).format(parsed)
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    timeZone,
+  }).format(parsed) + ' включительно'
 }
 
 export function availabilityView(
@@ -149,22 +164,25 @@ export function availabilityView(
   if (availability === 'NOT_OPEN_YET') {
     return {
       statusText: 'Результат пока не установлен',
-      explanation: 'Обращения по результатам будут доступны после завершения мероприятия.',
+      explanation: 'Приём обращений ещё не открыт.',
       deadlineText: null,
       canContact: false,
     }
   }
   if (availability === 'CLOSED') {
+    const formattedDeadline = formatInquiryDeadline(deadline, timeZone)
     return {
       statusText: 'Результат не установлен',
-      explanation: 'Срок подачи обращений по результатам завершён.',
+      explanation: formattedDeadline
+        ? `Срок подачи обращений завершён. Обращения принимались до ${formattedDeadline}.`
+        : 'Срок подачи обращений завершён.',
       deadlineText: null,
       canContact: false,
     }
   }
   return {
     statusText: 'Результат не установлен',
-    explanation: null,
+    explanation: 'Приём обращений по результатам закрыт организатором.',
     deadlineText: null,
     canContact: false,
   }
@@ -174,55 +192,51 @@ export function inquiryRaceLabel(inquiry: ResultInquiryLookup): string {
   return inquiry.startDisplayName ?? inquiry.raceDisplayName ?? ''
 }
 
-export function createInquiryEmailTemplates(
-  eventName: string,
-  raceLabel: string,
-  bib: string,
-): InquiryEmailTemplate[] {
-  return [
-    {
-      id: 'missing',
-      label: 'Финишировал, но результата нет',
-      subject: `[RESULT_MISSING] ${eventName} | ${raceLabel} | №${bib}`,
-      body: `Здравствуйте!
-
-Я принимал участие в мероприятии, но мой результат не отображается на сайте.
-
-Мероприятие: ${eventName}
-Старт: ${raceLabel}
-Стартовый номер: ${bib}
-
-ФИО:
-Дата рождения:
-Примерное время старта:
-Примерное время финиша:
-
-Комментарий:
-
-При наличии приложу скриншот с часов, трекера или другого устройства.`,
-    },
-    {
-      id: 'question',
-      label: 'Другой вопрос по отсутствующему результату',
-      subject: `[RESULT_QUESTION] ${eventName} | ${raceLabel} | №${bib}`,
-      body: `Здравствуйте!
-
-Прошу уточнить информацию по моему результату.
-
-Мероприятие: ${eventName}
-Старт: ${raceLabel}
-Стартовый номер: ${bib}
-
-ФИО:
-Дата рождения:
-
-Описание вопроса:
-
-При наличии приложу подтверждающие материалы.`,
-    },
-  ]
+export function hasMeaningfulSupportDescription(description: string): boolean {
+  return description.trim().length > 0
 }
 
-export function buildInquiryMailto(email: string, template: InquiryEmailTemplate): string {
-  return `mailto:${email.trim()}?subject=${encodeURIComponent(template.subject)}&body=${encodeURIComponent(template.body)}`
+export function createDobVerificationSupportMessage(
+  context: DobVerificationSupportContext,
+): InquirySupportMessage {
+  const marker = context.issueKind === 'MISSING_RESULT'
+    ? '[RESULT_MISSING]'
+    : '[RESULT_QUESTION]'
+  const participantLine = context.participantName?.trim()
+    ? `\nУчастник: ${context.participantName.trim()}`
+    : ''
+  const situation = context.issueKind === 'MISSING_RESULT'
+    ? 'Не удалось найти мой результат в публичном протоколе.'
+    : 'Мне нужно уточнить данные видимого результата.'
+  const request = context.issueKind === 'MISSING_RESULT'
+    ? 'Прошу проверить регистрационные данные и восстановить или уточнить результат.'
+    : 'Прошу проверить регистрационные данные и помочь уточнить результат.'
+  return {
+    marker,
+    text: `${marker} ${context.eventName} | ${context.startLabel || 'Старт не указан'} | №${context.bib}
+
+Здравствуйте!
+
+${situation}
+Не удалось подтвердить дату рождения через форму обращения.
+
+Мероприятие: ${context.eventName}
+Старт: ${context.startLabel || 'Не указан'}
+Стартовый номер: ${context.bib}${participantLine}
+
+Описание ситуации:
+${context.description.trim()}
+
+${request}`,
+  }
+}
+
+export async function copyInquiryText(
+  text: string,
+  clipboard: Pick<Clipboard, 'writeText'> | undefined = typeof navigator === 'undefined'
+    ? undefined
+    : navigator.clipboard,
+): Promise<void> {
+  if (!clipboard) throw new Error('Clipboard API is unavailable')
+  await clipboard.writeText(text)
 }

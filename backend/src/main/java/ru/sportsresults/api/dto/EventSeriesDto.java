@@ -10,6 +10,7 @@ public record EventSeriesDto(
         boolean active,
         long eventCount,
         long startCount,
+        ResultInquiryDefaultsDto resultInquiryDefaults,
         Instant createdAt,
         Instant updatedAt
 ) {

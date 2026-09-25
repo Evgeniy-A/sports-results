@@ -36,6 +36,7 @@ import ru.sportsresults.domain.EventParticipantInfo;
 import ru.sportsresults.domain.EventPhase;
 import ru.sportsresults.domain.PublicResultVisibility;
 import ru.sportsresults.domain.ResultsPublicationStatus;
+import ru.sportsresults.domain.ResultInquiryDeadlineMode;
 import ru.sportsresults.domain.EventSeries;
 import ru.sportsresults.domain.EventSeriesStartAwardPolicyTemplate;
 import ru.sportsresults.domain.EventSeriesStartCategoryTemplate;
@@ -72,6 +73,7 @@ import java.util.stream.Collectors;
 public class EventService {
 
     private static final int MAX_CATALOG_PAGE_SIZE = 100;
+    private static final int MAX_RESULT_INQUIRY_WINDOW_DAYS = 3650;
     private static final java.util.regex.Pattern EMAIL_PATTERN = java.util.regex.Pattern.compile(
             "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$"
     );
@@ -90,6 +92,7 @@ public class EventService {
     private final EventParticipantInfoRepository participantInfoRepository;
     private final EventResultDataMutationGuard mutationGuard;
     private final SlugGenerator slugGenerator;
+    private final ResultInquiryAvailabilityService resultInquiryAvailabilityService;
 
     public EventService(
             EventRepository eventRepository,
@@ -105,7 +108,8 @@ public class EventService {
             ResultConfigurationChangeGuard configurationGuard,
             EventParticipantInfoRepository participantInfoRepository,
             EventResultDataMutationGuard mutationGuard,
-            SlugGenerator slugGenerator
+            SlugGenerator slugGenerator,
+            ResultInquiryAvailabilityService resultInquiryAvailabilityService
     ) {
         this.eventRepository = eventRepository;
         this.eventSeriesRepository = eventSeriesRepository;
@@ -121,6 +125,7 @@ public class EventService {
         this.participantInfoRepository = participantInfoRepository;
         this.mutationGuard = mutationGuard;
         this.slugGenerator = slugGenerator;
+        this.resultInquiryAvailabilityService = resultInquiryAvailabilityService;
     }
 
     @Transactional(readOnly = true)
@@ -326,7 +331,9 @@ public class EventService {
     public BulkEventPreviewDto previewBulkEvents(BulkCreateEventsRequest request) {
         EventSeries series = requireSeries(request.eventSeriesId());
         List<ResolvedStartDefinition> starts = resolveStartDefinitions(series.getId(), request.starts());
-        return toBulkPreview(series, prepareBulk(request), starts);
+        BulkPreparation preparation = prepareBulk(request);
+        validateBulkInquiryDefaults(series, preparation);
+        return toBulkPreview(series, preparation, starts);
     }
 
     @Transactional
@@ -425,6 +432,7 @@ public class EventService {
         );
         apply(event, request.name(), slug, request.startsAt(), request.endsAt(), request.location(),
                 request.timeZone(), status);
+        applyInitialResultInquirySettings(event, series, request.resultInquiry());
         return eventRepository.saveAndFlush(event);
     }
 
@@ -607,6 +615,12 @@ public class EventService {
         event.setEventSeries(series);
         apply(event, request.name(), slug, request.startsAt(), request.endsAt(), request.location(),
                 request.timeZone(), request.publicationStatus());
+        validateResultInquiryFixedDateForEvent(
+                event,
+                event.isResultInquiryEnabled(),
+                event.getResultInquiryDeadlineMode(),
+                event.getResultInquiryFixedDate()
+        );
         try {
             EventDto dto = toDto(eventRepository.saveAndFlush(event));
             if (ageReferenceChanged) {
@@ -632,18 +646,35 @@ public class EventService {
             String actor
     ) {
         Event event = requireEvent(eventId);
+        boolean wasEnabled = event.isResultInquiryEnabled();
         boolean enabled = Boolean.TRUE.equals(request.enabled());
+        ResultInquiryDeadlineMode deadlineMode = normalizeDeadlineMode(request.deadlineMode());
         Integer windowDays = request.windowDays();
+        LocalDate fixedDate = request.fixedDate();
         String email = normalizeNullable(request.email());
-        validateResultInquirySettings(enabled, windowDays, email);
+        validateResultInquirySettings(enabled, deadlineMode, windowDays, fixedDate, email);
+        validateResultInquiryFixedDateForEvent(event, enabled, deadlineMode, fixedDate);
 
         List<AdminChangeLog> changes = new ArrayList<>();
         addChange(changes, actor, eventId, "resultInquiryEnabled", event.isResultInquiryEnabled(), enabled);
+        addChange(changes, actor, eventId, "resultInquiryDeadlineMode",
+                event.getResultInquiryDeadlineMode(), deadlineMode);
         addChange(changes, actor, eventId, "resultInquiryWindowDays", event.getResultInquiryWindowDays(), windowDays);
+        addChange(changes, actor, eventId, "resultInquiryFixedDate", event.getResultInquiryFixedDate(), fixedDate);
         addChange(changes, actor, eventId, "resultInquiryEmail", event.getResultInquiryEmail(), email);
         event.setResultInquiryEnabled(enabled);
+        event.setResultInquiryDeadlineMode(deadlineMode);
         event.setResultInquiryWindowDays(windowDays);
+        event.setResultInquiryFixedDate(fixedDate);
         event.setResultInquiryEmail(email);
+        if (!wasEnabled && enabled
+                && resultInquiryAvailabilityService.calculate(event).state()
+                == ru.sportsresults.domain.ResultInquiryAvailability.CLOSED) {
+            throw new InvalidRequestException(
+                    "RESULT_INQUIRY_DEADLINE_EXPIRED",
+                    "Set a future result issue deadline before enabling submissions"
+            );
+        }
         Event saved = eventRepository.saveAndFlush(event);
         changeLogRepository.saveAll(changes);
         return inquirySettings(saved);
@@ -713,10 +744,22 @@ public class EventService {
         }
     }
 
-    private static void validateResultInquirySettings(boolean enabled, Integer windowDays, String email) {
+    static void validateResultInquirySettings(
+            boolean enabled,
+            ResultInquiryDeadlineMode deadlineMode,
+            Integer windowDays,
+            LocalDate fixedDate,
+            String email
+    ) {
         if (windowDays != null && windowDays <= 0) {
             throw new InvalidRequestException(
                     "INVALID_RESULT_INQUIRY_WINDOW", "windowDays must be greater than zero"
+            );
+        }
+        if (windowDays != null && windowDays > MAX_RESULT_INQUIRY_WINDOW_DAYS) {
+            throw new InvalidRequestException(
+                    "INVALID_RESULT_INQUIRY_WINDOW",
+                    "windowDays must not exceed " + MAX_RESULT_INQUIRY_WINDOW_DAYS
             );
         }
         if (email != null && (email.length() > 320 || !EMAIL_PATTERN.matcher(email).matches())) {
@@ -724,9 +767,14 @@ public class EventService {
                     "INVALID_RESULT_INQUIRY_EMAIL", "email must be a valid email address"
             );
         }
-        if (enabled && windowDays == null) {
+        if (enabled && deadlineMode == ResultInquiryDeadlineMode.AFTER_EVENT_DAYS && windowDays == null) {
             throw new InvalidRequestException(
                     "RESULT_INQUIRY_WINDOW_REQUIRED", "windowDays is required when result inquiry is enabled"
+            );
+        }
+        if (enabled && deadlineMode == ResultInquiryDeadlineMode.FIXED_DATE && fixedDate == null) {
+            throw new InvalidRequestException(
+                    "RESULT_INQUIRY_FIXED_DATE_REQUIRED", "fixedDate is required in fixed-date mode"
             );
         }
         if (enabled && email == null) {
@@ -798,12 +846,107 @@ public class EventService {
         );
     }
 
-    private static ResultInquirySettingsDto inquirySettings(Event event) {
+    private void applyInitialResultInquirySettings(
+            Event event,
+            EventSeries series,
+            UpdateResultInquirySettingsRequest request
+    ) {
+        UpdateResultInquirySettingsRequest resolved = request == null
+                ? inquiryDefaults(series)
+                : request;
+        boolean enabled = Boolean.TRUE.equals(resolved.enabled());
+        ResultInquiryDeadlineMode deadlineMode = normalizeDeadlineMode(resolved.deadlineMode());
+        Integer windowDays = resolved.windowDays();
+        LocalDate fixedDate = resolved.fixedDate();
+        String email = normalizeNullable(resolved.email());
+        validateResultInquirySettings(enabled, deadlineMode, windowDays, fixedDate, email);
+        validateResultInquiryFixedDateForEvent(event, enabled, deadlineMode, fixedDate);
+        event.setResultInquiryEnabled(enabled);
+        event.setResultInquiryDeadlineMode(deadlineMode);
+        event.setResultInquiryWindowDays(windowDays);
+        event.setResultInquiryFixedDate(fixedDate);
+        event.setResultInquiryEmail(email);
+        if (enabled && resultInquiryAvailabilityService.calculate(event).state()
+                == ru.sportsresults.domain.ResultInquiryAvailability.CLOSED) {
+            throw new InvalidRequestException(
+                    "RESULT_INQUIRY_DEADLINE_EXPIRED",
+                    "Set a future result issue deadline before enabling submissions"
+            );
+        }
+    }
+
+    private ResultInquirySettingsDto inquirySettings(Event event) {
+        ResultInquiryAvailabilityDecision decision = resultInquiryAvailabilityService.calculate(event);
         return new ResultInquirySettingsDto(
                 event.isResultInquiryEnabled(),
+                event.getResultInquiryDeadlineMode(),
                 event.getResultInquiryWindowDays(),
-                event.getResultInquiryEmail()
+                event.getResultInquiryFixedDate(),
+                event.getResultInquiryEmail(),
+                decision.state(),
+                decision.deadline()
         );
+    }
+
+    private static UpdateResultInquirySettingsRequest inquiryDefaults(EventSeries series) {
+        return new UpdateResultInquirySettingsRequest(
+                series.isDefaultResultInquiryEnabled(),
+                series.getDefaultResultInquiryDeadlineMode(),
+                series.getDefaultResultInquiryWindowDays(),
+                series.getDefaultResultInquiryFixedDate(),
+                series.getDefaultResultInquiryEmail()
+        );
+    }
+
+    private void validateBulkInquiryDefaults(EventSeries series, BulkPreparation preparation) {
+        UpdateResultInquirySettingsRequest defaults = inquiryDefaults(series);
+        if (!Boolean.TRUE.equals(defaults.enabled())) {
+            return;
+        }
+        for (BulkCandidate candidate : preparation.candidates()) {
+            Event event = new Event();
+            event.setStartsAt(candidate.startsAt());
+            event.setTimeZone(candidate.timeZone());
+            validateResultInquiryFixedDateForEvent(
+                    event,
+                    true,
+                    normalizeDeadlineMode(defaults.deadlineMode()),
+                    defaults.fixedDate()
+            );
+            event.setResultInquiryEnabled(true);
+            event.setResultInquiryDeadlineMode(normalizeDeadlineMode(defaults.deadlineMode()));
+            event.setResultInquiryWindowDays(defaults.windowDays());
+            event.setResultInquiryFixedDate(defaults.fixedDate());
+            if (resultInquiryAvailabilityService.calculate(event).state()
+                    == ru.sportsresults.domain.ResultInquiryAvailability.CLOSED) {
+                throw new InvalidRequestException(
+                        "RESULT_INQUIRY_DEADLINE_EXPIRED",
+                        "Template result issue deadline is expired for one or more events"
+                );
+            }
+        }
+    }
+
+    private static void validateResultInquiryFixedDateForEvent(
+            Event event,
+            boolean enabled,
+            ResultInquiryDeadlineMode deadlineMode,
+            LocalDate fixedDate
+    ) {
+        if (!enabled || deadlineMode != ResultInquiryDeadlineMode.FIXED_DATE || fixedDate == null) {
+            return;
+        }
+        Instant base = event.getEndsAt() != null ? event.getEndsAt() : event.getStartsAt();
+        if (base != null && fixedDate.isBefore(base.atZone(ZoneId.of(event.getTimeZone())).toLocalDate())) {
+            throw new InvalidRequestException(
+                    "RESULT_INQUIRY_FIXED_DATE_BEFORE_EVENT",
+                    "fixedDate must not be before the event end date"
+            );
+        }
+    }
+
+    private static ResultInquiryDeadlineMode normalizeDeadlineMode(ResultInquiryDeadlineMode value) {
+        return value == null ? ResultInquiryDeadlineMode.AFTER_EVENT_DAYS : value;
     }
 
     private static RaceDto toDto(Race race, boolean categoryStandingEnabled) {

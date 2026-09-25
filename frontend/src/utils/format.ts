@@ -1,13 +1,14 @@
 export function formatDuration(milliseconds: number | null): string {
   if (milliseconds === null) return '—'
 
-  const totalSeconds = Math.floor(milliseconds / 1000)
+  const normalizedMilliseconds = Math.trunc(milliseconds)
+  const totalSeconds = Math.floor(normalizedMilliseconds / 1000)
   const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
-  const millis = Math.floor(milliseconds % 1000)
+  const millis = normalizedMilliseconds % 1000
 
-  return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`
 }
 
 export function formatGender(gender: string | null): string {

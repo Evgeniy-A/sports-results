@@ -71,7 +71,10 @@ public class ResultInquiryService {
                     ResultInquiryLookupState.VERIFICATION_FAILED,
                     lookup.bib(),
                     hasMissingResultCandidate(lookup.registrations()),
-                    availability
+                    availability,
+                    availability.state() == ResultInquiryAvailability.OPEN
+                            ? lookup.event().getResultInquiryEmail()
+                            : null
             );
         }
         return resolveIdentifiedRegistration(
@@ -148,6 +151,16 @@ public class ResultInquiryService {
             boolean missingResultActionAvailable,
             ResultInquiryAvailabilityDecision availability
     ) {
+        return safeState(state, bib, missingResultActionAvailable, availability, null);
+    }
+
+    private static ResultInquiryLookupDto safeState(
+            ResultInquiryLookupState state,
+            String bib,
+            boolean missingResultActionAvailable,
+            ResultInquiryAvailabilityDecision availability,
+            String contactEmail
+    ) {
         return new ResultInquiryLookupDto(
                 state,
                 availability.state(),
@@ -159,7 +172,7 @@ public class ResultInquiryService {
                 null,
                 missingResultActionAvailable,
                 availability.deadline(),
-                null,
+                contactEmail,
                 null
         );
     }

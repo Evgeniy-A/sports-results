@@ -78,6 +78,17 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
   )
   const emergencyBlocked = mode === 'EMERGENCY_REPLACE'
     && selectedRaces.some((race) => race.resultsPublicationStatus !== 'DRAFT')
+  const actionableCount = preview === null
+    ? 0
+    : mode === 'ADD_NEW'
+      ? preview.totals.newCount
+      : mode === 'UPDATE_EXISTING'
+        ? preview.totals.changedCount
+        : (preview.emergencySummary?.totals.retireCount ?? 0)
+          + (preview.emergencySummary?.totals.insertCount ?? 0)
+  const noChangesToApply = preview !== null
+    && !preview.blockingErrorsPresent
+    && actionableCount === 0
 
   const options = (): ImportInputOptions | undefined => {
     if (!analysis || analysis.legacyCsv) return undefined
@@ -164,7 +175,7 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
   }
 
   const requestApply = () => {
-    if (!preview || !file || preview.blockingErrorsPresent) return
+    if (!preview || !file || preview.blockingErrorsPresent || noChangesToApply) return
     if (mode === 'EMERGENCY_REPLACE') { setConfirmation(''); setConfirmOpen(true) }
     else void runApply()
   }
@@ -224,10 +235,14 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
       {preview.diagnostics.length > 0 && <><h4>Проблемы</h4><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Строка</th><th>Лист / колонка</th><th>Описание</th></tr></thead><tbody>{preview.diagnostics.map((item, index) => <tr key={`${item.sourceRowNumber}-${item.code}-${index}`}><td>{item.sourceRowNumber ?? 'Файл'}</td><td>{item.field ?? '—'}</td><td>{importDiagnostic(item.code, item.message)}</td></tr>)}</tbody></table></div>{preview.diagnosticsTruncated && <p className="admin-muted">Показана только часть диагностики.</p>}</>}
       <h4>Решения по строкам</h4><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Строка</th><th>Номер</th><th>Участник</th><th>Старт</th><th>Решение</th><th>Причина</th><th>Изменения</th></tr></thead><tbody>{preview.rows.map((row) => <tr key={row.sourceRowNumber}><td>{row.sourceRowNumber}</td><td>{row.bib ?? '—'}</td><td>{row.participantName ?? '—'}</td><td>{row.targetRace?.raceName ?? '—'}</td><td><StatusBadge value={row.decision} /></td><td>{importReason(row.reasonCode, row.reason)}</td><td>{row.diffs.length ? row.diffs.map((diff) => <div className="admin-diff" key={diff.field}><strong>{importFieldLabel(diff.field)}</strong>{diff.oldValue && <del>{importDiffValue(diff.field, diff.oldValue)}</del>}<ins>{importDiffValue(diff.field, diff.newValue)}</ins></div>) : '—'}</td></tr>)}</tbody></table></div>
       {preview.rowsTruncated && <p className="admin-muted">Показана часть строк; при применении будут обработаны все проверенные строки.</p>}
-      {preview.blockingErrorsPresent ? <AdminNotice tone="danger">Применение недоступно: исправьте блокирующие ошибки и повторите проверку.</AdminNotice> : <div className="admin-form-actions"><button className={mode === 'EMERGENCY_REPLACE' ? 'admin-button-danger' : 'admin-button-primary'} type="button" disabled={busy !== null} onClick={requestApply}>{busy === 'apply' ? 'Применяем…' : mode === 'EMERGENCY_REPLACE' ? 'Применить экстренную замену' : 'Применить импорт'}</button><span>Проверка действует до {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(preview.expiresAt))}</span></div>}
+      {preview.blockingErrorsPresent
+        ? <AdminNotice tone="danger">Применение недоступно: исправьте блокирующие ошибки и повторите проверку.</AdminNotice>
+        : <><div className="admin-form-actions"><button className={mode === 'EMERGENCY_REPLACE' ? 'admin-button-danger' : 'admin-button-primary'} type="button" disabled={busy !== null || noChangesToApply} onClick={requestApply}>{busy === 'apply' ? 'Применяем…' : mode === 'EMERGENCY_REPLACE' ? 'Применить экстренную замену' : 'Применить импорт'}</button><span>Проверка действует до {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(preview.expiresAt))}</span></div>{noChangesToApply && <AdminNotice tone="info">Изменений для применения нет.</AdminNotice>}</>}
     </section>}
 
-    {applied && <AdminNotice tone="success"><strong>Импорт применён.</strong> Добавлено: {applied.insertedCount}; обновлено: {applied.updatedCount}; перенесено в историю: {applied.retiredCount}; обращений архивировано: {applied.archivedIssueCount}.</AdminNotice>}
+    {applied && (applied.noOp
+      ? <AdminNotice tone="info">Изменений для применения нет.</AdminNotice>
+      : <AdminNotice tone="success"><strong>Импорт применён.</strong> Добавлено: {applied.insertedCount}; обновлено: {applied.updatedCount}; перенесено в историю: {applied.retiredCount}; обращений архивировано: {applied.archivedIssueCount}.</AdminNotice>)}
     {confirmOpen && <ConfirmDialog title="Экстренно заменить данные?" description="Текущий набор данных выбранных Стартов будет логически заменён новым." confirmLabel="Заменить данные" danger busy={busy === 'apply'} onConfirm={() => { if (confirmation === 'ЗАМЕНИТЬ') void runApply() }} onClose={() => setConfirmOpen(false)}><Field label="Введите ЗАМЕНИТЬ для подтверждения"><input autoComplete="off" value={confirmation} onChange={(change) => setConfirmation(change.target.value)} /></Field>{confirmation && confirmation !== 'ЗАМЕНИТЬ' && <p className="admin-field-error">Введите слово без изменений.</p>}</ConfirmDialog>}
   </div>
 }

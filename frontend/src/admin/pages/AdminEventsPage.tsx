@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { AdminApi } from '../api'
-import type { EventSeries, EventSummary, PageResponse } from '../types'
+import type { EventSeries, EventSummary, PageResponse, ResultInquiryConfiguration } from '../types'
 import { AdminLink, navigateAdmin } from '../router'
 import { adminErrorMessage } from '../utils'
 import { localDateTimeToIso } from '../time'
@@ -10,8 +10,13 @@ import { AdminNotice, AdminPagination, Drawer, Field, Loadable, StatusBadge } fr
 import { InlineTemplateCreator } from '../components/InlineTemplateCreator'
 import { TimeZoneCombobox } from '../components/TimeZoneCombobox'
 import { EventStartComposer } from '../components/EventStartComposer'
+import { ResultInquirySettingsFields } from '../components/ResultInquirySettingsFields'
 import { draftsFromTemplate, startCommands } from '../eventStartDrafts'
 import type { EventStartDraft } from '../eventStartDrafts'
+import {
+  calculateDraftResultInquiryDeadline,
+  formatResultInquiryDeadline,
+} from '../resultInquirySettings'
 
 interface Props { api: AdminApi }
 
@@ -64,14 +69,17 @@ export function AdminEventsPage({ api }: Props) {
 
     <Loadable loading={loading} error={error}>
       {events.content.length ? <>
-        <div className="admin-table-wrap"><table className="admin-table">
-          <thead><tr><th>Мероприятие</th><th>Дата</th><th>Место</th><th>Шаблон</th><th>Публикация мероприятия</th><th /></tr></thead>
-          <tbody>{events.content.map((event) => <tr key={event.id}>
+        <div className="admin-table-wrap admin-events-table-wrap"><table className="admin-table admin-events-table">
+          <thead><tr><th>Мероприятие</th><th>Дата</th><th>Место</th><th>Шаблон</th><th>Публикация мероприятия</th></tr></thead>
+          <tbody>{events.content.map((event) => <tr className="admin-event-row" key={event.id} role="link" tabIndex={0} aria-label={`Открыть мероприятие ${event.name}`} onClick={() => navigateAdmin(`/admin/events/${event.id}`)} onKeyDown={(keyEvent) => {
+            if (keyEvent.key !== 'Enter' && keyEvent.key !== ' ') return
+            keyEvent.preventDefault()
+            navigateAdmin(`/admin/events/${event.id}`)
+          }}>
             <td><strong>{event.name}</strong><small>/{event.slug}</small></td>
             <td>{event.startsAt ? new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeZone: event.timeZone }).format(new Date(event.startsAt)) : 'Дата не указана'}</td>
             <td>{event.location ?? '—'}</td><td>{event.eventSeriesName}</td>
             <td><StatusBadge value={event.publicationStatus} /></td>
-            <td><AdminLink className="admin-row-link" href={`/admin/events/${event.id}`}>Открыть</AdminLink></td>
           </tr>)}</tbody>
         </table></div>
         <AdminPagination page={events.page} totalPages={events.totalPages} onChange={setPage} />
@@ -95,6 +103,8 @@ function CreateEventDrawer({ api, templates, onTemplateCreated, onClose }: {
   const [location, setLocation] = useState('')
   const [timeZone, setTimeZone] = useState('Europe/Moscow')
   const [starts, setStarts] = useState<EventStartDraft[]>([])
+  const [inquiry, setInquiry] = useState<ResultInquiryConfiguration>(() =>
+    templates[0]?.resultInquiryDefaults ?? emptyInquirySettings())
   const [startsLoading, setStartsLoading] = useState(false)
   const [preview, setPreview] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -110,17 +120,29 @@ function CreateEventDrawer({ api, templates, onTemplateCreated, onClose }: {
     if (!templateId) { setStarts([]); return }
     let cancelled = false
     setStartsLoading(true); setError(null); setPreview(false)
+    const selectedTemplate = templates.find((item) => String(item.id) === templateId)
+    setInquiry(selectedTemplate?.resultInquiryDefaults ?? emptyInquirySettings())
     api.templateStarts(Number(templateId))
       .then((loaded) => { if (!cancelled) setStarts(draftsFromTemplate(loaded)) })
       .catch((reason) => { if (!cancelled) setError(adminErrorMessage(reason)) })
       .finally(() => { if (!cancelled) setStartsLoading(false) })
     return () => { cancelled = true }
-  }, [api, templateId])
+  }, [api, templateId, templates])
 
   const showPreview = (event: FormEvent) => {
     event.preventDefault()
     if (!templateId) { setError('Сначала выберите или создайте шаблон.'); return }
     if (startCommands(starts).some((start) => !start.name)) { setError('У каждого включённого старта должно быть название.'); return }
+    if (inquiry.enabled && (!inquiry.email
+      || (inquiry.deadlineMode === 'AFTER_EVENT_DAYS' && !inquiry.windowDays)
+      || (inquiry.deadlineMode === 'FIXED_DATE' && !inquiry.fixedDate))) {
+      setError('Укажите срок подачи обращений и email организатора.'); return
+    }
+    const eventDate = (endsAt || startsAt).slice(0, 10)
+    if (inquiry.enabled && inquiry.deadlineMode === 'FIXED_DATE' && inquiry.fixedDate
+      && eventDate && inquiry.fixedDate < eventDate) {
+      setError('Последний день подачи обращений не может быть раньше даты окончания мероприятия.'); return
+    }
     setError(null); setPreview(true)
   }
   const create = async () => {
@@ -130,7 +152,8 @@ function CreateEventDrawer({ api, templates, onTemplateCreated, onClose }: {
       const created = await api.createEventWithStarts({
         event: { eventSeriesId: Number(templateId), name,
           startsAt: localDateTimeToIso(startsAt, timeZone), endsAt: localDateTimeToIso(endsAt, timeZone),
-          location: location || null, timeZone, publicationStatus: 'DRAFT' },
+          location: location || null, timeZone, publicationStatus: 'DRAFT',
+          resultInquiry: inquiry },
         starts: startCommands(starts),
       })
       navigateAdmin(`/admin/events/${created.event.id}`)
@@ -140,6 +163,9 @@ function CreateEventDrawer({ api, templates, onTemplateCreated, onClose }: {
   const templateCreated = (created: EventSeries) => { onTemplateCreated(created); setTemplateId(String(created.id)) }
 
   const selectedStarts = startCommands(starts)
+  const inquiryDeadline = calculateDraftResultInquiryDeadline(
+    startsAt, endsAt, inquiry.deadlineMode, inquiry.windowDays, inquiry.fixedDate, timeZone,
+  )
   return <Drawer title="Новое мероприятие" onClose={onClose}><form className="admin-form" onSubmit={showPreview}>
     {error && <AdminNotice tone="danger">{error}</AdminNotice>}
     {!preview ? <>
@@ -149,8 +175,23 @@ function CreateEventDrawer({ api, templates, onTemplateCreated, onClose }: {
       <div className="admin-form-grid"><Field label="Начало"><input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} /></Field><Field label="Окончание"><input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} /></Field></div>
       <Field label="Город / место"><input maxLength={255} value={location} onChange={(event) => setLocation(event.target.value)} /></Field>
       <Field label="Часовой пояс" hint="Выберите город с подходящим местным временем"><TimeZoneCombobox value={timeZone} location={location} onChange={setTimeZone} /></Field>
+      <section className="admin-form-section"><h3>Обращения по результатам</h3>
+        <ResultInquirySettingsFields
+          value={inquiry}
+          onChange={setInquiry}
+          deadlinePreview={inquiryDeadline
+            ? formatResultInquiryDeadline(inquiryDeadline, timeZone)
+            : null}
+          eventDateKnown={Boolean(endsAt || startsAt)}
+        />
+        <p className="admin-form-help">После окончания срока участники не смогут создавать новые обращения. Уже созданные обращения останутся доступны для обработки.</p>
+      </section>
       {startsLoading ? <p>Загружаем старты шаблона…</p> : <EventStartComposer value={starts} onChange={setStarts} />}
       <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy || startsLoading} type="submit">Продолжить</button><button className="admin-button-secondary" type="button" onClick={onClose}>Отмена</button></div>
-    </> : <section className="admin-event-preview"><p className="admin-eyebrow">Проверка перед созданием</p><h2>{name}</h2><p><strong>Шаблон:</strong> {templates.find((item) => String(item.id) === templateId)?.name}<br /><strong>Город / место:</strong> {location || '—'}</p><h3>Будут созданы старты</h3>{selectedStarts.length ? <ol>{selectedStarts.map((start) => <li key={`${start.templateStartId}-${start.sourceCode}-${start.name}`}><strong>{start.name}</strong><span>{start.distanceMeters === null ? 'Дистанция не указана' : `${start.distanceMeters} м`} · Награждение: {start.awardPolicy ? 'настроено' : 'штатные настройки'}</span></li>)}</ol> : <p>Мероприятие будет создано без стартов.</p>}<div className="admin-form-actions"><button className="admin-button-secondary" type="button" disabled={busy} onClick={() => setPreview(false)}>Назад</button><button className="admin-button-primary" type="button" disabled={busy} onClick={() => void create()}>{busy ? 'Создаём…' : 'Создать мероприятие'}</button></div></section>}
+    </> : <section className="admin-event-preview"><p className="admin-eyebrow">Проверка перед созданием</p><h2>{name}</h2><p><strong>Шаблон:</strong> {templates.find((item) => String(item.id) === templateId)?.name}<br /><strong>Город / место:</strong> {location || '—'}</p><p><strong>Обращения:</strong> {inquiry.enabled ? `${inquiry.deadlineMode === 'FIXED_DATE' ? 'до выбранной даты' : `${inquiry.windowDays} дн. после мероприятия`}, ${formatResultInquiryDeadline(inquiryDeadline, timeZone)}` : 'приём выключен'}</p><h3>Будут созданы старты</h3>{selectedStarts.length ? <ol>{selectedStarts.map((start) => <li key={`${start.templateStartId}-${start.sourceCode}-${start.name}`}><strong>{start.name}</strong><span>{start.distanceMeters === null ? 'Дистанция не указана' : `${start.distanceMeters} м`} · Награждение: {start.awardPolicy ? 'настроено' : 'штатные настройки'}</span></li>)}</ol> : <p>Мероприятие будет создано без стартов.</p>}<div className="admin-form-actions"><button className="admin-button-secondary" type="button" disabled={busy} onClick={() => setPreview(false)}>Назад</button><button className="admin-button-primary" type="button" disabled={busy} onClick={() => void create()}>{busy ? 'Создаём…' : 'Создать мероприятие'}</button></div></section>}
   </form></Drawer>
+}
+
+function emptyInquirySettings(): ResultInquiryConfiguration {
+  return { enabled: false, deadlineMode: 'AFTER_EVENT_DAYS', windowDays: null, fixedDate: null, email: null }
 }

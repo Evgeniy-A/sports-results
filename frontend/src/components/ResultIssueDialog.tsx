@@ -5,6 +5,7 @@ import type {
   ResultIssueAttachmentUpload,
   ResultCorrectionReason,
   ResultDetails,
+  ResultInquiryAvailability,
   ResultInquiryLookup,
   ResultIssueCreated,
 } from '../api/types'
@@ -24,6 +25,7 @@ import {
   ResultIssueAttachmentField,
 } from './ResultIssueAttachmentField'
 import { DigitAutoformatInput } from './DigitAutoformatInput'
+import { ResultIssueSupportFallback } from './ResultIssueSupportFallback'
 
 interface CommonProps {
   eventId: number
@@ -31,7 +33,6 @@ interface CommonProps {
   eventTimeZone: string
   inquiry: ResultInquiryLookup
   initialVerifiedBirthDate?: string | null
-  supportUrl?: string | null
   onClose: () => void
 }
 
@@ -51,12 +52,6 @@ interface LocalAttachment extends PreparedAttachment {
   file: File
   authorization?: ResultIssueAttachmentUpload
 }
-
-const VERIFICATION_FAILED_MESSAGE = `Не удалось подтвердить данные участника.
-
-Введённая дата рождения не совпадает с данными регистрации.
-
-Если вы считаете, что дата рождения или другие регистрационные данные указаны неверно, обратитесь в службу поддержки организатора.`
 
 function technicalErrorMessage(reason: unknown): string {
   if (reason instanceof ApiError) {
@@ -100,7 +95,6 @@ export function ResultIssueDialog(props: Props) {
     eventTimeZone,
     inquiry,
     initialVerifiedBirthDate = null,
-    supportUrl = null,
     onClose,
   } = props
   const dialogRef = useRef<HTMLElement>(null)
@@ -115,6 +109,8 @@ export function ResultIssueDialog(props: Props) {
   const [birthDate, setBirthDate] = useState('')
   const [birthDateError, setBirthDateError] = useState<string | null>(null)
   const [verificationFailed, setVerificationFailed] = useState(false)
+  const [verificationAvailability, setVerificationAvailability] = useState<ResultInquiryAvailability | null>(null)
+  const [verificationDeadline, setVerificationDeadline] = useState<string | null>(null)
   const [verifying, setVerifying] = useState(false)
   const [contactEmail, setContactEmail] = useState('')
   const [message, setMessage] = useState('')
@@ -279,6 +275,8 @@ export function ResultIssueDialog(props: Props) {
     setVerificationFailed(false)
     try {
       const verified = await api.verifyResultInquiry(eventId, { bib: inquiry.bib, birthDate: apiBirthDate })
+      setVerificationAvailability(verified.inquiryAvailability)
+      setVerificationDeadline(verified.deadline ?? null)
       const expectedResultId = props.kind === 'RESULT_CORRECTION' ? props.result.resultId : null
       const verifiedForFlow = props.kind === 'MISSING_RESULT'
         ? verified.lookupState === 'RESULT_NOT_PUBLIC'
@@ -378,8 +376,18 @@ export function ResultIssueDialog(props: Props) {
     }
   }
 
-  const availabilityMessage = resultIssueAvailabilityMessage(inquiry.inquiryAvailability)
+  const availabilityMessage = resultIssueAvailabilityMessage(
+    verificationAvailability ?? inquiry.inquiryAvailability,
+    verificationDeadline ?? inquiry.deadline,
+    eventTimeZone,
+  )
   const contextRace = inquiry.startDisplayName ?? inquiry.raceDisplayName
+  const retryBirthDateVerification = () => {
+    setBirthDate('')
+    setBirthDateError(null)
+    setFormError(null)
+    setVerificationFailed(false)
+  }
 
   return <div className="modal-backdrop" role="presentation" onMouseDown={closeDialog}>
     <section
@@ -396,36 +404,45 @@ export function ResultIssueDialog(props: Props) {
 
       {availabilityMessage && <div className="issue-notice" role="status">{availabilityMessage}</div>}
 
-      {!availabilityMessage && dialogState === 'VERIFY' && <>
-        <p className="issue-lead">Подтвердите дату рождения участника. Она используется только для проверки и не добавляется в обращение.</p>
-        <form className="issue-form compact-form" onSubmit={submitVerification}>
-          <label>
-            <span>Дата рождения</span>
-            <DigitAutoformatInput
-              aria-label="Дата рождения"
-              aria-describedby={birthDateError ? 'issue-birth-date-error' : undefined}
-              autoComplete="off"
-              formatter={formatDateInput}
-              maxLength={10}
-              placeholder="ДД.ММ.ГГГГ"
-              value={birthDate}
-              onValueChange={(value) => {
-                setBirthDate(value)
-                setBirthDateError(null)
-                setVerificationFailed(false)
-                setFormError(null)
-              }}
-            />
-          </label>
-          <button className="issue-submit" type="submit" disabled={verifying}>{verifying ? 'Проверяем…' : 'Продолжить'}</button>
-        </form>
-        {birthDateError && <p id="issue-birth-date-error" className="form-error" role="alert">{birthDateError}</p>}
-        {verificationFailed && <div className="verification-help" role="alert">
-          <p>{VERIFICATION_FAILED_MESSAGE}</p>
-          {supportUrl && <a href={supportUrl}>Обратиться в службу поддержки</a>}
-        </div>}
-        {formError && <p className="form-error" role="alert">{formError}</p>}
-      </>}
+      {!availabilityMessage && dialogState === 'VERIFY' && (verificationFailed
+        ? <div className="verification-help" role="alert">
+          <p>Дата рождения не совпала с данными регистрации. Проверьте введённую дату и попробуйте ещё раз.</p>
+          <ResultIssueSupportFallback
+            availability={verificationAvailability ?? inquiry.inquiryAvailability}
+            issueKind={props.kind}
+            eventName={eventName}
+            startLabel={contextRace ?? 'Старт не указан'}
+            bib={inquiry.bib}
+            participantName={inquiry.participantDisplayName
+              ?? (props.kind === 'RESULT_CORRECTION' ? props.result.displayName : null)}
+            onRetryVerification={retryBirthDateVerification}
+          />
+        </div>
+        : <>
+          <p className="issue-lead">Подтвердите дату рождения участника. Она используется только для проверки и не добавляется в обращение.</p>
+          <form className="issue-form compact-form" onSubmit={submitVerification}>
+            <label>
+              <span>Дата рождения</span>
+              <DigitAutoformatInput
+                aria-label="Дата рождения"
+                aria-describedby={birthDateError ? 'issue-birth-date-error' : undefined}
+                autoComplete="off"
+                formatter={formatDateInput}
+                maxLength={10}
+                placeholder="ДД.ММ.ГГГГ"
+                value={birthDate}
+                onValueChange={(value) => {
+                  setBirthDate(value)
+                  setBirthDateError(null)
+                  setFormError(null)
+                }}
+              />
+            </label>
+            <button className="issue-submit" type="submit" disabled={verifying}>{verifying ? 'Проверяем…' : 'Продолжить'}</button>
+          </form>
+          {birthDateError && <p id="issue-birth-date-error" className="form-error" role="alert">{birthDateError}</p>}
+          {formError && <p className="form-error" role="alert">{formError}</p>}
+        </>)}
 
       {!availabilityMessage && dialogState === 'FORM' && <form className="issue-form" onSubmit={submitIssue}>
         <dl className="issue-context">

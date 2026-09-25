@@ -189,7 +189,6 @@ class ImportApplyTransactionService {
         if (plan.blockingErrorsPresent()) {
             throw new RequestConflictException("PREVIEW_BLOCKED", "Import plan contains blocking rows");
         }
-        validateSourceCodeMappings(prepared, scopeRaceIds, snapshot.races());
         int applicableCount = switch (operation.getMode()) {
             case ADD_NEW -> plan.totals().newCount();
             case UPDATE_EXISTING -> plan.totals().changedCount();
@@ -197,10 +196,9 @@ class ImportApplyTransactionService {
                     + plan.emergencySummary().totals().insertCount();
         };
         if (applicableCount == 0) {
-            throw new RequestConflictException(
-                    "NO_APPLICABLE_CHANGES", operation.getMode() + " plan contains no applicable rows"
-            );
+            return noOpResponse(operation, plan, event.getResultDataRevision());
         }
+        validateSourceCodeMappings(prepared, scopeRaceIds, snapshot.races());
 
         Map<Integer, TimingResultImportRow> sourceByRow = prepared.parsed().rows().stream()
                 .collect(Collectors.toMap(
@@ -793,7 +791,28 @@ class ImportApplyTransactionService {
                 operation.getUpdatedCount(), operation.getResultCreatedCount(), operation.getNewSkippedCount(),
                 operation.getExistingSkippedCount(), operation.getUnchangedCount(), operation.getOutOfScopeCount(),
                 operation.getRetiredCount(), operation.getArchivedIssueCount(),
-                operation.getNewRevision(), operation.getAppliedAt()
+                operation.getNewRevision(), operation.getAppliedAt(), false
+        );
+    }
+
+    private static ImportApplyResponseDto noOpResponse(
+            ImportOperation operation,
+            ImportPreviewPlan plan,
+            long currentRevision
+    ) {
+        int newSkipped = operation.getMode() == ImportOperationMode.UPDATE_EXISTING
+                ? plan.totals().newCount()
+                : 0;
+        int existingSkipped = switch (operation.getMode()) {
+            case ADD_NEW -> plan.totals().unchangedCount() + plan.totals().changedCount();
+            case UPDATE_EXISTING -> plan.totals().unchangedCount();
+            case EMERGENCY_REPLACE -> 0;
+        };
+        return new ImportApplyResponseDto(
+                operation.getId(), operation.getStatus(), operation.getMode(), operation.getEvent().getId(),
+                null, 0, 0, 0, newSkipped, existingSkipped,
+                plan.totals().unchangedCount(), plan.totals().outOfScopeCount(),
+                0, 0, currentRevision, null, true
         );
     }
 

@@ -22,6 +22,7 @@ public record ImportApplyResponseDto(
         int retiredCount,
         int archivedIssueCount,
         long newRevision,
-        Instant appliedAt
+        Instant appliedAt,
+        boolean noOp
 ) {
 }

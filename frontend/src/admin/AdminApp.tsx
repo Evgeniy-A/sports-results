@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { ApiError } from '../api/client'
 import { createAdminApi } from './api'
@@ -9,6 +9,7 @@ import { AdminJournalPage } from './pages/AdminJournalPage'
 import { AdminTemplatesPage } from './pages/AdminTemplatesPage'
 import { AdminBulkEventsPage } from './pages/AdminBulkEventsPage'
 import { AdminTemplatePage } from './pages/AdminTemplatePage'
+import { AdminEventIssuePage } from './pages/AdminEventIssuePage'
 import { AdminLink, navigateAdmin, useAdminLocation } from './router'
 import { AdminNotice, Field } from './components/AdminUi'
 import { clearAdminCredentials, loadAdminCredentials, saveAdminCredentials } from './adminAuthSession'
@@ -41,7 +42,27 @@ function AdminLogin({ onAuthenticated }: { onAuthenticated: (credentials: AdminC
 function AuthenticatedAdmin({ credentials, onLogout }: { credentials: AdminCredentials; onLogout: () => void }) {
   const api = useMemo(() => createAdminApi(credentials, onLogout), [credentials, onLogout])
   const location = useAdminLocation()
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const sidebarRef = useRef<HTMLElement>(null)
+  const closeSidebar = useCallback((restoreFocus = false) => {
+    setSidebarOpen(false)
+    if (restoreFocus) window.requestAnimationFrame(() => menuButtonRef.current?.focus())
+  }, [])
+
+  useEffect(() => {
+    if (!sidebarOpen) return
+    sidebarRef.current?.querySelector<HTMLAnchorElement>('a[href]')?.focus()
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeSidebar(true)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [closeSidebar, sidebarOpen])
   const eventMatch = location.pathname.match(/^\/admin\/events\/(\d+)\/?$/)
+  const eventIssueMatch = location.pathname.match(/^\/admin\/events\/(\d+)\/results\/issues\/(\d+)\/?$/)
   const templateMatch = location.pathname.match(/^\/admin\/templates\/(\d+)\/?$/)
   let content: React.ReactNode
   if (location.pathname === '/admin' || location.pathname === '/admin/' || location.pathname === '/admin/events' || location.pathname === '/admin/events/') {
@@ -54,10 +75,26 @@ function AuthenticatedAdmin({ credentials, onLogout }: { credentials: AdminCrede
     content = <AdminTemplatePage api={api} templateId={Number(templateMatch[1])} />
   } else if (location.pathname === '/admin/support/issues' || location.pathname === '/admin/support/issues/') {
     content = <AdminJournalPage api={api} />
+  } else if (eventIssueMatch) {
+    content = <AdminEventIssuePage api={api} eventId={Number(eventIssueMatch[1])} issueId={Number(eventIssueMatch[2])} returnTo={location.search.get('returnTo')} />
   } else if (eventMatch) {
     content = <AdminEventPage api={api} eventId={Number(eventMatch[1])} requestedTab={location.search.get('tab')} requestedRaceId={location.search.get('raceId')} />
   } else {
     content = <section className="admin-empty"><h1>Страница не найдена</h1><button className="admin-button-primary" onClick={() => navigateAdmin('/admin/events')}>К мероприятиям</button></section>
   }
-  return <main className="admin-root"><header className="admin-mobile-header"><strong>Sports Results Admin</strong></header><aside className="admin-sidebar"><AdminLink className="admin-sidebar-brand" href="/admin/events"><span>SR</span><div><strong>Sports Results</strong><small>Admin</small></div></AdminLink><nav><p>Основное</p><AdminLink className={(location.pathname.startsWith('/admin/events') || location.pathname === '/admin') ? 'active' : ''} href="/admin/events">Мероприятия</AdminLink><AdminLink className={location.pathname.startsWith('/admin/templates') ? 'active' : ''} href="/admin/templates">Шаблоны</AdminLink><p>Поддержка</p><AdminLink className={location.pathname.startsWith('/admin/support/issues') ? 'active' : ''} href="/admin/support/issues">Журнал обращений</AdminLink></nav><div className="admin-sidebar-footer"><span>{credentials.username}</span><button type="button" onClick={onLogout}>Выйти</button></div></aside><div className="admin-content">{content}</div></main>
+  return <main className="admin-root">
+    <header className="admin-mobile-header">
+      <button ref={menuButtonRef} className="admin-menu-button" type="button" aria-label={sidebarOpen ? 'Закрыть меню' : 'Открыть меню'} aria-expanded={sidebarOpen} aria-controls="admin-navigation" onClick={() => sidebarOpen ? closeSidebar() : setSidebarOpen(true)}>☰</button>
+      <strong>Sports Results Admin</strong>
+    </header>
+    {sidebarOpen && <>
+      <button className="admin-sidebar-scrim" type="button" aria-label="Закрыть меню" onClick={() => closeSidebar(true)} />
+      <aside ref={sidebarRef} id="admin-navigation" className="admin-sidebar" aria-label="Административная навигация">
+        <AdminLink className="admin-sidebar-brand" href="/admin/events" onClick={() => closeSidebar()}><span>SR</span><div><strong>Sports Results</strong><small>Admin</small></div></AdminLink>
+        <nav><p>Основное</p><AdminLink className={(location.pathname.startsWith('/admin/events') || location.pathname === '/admin') ? 'active' : ''} href="/admin/events" onClick={() => closeSidebar()}>Мероприятия</AdminLink><AdminLink className={location.pathname.startsWith('/admin/templates') ? 'active' : ''} href="/admin/templates" onClick={() => closeSidebar()}>Шаблоны</AdminLink><p>Поддержка</p><AdminLink className={location.pathname.startsWith('/admin/support/issues') ? 'active' : ''} href="/admin/support/issues" onClick={() => closeSidebar()}>Журнал обращений</AdminLink></nav>
+        <div className="admin-sidebar-footer"><span>{credentials.username}</span><button type="button" onClick={onLogout}>Выйти</button></div>
+      </aside>
+    </>}
+    <div className="admin-content">{content}</div>
+  </main>
 }

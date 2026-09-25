@@ -36,7 +36,7 @@ export function EventAwardTab({ api, event, races, initialRaceId, onChanged }: {
 
   const save = async () => {
     if (!policy) return; setBusy('policy'); setError(null); setSuccess(null)
-    try { setPolicy(await api.updateAwardPolicy(raceId, awardPolicyUpdate(policy))); setSuccess('Настройки зачёта сохранены. Технические поля старта синхронизированы backend.'); await onChanged() }
+    try { setPolicy(await api.updateAwardPolicy(raceId, awardPolicyUpdate(policy))); setSuccess('Настройки зачёта сохранены. Технические поля старта синхронизированы системой.'); await onChanged() }
     catch (reason) { setError(adminErrorMessage(reason)) }
     finally { setBusy(null) }
   }
@@ -48,7 +48,7 @@ export function EventAwardTab({ api, event, races, initialRaceId, onChanged }: {
   }
   const applyPreview = async () => {
     if (!preview) return; setBusy('apply'); setError(null)
-    try { await api.recalculationApply(event.id, preview.operationId); setPreview(null); setSuccess('Пересчёт применён. Категории и ranking обновлены backend.'); await onChanged(); setRecalcRaceIds([]) }
+    try { await api.recalculationApply(event.id, preview.operationId); setPreview(null); setSuccess('Пересчёт применён. Категории и официальные места обновлены системой.'); await onChanged(); setRecalcRaceIds([]) }
     catch (reason) { setError(adminErrorMessage(reason)) }
     finally { setBusy(null) }
   }

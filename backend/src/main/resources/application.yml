@@ -60,6 +60,10 @@ app:
         access-key: ${RESULT_ISSUE_ATTACHMENT_S3_ACCESS_KEY:}
         secret-key: ${RESULT_ISSUE_ATTACHMENT_S3_SECRET_KEY:}
         path-style-access: ${RESULT_ISSUE_ATTACHMENT_S3_PATH_STYLE_ACCESS:false}
+      yandex-disk:
+        api-base-url: ${YANDEX_DISK_API_BASE_URL:https://cloud-api.yandex.net/v1/disk}
+        root-path: ${YANDEX_DISK_ROOT_PATH:app:/}
+        token: ${YANDEX_DISK_TOKEN:}
       fake-scanner:
         result: ${RESULT_ISSUE_ATTACHMENT_FAKE_SCAN_RESULT:CLEAN}
 

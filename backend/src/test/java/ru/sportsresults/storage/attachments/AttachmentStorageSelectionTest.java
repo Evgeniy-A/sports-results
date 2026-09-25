@@ -5,6 +5,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import ru.sportsresults.config.S3AttachmentStorageConfiguration;
+import ru.sportsresults.config.YandexDiskAttachmentStorageConfiguration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -21,6 +22,7 @@ class AttachmentStorageSelectionTest {
                     assertThat(context).hasSingleBean(AttachmentObjectStorage.class);
                     assertThat(context).hasSingleBean(InMemoryAttachmentObjectStorage.class);
                     assertThat(context).doesNotHaveBean(S3AttachmentObjectStorage.class);
+                    assertThat(context).doesNotHaveBean(YandexDiskAttachmentObjectStorage.class);
                 });
     }
 
@@ -40,7 +42,36 @@ class AttachmentStorageSelectionTest {
                     assertThat(context).hasSingleBean(AttachmentObjectStorage.class);
                     assertThat(context).hasSingleBean(S3AttachmentObjectStorage.class);
                     assertThat(context).doesNotHaveBean(InMemoryAttachmentObjectStorage.class);
+                    assertThat(context).doesNotHaveBean(YandexDiskAttachmentObjectStorage.class);
                 });
+    }
+
+    @Test
+    void yandexDiskProviderBuildsOnlyTheAppFolderAdapter() {
+        contextRunner
+                .withPropertyValues(
+                        "app.result-issues.attachments.storage-provider=yandex-disk",
+                        "app.result-issues.attachments.yandex-disk.api-base-url=https://cloud-api.example.test/v1/disk",
+                        "app.result-issues.attachments.yandex-disk.root-path=app:/",
+                        "app.result-issues.attachments.yandex-disk.token=test-token"
+                )
+                .run(context -> {
+                    assertThat(context).hasSingleBean(AttachmentObjectStorage.class);
+                    assertThat(context).hasSingleBean(YandexDiskAttachmentObjectStorage.class);
+                    assertThat(context).doesNotHaveBean(InMemoryAttachmentObjectStorage.class);
+                    assertThat(context).doesNotHaveBean(S3AttachmentObjectStorage.class);
+                });
+    }
+
+    @Test
+    void yandexDiskProviderFailsClosedWhenTokenIsMissing() {
+        contextRunner
+                .withPropertyValues(
+                        "app.result-issues.attachments.storage-provider=yandex-disk",
+                        "app.result-issues.attachments.yandex-disk.api-base-url=https://cloud-api.example.test/v1/disk",
+                        "app.result-issues.attachments.yandex-disk.root-path=app:/"
+                )
+                .run(context -> assertThat(context).hasFailed());
     }
 
     @Test
@@ -58,6 +89,7 @@ class AttachmentStorageSelectionTest {
     @Configuration(proxyBeanMethods = false)
     @Import({
             S3AttachmentStorageConfiguration.class,
+            YandexDiskAttachmentStorageConfiguration.class,
             S3AttachmentObjectStorage.class,
             InMemoryAttachmentObjectStorage.class
     })

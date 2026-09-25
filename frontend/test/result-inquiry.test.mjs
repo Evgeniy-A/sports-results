@@ -2,11 +2,13 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
+  HERO_LEAGUE_SUPPORT_URL,
   LatestRequestGate,
   availabilityView,
-  buildInquiryMailto,
-  createInquiryEmailTemplates,
+  copyInquiryText,
+  createDobVerificationSupportMessage,
   formatInquiryDeadline,
+  hasMeaningfulSupportDescription,
   isRequestCancellation,
   loadPublicResultsAndInquiry,
   parseRussianBirthDate,
@@ -19,18 +21,18 @@ const panelSource = await readFile(new URL('../src/components/ResultInquiryPanel
 const dialogSource = await readFile(new URL('../src/components/ResultIssueDialog.tsx', import.meta.url), 'utf8')
 const clientSource = await readFile(new URL('../src/api/client.ts', import.meta.url), 'utf8')
 const typesSource = await readFile(new URL('../src/api/types.ts', import.meta.url), 'utf8')
+const supportFallbackSource = await readFile(new URL('../src/components/ResultIssueSupportFallback.tsx', import.meta.url), 'utf8')
 
-test('every exact-bib search requests Result Inquiry regardless of public row count or other filters', () => {
+test('only an explicit bib filter is eligible for Result Inquiry recovery', () => {
   assert.equal(shouldRequestResultInquiry({ bib: '101' }), true)
   assert.equal(shouldRequestResultInquiry({ name: 'Иван Иванов' }), false)
   assert.equal(shouldRequestResultInquiry({ bib: '101', name: 'Иван' }), true)
   assert.equal(shouldRequestResultInquiry({ bib: '101', gender: 'male' }), true)
   assert.equal(shouldRequestResultInquiry({ bib: '101', status: 'finished' }), true)
   assert.match(eventResultsSource, /loadPublicResultsAndInquiry\([\s\S]*api\.results[\s\S]*api\.resultInquiry/)
-  assert.doesNotMatch(eventResultsSource, /shouldRequestResultInquiry\(loadedProtocol\.content\.length/)
 })
 
-test('exact-bib orchestration has the same ordered requests for zero, one, or many public rows', async () => {
+test('exact-bib recovery checks Registration only after the public protocol returns zero rows', async () => {
   for (const publicRowCount of [0, 1, 3]) {
     const calls = []
     const loaded = await loadPublicResultsAndInquiry(
@@ -44,19 +46,24 @@ test('exact-bib orchestration has the same ordered requests for zero, one, or ma
         }
       },
     )
-    assert.deepEqual(calls, ['public-results', 'result-inquiry'])
+    assert.deepEqual(calls, publicRowCount === 0
+      ? ['public-results', 'result-inquiry']
+      : ['public-results'])
     assert.equal(loaded.publicResults.status, 'fulfilled')
     assert.equal(loaded.inquiry.status, 'fulfilled')
     if (loaded.publicResults.status === 'fulfilled') {
       assert.equal(loaded.publicResults.value.content.length, publicRowCount)
     }
     if (loaded.inquiry.status === 'fulfilled') {
-      assert.equal(loaded.inquiry.value?.lookupState, 'NEEDS_VERIFICATION')
+      assert.equal(
+        loaded.inquiry.value?.lookupState,
+        publicRowCount === 0 ? 'NEEDS_VERIFICATION' : undefined,
+      )
     }
   }
 })
 
-test('exact-bib starts public Results and Result Inquiry before either response completes', async () => {
+test('exact-bib recovery waits for an empty public result before calling Result Inquiry', async () => {
   const calls = []
   let resolveResults
   let resolveInquiry
@@ -69,10 +76,12 @@ test('exact-bib starts public Results and Result Inquiry before either response 
     () => { calls.push('result-inquiry'); return inquiryResponse },
   ).then((outcome) => { completed = true; return outcome })
 
-  assert.deepEqual(calls, ['public-results', 'result-inquiry'])
-  resolveResults({ content: [{ resultId: 1 }] })
+  assert.deepEqual(calls, ['public-results'])
+  resolveResults({ content: [] })
   await Promise.resolve()
   assert.equal(completed, false)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(calls, ['public-results', 'result-inquiry'])
   resolveInquiry({
     lookupState: 'RESULT_PUBLIC', inquiryAvailability: 'OPEN', bib: '1100',
     missingResultActionAvailable: false,
@@ -94,8 +103,8 @@ test('name search performs only the public result request', async () => {
   if (loaded.inquiry.status === 'fulfilled') assert.equal(loaded.inquiry.value, null)
 })
 
-test('latest request gate ignores out-of-order bib responses in both mixed completion orders', async () => {
-  for (const order of ['results-second-first', 'inquiry-second-first']) {
+test('latest request gate ignores stale exact-bib searches', async () => {
+  for (const order of ['second-first', 'first-first']) {
     const gate = new LatestRequestGate()
     const firstResults = deferred()
     const firstInquiry = deferred()
@@ -113,16 +122,16 @@ test('latest request gate ignores out-of-order bib responses in both mixed compl
     const observeFirst = firstSearch.then(() => { if (gate.isCurrent(firstId)) applied.push('1100') })
     const observeSecond = secondSearch.then(() => { if (gate.isCurrent(secondId)) applied.push('1200') })
 
-    if (order === 'results-second-first') {
-      secondResults.resolve({ content: [{ bib: '1200' }] })
+    if (order === 'second-first') {
+      secondResults.resolve({ content: [] })
+      secondInquiry.resolve({ lookupState: 'NEEDS_VERIFICATION' })
+      firstResults.resolve({ content: [] })
       firstInquiry.resolve({ lookupState: 'NEEDS_VERIFICATION' })
-      secondInquiry.resolve({ lookupState: 'RESULT_PUBLIC' })
-      firstResults.resolve({ content: [{ bib: '1100' }] })
     } else {
-      secondInquiry.resolve({ lookupState: 'RESULT_PUBLIC' })
-      firstResults.resolve({ content: [{ bib: '1100' }] })
-      secondResults.resolve({ content: [{ bib: '1200' }] })
+      firstResults.resolve({ content: [] })
       firstInquiry.resolve({ lookupState: 'NEEDS_VERIFICATION' })
+      secondResults.resolve({ content: [] })
+      secondInquiry.resolve({ lookupState: 'NEEDS_VERIFICATION' })
     }
     await Promise.all([observeFirst, observeSecond])
     assert.deepEqual(applied, ['1200'])
@@ -194,7 +203,7 @@ test('OPEN exposes CTA and uses the backend deadline value', () => {
   const view = availabilityView('OPEN', '2026-09-27T21:00:00Z', 'Europe/Moscow')
   assert.equal(view.canContact, true)
   assert.equal(view.statusText, 'Результат не установлен')
-  assert.equal(view.deadlineText, 'Обратиться можно до 28.09.2026')
+  assert.match(view.deadlineText ?? '', /Обратиться можно до 28\.09\.2026 включительно/)
   assert.equal(formatInquiryDeadline('bad-value', 'Europe/Moscow'), null)
 })
 
@@ -205,38 +214,71 @@ test('CLOSED, NOT_OPEN_YET and DISABLED never expose the CTA', () => {
   assert.equal(closed.canContact, false)
   assert.match(closed.explanation ?? '', /завершён/)
   assert.equal(notOpen.canContact, false)
-  assert.match(notOpen.explanation ?? '', /после завершения мероприятия/)
+  assert.equal(notOpen.explanation, 'Приём обращений ещё не открыт.')
   assert.equal(disabled.canContact, false)
-  assert.equal(disabled.explanation, null)
+  assert.equal(disabled.explanation, 'Приём обращений по результатам закрыт организатором.')
 })
 
-test('email templates contain markers and Event, Start and bib facts', () => {
-  const [missing, question] = createInquiryEmailTemplates('Контрольный забег', 'Индивидуальный · 5 км', '1100')
-  assert.match(missing.subject, /^\[RESULT_MISSING\]/)
-  assert.match(question.subject, /^\[RESULT_QUESTION\]/)
-  for (const template of [missing, question]) {
-    assert.match(template.subject, /Контрольный забег/)
-    assert.match(template.subject, /Индивидуальный · 5 км/)
-    assert.match(template.subject, /№1100/)
-    assert.match(template.body, /Мероприятие: Контрольный забег/)
-    assert.match(template.body, /Старт: Индивидуальный · 5 км/)
-    assert.match(template.body, /Стартовый номер: 1100/)
-    assert.match(template.body, /Дата рождения:\n/)
-    assert.doesNotMatch(template.body, /10\.01\.1990|1990-01-10/)
-  }
+test('visible-result support text keeps the legacy question marker and public context', () => {
+  const message = createDobVerificationSupportMessage({
+    issueKind: 'RESULT_CORRECTION',
+    eventName: 'Осенний забег',
+    startLabel: '10 км',
+    bib: 'A-17',
+    participantName: 'Тестовый Участник',
+    description: 'Неверно указано чистое время.',
+  })
+  assert.equal(message.marker, '[RESULT_QUESTION]')
+  assert.match(message.text, /^\[RESULT_QUESTION\].*Осенний забег.*10 км.*№A-17/)
+  assert.match(message.text, /Мероприятие: Осенний забег/)
+  assert.match(message.text, /Участник: Тестовый Участник/)
+  assert.match(message.text, /Неверно указано чистое время/)
+  assert.doesNotMatch(message.text, /1990-01-10|10\.01\.1990|registrationId|resultId|storageKey|auth/i)
 })
 
-test('mailto keeps recipient as an email and encodes subject and body query values', () => {
-  const [template] = createInquiryEmailTemplates('Забег №1', '5 км', 'A 1')
-  const mailto = buildInquiryMailto('timing+result@example.test', template)
-  assert.match(mailto, /^mailto:timing\+result@example\.test\?subject=/)
-  assert.doesNotMatch(mailto, /^mailto:[^?]*%40/)
-  assert.match(mailto, new RegExp(`subject=${encodeURIComponent(template.subject)}`))
-  assert.match(mailto, new RegExp(`body=${encodeURIComponent(template.body)}`))
-  assert.match(mailto, /%5BRESULT_MISSING%5D/)
-  assert.match(mailto, /%E2%84%96/)
-  assert.match(mailto, /%0A/)
-  assert.doesNotMatch(mailto, /\s/)
+test('missing-result support text uses the established missing marker without claiming an internal cause', () => {
+  const message = createDobVerificationSupportMessage({
+    issueKind: 'MISSING_RESULT', eventName: 'Осенний забег', startLabel: '10 км', bib: 'A-17',
+    participantName: 'Тестовый Участник', description: 'Финишировал, но строки в протоколе нет.',
+  })
+  assert.equal(message.marker, '[RESULT_MISSING]')
+  assert.match(message.text, /Не удалось найти мой результат в публичном протоколе/)
+  assert.match(message.text, /восстановить или уточнить результат/)
+  assert.doesNotMatch(message.text, /running|quarantine|notstarted|disqualified|status\s*=|enum/i)
+})
+
+test('DOB fallback copy writes the complete prepared support text', async () => {
+  const message = createDobVerificationSupportMessage({
+    issueKind: 'RESULT_CORRECTION', eventName: 'Осенний забег', startLabel: '10 км', bib: 'A-17',
+    description: 'Прошу проверить время.',
+  })
+  let copied = ''
+  await copyInquiryText(message.text, { writeText: async (value) => { copied = value } })
+  assert.equal(copied, message.text)
+})
+
+test('DOB fallback requires a non-whitespace description before preparing', () => {
+  assert.equal(hasMeaningfulSupportDescription(''), false)
+  assert.equal(hasMeaningfulSupportDescription('   \n\t  '), false)
+  assert.equal(hasMeaningfulSupportDescription('Нужно проверить время.'), true)
+  assert.match(supportFallbackSource, /disabled=\{!hasMeaningfulSupportDescription\(description\)\}/)
+})
+
+test('DOB fallback keeps support locked when clipboard copy fails', async () => {
+  await assert.rejects(
+    copyInquiryText('Обращение', { writeText: async () => { throw new Error('denied') } }),
+    /denied/,
+  )
+  assert.match(supportFallbackSource, /catch \{\s*setCopyState\('error'\)/)
+  assert.match(supportFallbackSource, /copyState === 'success'[\s\S]*?<a[\s\S]*?: <button[^>]*disabled/)
+  assert.match(supportFallbackSource, /Не удалось скопировать текст\. Попробуйте ещё раз\./)
+})
+
+test('DOB fallback uses only the external support page and never mailto or Event email', () => {
+  assert.equal(HERO_LEAGUE_SUPPORT_URL, 'https://heroleague.ru/feedback')
+  assert.match(supportFallbackSource, /target="_blank"/)
+  assert.match(supportFallbackSource, /rel="noopener noreferrer"/)
+  assert.doesNotMatch(supportFallbackSource, /mailto:|contactEmail|resultInquiryEmail|email/i)
 })
 
 test('DOB verification API sends personal data only in a POST JSON body', async () => {
@@ -281,39 +323,30 @@ test('RESULT_NOT_PUBLIC is a dedicated special row without sporting facts', () =
 })
 
 test('NEEDS_VERIFICATION renders neutral controls without candidates', () => {
-  assert.match(panelSource, /Если вы не нашли свой результат, уточните данные/)
+  assert.match(panelSource, /Мы нашли регистрацию с этим стартовым номером/)
   assert.match(panelSource, /Уточните данные участника/)
   assert.match(panelSource, /placeholder="ДД\.ММ\.ГГГГ"/)
   assert.match(panelSource, /Не удалось подтвердить данные участника/)
   assert.doesNotMatch(panelSource, /candidateCount|firstName|lastName|birthDate.*inquiry/)
 })
 
-test('mixed public and non-public results coexist with one neutral follow-up action', () => {
+test('public result rows suppress the missing-result recovery surface', () => {
   assert.match(eventResultsSource, /protocol\.content\.map\(\(result\)/)
-  assert.match(eventResultsSource, /inquiry\.missingResultActionAvailable && <ResultInquiryPanel/)
-  assert.match(eventResultsSource, /publicResultsPresent/)
-  assert.match(panelSource, /publicResultsPresent && inquiry\.lookupState === 'NEEDS_VERIFICATION'/)
-  assert.match(panelSource, /Если вы не нашли свой результат, уточните данные\./)
-  assert.match(panelSource, />Уточнить результат<\/button>/)
-  assert.doesNotMatch(panelSource, /несколько регистрац|несколько участник|дубликат номера|количество совпадений/i)
-})
-
-test('all-public duplicates keep all result rows and suppress the missing-result action', () => {
   assert.match(eventResultsSource, /key=\{result\.resultId\}/)
-  assert.doesNotMatch(eventResultsSource, /key=\{result\.bib\}/)
-  assert.match(eventResultsSource, /inquiry\.missingResultActionAvailable && <ResultInquiryPanel/)
-  assert.doesNotMatch(eventResultsSource, /slice\(0,\s*[12]\)|content\[0\].*bib|===\s*2/)
+  assert.match(eventResultsSource, /inquiry && !hasPublicResultRows && <ResultInquiryPanel/)
+  assert.doesNotMatch(eventResultsSource, /inquiry && hasPublicResultRows/)
+  assert.doesNotMatch(panelSource, /publicResultsPresent/)
 })
 
 test('mixed DOB verification opens missing flow only for a verified non-public registration', () => {
   assert.match(eventResultsSource, /verified\.lookupState === 'RESULT_PUBLIC'[\s\S]*setInquiry\(null\)/)
   assert.match(eventResultsSource, /verified\.lookupState === 'RESULT_NOT_PUBLIC' \? birthDate : null/)
-  assert.match(panelSource, /publicResultsPresent && inquiry\.lookupState === 'RESULT_NOT_PUBLIC' && verifiedBirthDate !== null/)
+  assert.match(panelSource, /inquiry\.lookupState === 'RESULT_NOT_PUBLIC' && verifiedBirthDate !== null/)
   assert.match(panelSource, /kind="MISSING_RESULT"/)
 })
 
-test('DOB is not written to URL, browser storage, email template or frontend logs', () => {
-  const combinedSource = `${eventResultsSource}\n${panelSource}\n${dialogSource}\n${clientSource}`
+test('DOB is not written to URL, browser storage, support text or frontend logs', () => {
+  const combinedSource = `${eventResultsSource}\n${panelSource}\n${dialogSource}\n${supportFallbackSource}\n${clientSource}`
   assert.doesNotMatch(combinedSource, /localStorage|sessionStorage/)
   assert.doesNotMatch(clientSource, /result-inquiry\/verify\?/)
   assert.doesNotMatch(dialogSource, /message:.*birthDate|setMessage\([^)]*birthDate/)

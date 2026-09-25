@@ -8,6 +8,7 @@ import {
 import { formatDateInput } from '../utils/inputFormatting'
 import { DigitAutoformatInput } from './DigitAutoformatInput'
 import { ResultIssueDialog } from './ResultIssueDialog'
+import { ResultIssueSupportFallback } from './ResultIssueSupportFallback'
 
 interface Props {
   eventId: number
@@ -17,7 +18,6 @@ interface Props {
   verifiedBirthDate: string | null
   verifying: boolean
   verificationError: string | null
-  publicResultsPresent: boolean
   onVerify: (birthDate: string) => Promise<void>
   onClearVerification: () => void
 }
@@ -30,21 +30,33 @@ export function ResultInquiryPanel({
   verifiedBirthDate,
   verifying,
   verificationError,
-  publicResultsPresent,
   onVerify,
   onClearVerification,
 }: Props) {
   const [birthDate, setBirthDate] = useState('')
   const [birthDateError, setBirthDateError] = useState<string | null>(null)
   const [retrying, setRetrying] = useState(inquiry.lookupState !== 'VERIFICATION_FAILED')
-  const [verificationStarted, setVerificationStarted] = useState(!publicResultsPresent)
+  const [verificationStarted, setVerificationStarted] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(
-    publicResultsPresent && inquiry.lookupState === 'RESULT_NOT_PUBLIC' && verifiedBirthDate !== null,
+    inquiry.lookupState === 'RESULT_NOT_PUBLIC' && verifiedBirthDate !== null,
   )
 
   if (inquiry.lookupState === 'RESULT_PUBLIC') return null
   if (inquiry.lookupState === 'NOT_FOUND') {
     return <div className="state-message">По этому стартовому номеру ничего не найдено.</div>
+  }
+
+  const availability = availabilityView(
+    inquiry.inquiryAvailability,
+    inquiry.deadline,
+    eventTimeZone,
+  )
+
+  if (!availability.canContact && (inquiry.lookupState === 'NEEDS_VERIFICATION'
+    || inquiry.lookupState === 'VERIFICATION_FAILED')) {
+    return <div className="state-message" role="status">
+      {availability.explanation ?? 'Приём обращений сейчас недоступен.'}
+    </div>
   }
 
   const submitVerification = async (event: FormEvent) => {
@@ -60,9 +72,15 @@ export function ResultInquiryPanel({
     setRetrying(false)
   }
 
-  if (publicResultsPresent && inquiry.lookupState === 'NEEDS_VERIFICATION' && !verificationStarted) {
-    return <section className="inquiry-followup-card" aria-label="Уточнение результата">
-      <p>Если вы не нашли свой результат, уточните данные.</p>
+  const retryBirthDateVerification = () => {
+    setBirthDate('')
+    setBirthDateError(null)
+    setRetrying(true)
+  }
+
+  if (inquiry.lookupState === 'NEEDS_VERIFICATION' && !verificationStarted) {
+    return <section className="inquiry-followup-card" aria-label="Результат не установлен">
+      <div><strong>Результат не установлен</strong><p>Мы нашли регистрацию с этим стартовым номером, но результат сейчас не отображается в публичном протоколе.</p></div>
       <button type="button" onClick={() => setVerificationStarted(true)}>Уточнить результат</button>
     </section>
   }
@@ -96,19 +114,22 @@ export function ResultInquiryPanel({
     return <section className="verification-card verification-failed" role="alert">
       <div>
         <h3>Не удалось подтвердить данные участника.</h3>
-        <p>Введённая дата рождения не совпадает с данными регистрации.</p>
-        <p>Если вы считаете, что дата рождения или другие регистрационные данные указаны неверно, обратитесь в службу поддержки организатора.</p>
+        <p>Дата рождения не совпала с данными регистрации. Проверьте введённую дату и попробуйте ещё раз.</p>
+        <ResultIssueSupportFallback
+          availability={inquiry.inquiryAvailability}
+          issueKind="MISSING_RESULT"
+          eventName={eventName}
+          startLabel={inquiryRaceLabel(inquiry)}
+          bib={inquiry.bib}
+          participantName={inquiry.participantDisplayName}
+          onRetryVerification={retryBirthDateVerification}
+        />
       </div>
-      <button type="button" onClick={() => setRetrying(true)}>Попробовать ещё раз</button>
     </section>
   }
 
-  const availability = availabilityView(
-    inquiry.inquiryAvailability,
-    inquiry.deadline,
-    eventTimeZone,
-  )
   const canContact = availability.canContact
+  const recoveryExplanation = 'Мы нашли регистрацию с этим стартовым номером, но результат сейчас не отображается в публичном протоколе.'
 
   return <>
     <section className="inquiry-result-row" aria-label="Результат не установлен">
@@ -117,7 +138,7 @@ export function ResultInquiryPanel({
       <div><span>Старт</span><strong>{inquiryRaceLabel(inquiry)}</strong></div>
       <div><span>Статус</span><strong className="inquiry-status">{availability.statusText}</strong></div>
       {(availability.explanation || availability.deadlineText || canContact) && <div className="inquiry-result-actions">
-        <span>{availability.explanation ?? availability.deadlineText}</span>
+        <span>{recoveryExplanation}{(availability.explanation ?? availability.deadlineText) ? ` ${availability.explanation ?? availability.deadlineText}` : ''}</span>
         {canContact && <button type="button" onClick={() => setDialogOpen(true)}>Уточнить результат</button>}
       </div>}
     </section>

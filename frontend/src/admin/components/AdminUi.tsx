@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { statusRussian } from '../utils'
 
 export function StatusBadge({ value }: { value: string }) {
-  const tone = ['PUBLISHED', 'RESOLVED', 'CLEAN', 'finished'].includes(value)
+  const tone = ['PUBLISHED', 'RESOLVED', 'CLEAN', 'finished', 'OPEN'].includes(value)
     ? 'success'
     : ['DRAFT', 'NEW', 'PENDING', 'PENDING_UPLOAD'].includes(value)
       ? 'neutral'

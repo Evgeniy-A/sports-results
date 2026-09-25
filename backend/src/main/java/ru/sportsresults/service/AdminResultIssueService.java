@@ -15,6 +15,7 @@ import ru.sportsresults.api.dto.AdminResultIssueResultDto;
 import ru.sportsresults.api.dto.AdminResultIssueStatusDto;
 import ru.sportsresults.api.dto.AdminResultIssueSnapshotDto;
 import ru.sportsresults.api.dto.CategoryDto;
+import ru.sportsresults.api.dto.GlobalResultIssueHistoryDto;
 import ru.sportsresults.api.dto.PageResponse;
 import ru.sportsresults.api.dto.RankingAchievementDto;
 import ru.sportsresults.api.dto.UpdateResultIssueStatusRequest;
@@ -26,6 +27,7 @@ import ru.sportsresults.domain.Registration;
 import ru.sportsresults.domain.Result;
 import ru.sportsresults.domain.ResultCorrectionReason;
 import ru.sportsresults.domain.ResultIssueAttachment;
+import ru.sportsresults.domain.ResultIssueHistory;
 import ru.sportsresults.domain.ResultIssueRequest;
 import ru.sportsresults.domain.ResultIssueQueueScope;
 import ru.sportsresults.domain.ResultIssueStatus;
@@ -33,6 +35,7 @@ import ru.sportsresults.domain.ResultIssueType;
 import ru.sportsresults.repository.AdminResultIssueListProjection;
 import ru.sportsresults.repository.EventRepository;
 import ru.sportsresults.repository.ResultIssueAttachmentRepository;
+import ru.sportsresults.repository.ResultIssueHistoryRepository;
 import ru.sportsresults.repository.ResultIssueRequestRepository;
 import ru.sportsresults.repository.ResultIssueRequestSearchCriteria;
 import ru.sportsresults.storage.attachments.PreparedObjectDownload;
@@ -52,6 +55,7 @@ public class AdminResultIssueService {
     private final EventRepository eventRepository;
     private final ResultIssueRequestRepository issueRepository;
     private final ResultIssueAttachmentRepository attachmentRepository;
+    private final ResultIssueHistoryRepository historyRepository;
     private final ResultIssueAttachmentService attachmentService;
     private final ResultIssueHistoryService historyService;
     private final ObjectMapper objectMapper;
@@ -61,6 +65,7 @@ public class AdminResultIssueService {
             EventRepository eventRepository,
             ResultIssueRequestRepository issueRepository,
             ResultIssueAttachmentRepository attachmentRepository,
+            ResultIssueHistoryRepository historyRepository,
             ResultIssueAttachmentService attachmentService,
             ResultIssueHistoryService historyService,
             ObjectMapper objectMapper,
@@ -69,6 +74,7 @@ public class AdminResultIssueService {
         this.eventRepository = eventRepository;
         this.issueRepository = issueRepository;
         this.attachmentRepository = attachmentRepository;
+        this.historyRepository = historyRepository;
         this.attachmentService = attachmentService;
         this.historyService = historyService;
         this.objectMapper = objectMapper;
@@ -121,7 +127,9 @@ public class AdminResultIssueService {
         ResultIssueRequest issue = requireIssue(eventId, issueId);
         List<ResultIssueAttachment> attachments =
                 attachmentRepository.findAllByIssueRequest_IdOrderByCreatedAtAscIdAsc(issueId);
-        return toDetail(issue, attachments);
+        List<ResultIssueHistory> history =
+                historyRepository.findAllByIssueRequest_IdOrderByCreatedAtAscIdAsc(issueId);
+        return toDetail(issue, attachments, history);
     }
 
     @Transactional
@@ -158,7 +166,7 @@ public class AdminResultIssueService {
         }
         ResultIssueRequest issue = requireIssue(eventId, issueId);
         historyService.statusChanged(
-                issue, request.expectedStatus(), request.status(), actor, now
+                issue, request.expectedStatus(), request.status(), actor, request.comment(), now
         );
         return statusDto(issue);
     }
@@ -187,7 +195,8 @@ public class AdminResultIssueService {
 
     private AdminResultIssueDetailDto toDetail(
             ResultIssueRequest issue,
-            List<ResultIssueAttachment> attachments
+            List<ResultIssueAttachment> attachments,
+            List<ResultIssueHistory> history
     ) {
         Registration registration = issue.getRegistration();
         Race race = registration.getRace();
@@ -270,7 +279,8 @@ public class AdminResultIssueService {
                         result.getNetCategoryPlace(),
                         List.of()
                 ),
-                attachments.stream().map(AdminResultIssueService::toAttachment).toList()
+                attachments.stream().map(AdminResultIssueService::toAttachment).toList(),
+                history.stream().map(AdminResultIssueService::toHistory).toList()
         );
     }
 
@@ -362,6 +372,18 @@ public class AdminResultIssueService {
                 attachment.getUploadedAt(),
                 attachment.getScannedAt(),
                 attachment.getDeletedAt()
+        );
+    }
+
+    private static GlobalResultIssueHistoryDto toHistory(ResultIssueHistory history) {
+        return new GlobalResultIssueHistoryDto(
+                history.getId(),
+                history.getAction(),
+                history.getFromStatus(),
+                history.getToStatus(),
+                history.getActor(),
+                history.getReason(),
+                history.getCreatedAt()
         );
     }
 
