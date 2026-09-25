@@ -116,7 +116,7 @@ public class FlexibleImportFileService {
         if (profile != null) configuredMappings.putAll(profile.mappings());
         if (inputConfig != null) configuredMappings.putAll(inputConfig.columnMappings());
         Map<String, CanonicalImportField> mappings = legacy
-                ? Map.of()
+                ? legacyMappings(headers)
                 : automaticMappings(headers, configuredMappings);
         List<ImportFileAnalysisDto.Diagnostic> diagnostics = new ArrayList<>();
         duplicateCanonicalMappings(mappings).forEach(field -> diagnostics.add(new ImportFileAnalysisDto.Diagnostic(
@@ -196,21 +196,21 @@ public class FlexibleImportFileService {
         TabularImportFile file = read(filename, contents);
         List<Race> races = races(eventId);
         validateTemplate(eventId, file, races);
-        if (isLegacyCsv(file) && effective.columnMappings().isEmpty()
-                && effective.targetRaceId() == null && effective.raceMappings().isEmpty()) {
+        Race target = effective.targetRaceId() == null
+                ? null : requireRace(eventId, effective.targetRaceId(), races);
+        validatePersistedRaceMappings(effective, races);
+        if (isLegacyCsv(file)) {
             try (InputStreamReader stream = new InputStreamReader(
                     new ByteArrayInputStream(contents), StandardCharsets.UTF_8
             )) {
-                return legacyParser.parse(stream);
+                return remapLegacyRaces(legacyParser.parse(stream), effective, target, races);
             } catch (Exception exception) {
                 if (exception instanceof TimingCsvFormatException format) throw format;
+                if (exception instanceof InvalidRequestException invalid) throw invalid;
                 throw new TimingCsvFormatException("CSV could not be read");
             }
         }
 
-        Race target = effective.targetRaceId() == null
-                ? null : requireRace(eventId, effective.targetRaceId(), races);
-        validatePersistedRaceMappings(effective, races);
         LinkedHashSet<String> headers = file.sheets().stream()
                 .flatMap(sheet -> sheet.headers().stream())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
@@ -355,6 +355,65 @@ public class FlexibleImportFileService {
         return result;
     }
 
+    private static Map<String, CanonicalImportField> legacyMappings(Set<String> headers) {
+        Map<String, CanonicalImportField> result = automaticMappings(headers, Map.of());
+        if (headers.contains(TimingCsvParser.NAME)) {
+            result.put(TimingCsvParser.NAME, CanonicalImportField.FIRST_NAME);
+        }
+        if (headers.contains(TimingCsvParser.SURNAME)) {
+            result.put(TimingCsvParser.SURNAME, CanonicalImportField.LAST_NAME);
+        }
+        List<String> clusterHeaders = List.of(
+                TimingCsvParser.CLUSTER_SOURCE_NAME,
+                TimingCsvParser.CLUSTER_NAME,
+                TimingCsvParser.CLUSTER_CODE
+        ).stream().filter(headers::contains).toList();
+        clusterHeaders.forEach(result::remove);
+        if (!clusterHeaders.isEmpty()) {
+            result.put(clusterHeaders.getFirst(), CanonicalImportField.CLUSTER);
+        }
+        return result;
+    }
+
+    private static TimingCsvParseResult remapLegacyRaces(
+            TimingCsvParseResult parsed,
+            ImportInputConfig config,
+            Race target,
+            List<Race> races
+    ) {
+        Map<Long, Race> racesById = races.stream().collect(Collectors.toMap(Race::getId, race -> race));
+        Map<String, Race> explicit = new LinkedHashMap<>();
+        config.raceMappings().forEach((source, raceId) -> {
+            Race race = racesById.get(raceId);
+            if (source == null || source.isBlank() || race == null) {
+                throw new InvalidRequestException(
+                        "INVALID_RACE_MAPPING", "Every Race mapping must be non-empty and belong to the Event"
+                );
+            }
+            explicit.put(normalizeRaceValue(source), race);
+        });
+        List<TimingResultImportRow> rows = parsed.rows().stream().map(row -> {
+            Race race = target;
+            if (race == null && row.raceCode() != null) {
+                race = explicit.get(normalizeRaceValue(row.raceCode()));
+                if (race == null) race = exactRace(row.raceCode(), races);
+            }
+            return race == null ? row : withRaceCode(row, race.getSourceCode());
+        }).toList();
+        return new TimingCsvParseResult(parsed.totalRows(), rows, parsed.errors());
+    }
+
+    private static TimingResultImportRow withRaceCode(TimingResultImportRow row, String raceCode) {
+        return new TimingResultImportRow(
+                row.sourceRowNumber(), row.sourceRowHash(), row.firstNameSource(), row.lastNameSource(),
+                row.genderSource(), row.birthDateSource(), raceCode, row.bib(), row.categorySource(),
+                row.clusterCodeSource(), row.clusterNameSource(), row.clusterSourceNameSource(), row.status(),
+                row.entryKind(), row.gunTimeSource(), row.chipTimeSource(), row.overallPlaceSource(),
+                row.genderPlaceSource(), row.categoryPlaceSource(), row.netOverallPlaceSource(),
+                row.netGenderPlaceSource(), row.netCategoryPlaceSource()
+        );
+    }
+
     private static Set<CanonicalImportField> duplicateCanonicalMappings(Map<String, CanonicalImportField> mappings) {
         Map<CanonicalImportField, Long> counts = mappings.values().stream()
                 .collect(Collectors.groupingBy(field -> field, () -> new EnumMap<>(CanonicalImportField.class), Collectors.counting()));
@@ -403,12 +462,20 @@ public class FlexibleImportFileService {
     }
 
     private static Race exactRace(String source, List<Race> races) {
-        String normalized = normalizeValue(source);
+        String normalized = normalizeRaceValue(source);
         List<Race> matches = races.stream().filter(race ->
-                normalizeValue(race.getSourceCode()).equals(normalized)
-                        || normalizeValue(race.getName()).equals(normalized)
+                normalizeRaceValue(race.getSourceCode()).equals(normalized)
+                        || normalizeRaceValue(race.getName()).equals(normalized)
         ).distinct().toList();
         return matches.size() == 1 ? matches.getFirst() : null;
+    }
+
+    private static String normalizeRaceValue(String value) {
+        return normalizeValue(value)
+                .replace(',', ' ')
+                .replace("км", "km")
+                .replaceAll("\\s+", " ")
+                .strip();
     }
 
     private static String headerFor(Map<String, CanonicalImportField> mappings, CanonicalImportField field) {

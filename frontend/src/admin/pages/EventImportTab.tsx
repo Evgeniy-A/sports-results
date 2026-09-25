@@ -12,12 +12,14 @@ import type {
 } from '../types'
 import { adminErrorMessage } from '../utils'
 import { AdminNotice, ConfirmDialog, Field, StatusBadge } from '../components/AdminUi'
+import { calculateImportReadiness } from '../importReadiness'
 
 const MODES: Array<{ value: ImportMode; label: string; description: string }> = [
   { value: 'ADD_NEW', label: 'Добавить новые', description: 'Создаёт только новых участников и результаты. Существующие строки не изменяются.' },
   { value: 'UPDATE_EXISTING', label: 'Обновить существующие', description: 'Изменяет только найденных текущих участников и результаты. Новые строки не добавляются.' },
   { value: 'EMERGENCY_REPLACE', label: 'Экстренно заменить данные', description: 'Логически заменяет текущий набор выбранных стартов, сохраняя старые данные в истории.' },
 ]
+const EMPTY_RACE_IDS: number[] = []
 
 type SourceKind = 'TEMPLATE' | 'EXTERNAL'
 type ExternalScope = 'SINGLE' | 'MULTI'
@@ -43,35 +45,16 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
   const [confirmation, setConfirmation] = useState('')
   const [previewUpdatedAt, setPreviewUpdatedAt] = useState<Date | null>(null)
 
-  const fieldLabels = useMemo(() => Object.fromEntries(
-    (analysis?.canonicalFields ?? []).map((field) => [field.field, field.displayName]),
-  ) as Partial<Record<CanonicalImportField, string>>, [analysis])
-  const mappingProblems = useMemo(() => {
-    if (!analysis || analysis.legacyCsv || analysis.sportsResultsTemplate) return []
-    const problems: string[] = []
-    const values = Object.values(columnMappings)
-    const duplicate = values.find((field, index) => values.indexOf(field) !== index)
-    if (duplicate) problems.push(`Поле «${fieldLabels[duplicate] ?? duplicate}» выбрано для нескольких колонок.`)
-    for (const required of analysis.canonicalFields.filter((field) => field.required)) {
-      if (!values.includes(required.field)) problems.push(`Не удалось определить обязательное поле: ${required.displayName}.`)
-    }
-    if (sourceKind === 'EXTERNAL' && externalScope === 'MULTI') {
-      if (!values.includes('RACE')) problems.push('Сопоставьте колонку, которая определяет Старт.')
-      const unresolved = analysis.raceValues.filter((value) => !raceMappings[value.sourceValue])
-      if (unresolved.length === 1) {
-        problems.push(`Остался несопоставленный старт: ${unresolved[0].sourceValue}.`)
-      } else if (unresolved.length > 1) {
-        problems.push(`Сопоставьте все ${analysis.raceValues.length} старта из файла, чтобы продолжить.`)
-      }
-    }
-    return problems
-  }, [analysis, columnMappings, externalScope, fieldLabels, raceMappings, sourceKind])
-  const scopeRaceIds = useMemo(() => {
-    if (!analysis) return []
-    if (analysis.sportsResultsTemplate || analysis.legacyCsv) return analysis.resolvedRaceIds
-    if (externalScope === 'SINGLE') return targetRaceId === null ? [] : [targetRaceId]
-    return [...new Set(Object.values(raceMappings))].sort((left, right) => left - right)
-  }, [analysis, externalScope, raceMappings, targetRaceId])
+  const readiness = useMemo(() => analysis === null ? null : calculateImportReadiness({
+    analysis,
+    sourceKind,
+    externalScope,
+    targetRaceId,
+    columnMappings,
+    raceMappings,
+  }), [analysis, columnMappings, externalScope, raceMappings, sourceKind, targetRaceId])
+  const mappingProblems = readiness?.problems ?? []
+  const scopeRaceIds = readiness?.scopeRaceIds ?? EMPTY_RACE_IDS
   const selectedRaces = useMemo(
     () => races.filter((race) => scopeRaceIds.includes(race.id)),
     [races, scopeRaceIds],
@@ -91,7 +74,7 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
     && actionableCount === 0
 
   const options = (): ImportInputOptions | undefined => {
-    if (!analysis || analysis.legacyCsv) return undefined
+    if (!analysis || analysis.sportsResultsTemplate) return undefined
     return {
       targetRaceId: sourceKind === 'EXTERNAL' && externalScope === 'SINGLE' ? targetRaceId : null,
       columnMappings,
@@ -154,7 +137,7 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
   }
 
   const runPreview = async () => {
-    if (!file || !analysis || mappingProblems.length || !scopeRaceIds.length) return
+    if (!file || !analysis || !readiness?.canValidate) return
     setBusy('preview'); setError(null); setSuccess(null); setApplied(null)
     try {
       if (saveProfile && !analysis.sportsResultsTemplate && !analysis.legacyCsv) {
@@ -213,12 +196,20 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
     {analysis && <ImportMapping
       analysis={analysis} races={races} sourceKind={sourceKind} externalScope={externalScope}
       mappings={columnMappings} raceMappings={raceMappings} mappingProblems={mappingProblems}
+      canValidate={readiness?.canValidate ?? false}
+      mappedRaceCount={readiness?.mappedRaceCount ?? 0}
+      importedFieldCount={readiness?.importedFieldCount ?? 0}
       saveProfile={saveProfile} profileName={profileName}
       saveRaceMappings={saveRaceMappings} busy={busy}
       onMapping={(header, field) => setColumnMappings((current) => {
         const next = { ...current }; if (field) next[header] = field; else delete next[header]; return next
       })}
-      onRaceMapping={(source, raceId) => setRaceMappings((current) => ({ ...current, [source]: raceId }))}
+      onRaceMapping={(source, raceId) => setRaceMappings((current) => {
+        const next = { ...current }
+        if (raceId === null) delete next[source]
+        else next[source] = raceId
+        return next
+      })}
       onSaveProfile={setSaveProfile} onProfileName={setProfileName}
       onSaveRaceMappings={setSaveRaceMappings} onRefresh={() => void analyze(true)}
       onValidate={() => void runPreview()}
@@ -247,7 +238,7 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
   </div>
 }
 
-function ImportMapping({ analysis, races, sourceKind, externalScope, mappings, raceMappings, mappingProblems, saveProfile, profileName, saveRaceMappings, busy, onMapping, onRaceMapping, onSaveProfile, onProfileName, onSaveRaceMappings, onRefresh, onValidate }: {
+function ImportMapping({ analysis, races, sourceKind, externalScope, mappings, raceMappings, mappingProblems, canValidate, mappedRaceCount, importedFieldCount, saveProfile, profileName, saveRaceMappings, busy, onMapping, onRaceMapping, onSaveProfile, onProfileName, onSaveRaceMappings, onRefresh, onValidate }: {
   analysis: ImportFileAnalysis
   races: Race[]
   sourceKind: SourceKind
@@ -255,12 +246,15 @@ function ImportMapping({ analysis, races, sourceKind, externalScope, mappings, r
   mappings: Record<string, CanonicalImportField>
   raceMappings: Record<string, number>
   mappingProblems: string[]
+  canValidate: boolean
+  mappedRaceCount: number
+  importedFieldCount: number
   saveProfile: boolean
   profileName: string
   saveRaceMappings: boolean
   busy: string | null
   onMapping: (header: string, field: CanonicalImportField | null) => void
-  onRaceMapping: (source: string, raceId: number) => void
+  onRaceMapping: (source: string, raceId: number | null) => void
   onSaveProfile: (value: boolean) => void
   onProfileName: (value: string) => void
   onSaveRaceMappings: (value: boolean) => void
@@ -269,8 +263,8 @@ function ImportMapping({ analysis, races, sourceKind, externalScope, mappings, r
 }) {
   const needsColumnMapping = !analysis.sportsResultsTemplate && !analysis.legacyCsv
   const raceFieldMapped = Object.values(mappings).includes('RACE')
-  return <section className="admin-card"><div className="admin-card-heading"><div><h3>3. Сопоставление</h3><p>{analysis.sportsResultsTemplate ? `Шаблон Sports Results v${analysis.templateFormatVersion}: Event и Старты определены автоматически.` : analysis.legacyCsv ? 'Распознан совместимый CSV Sports Results.' : `Распознан внешний ${analysis.fileType}. Неизвестные лишние колонки не импортируются.`}</p></div><StatusBadge value={analysis.readyForValidation ? 'READY' : 'CHECK'} /></div>
-    <div className="admin-stat-grid"><Stat label="Листов" value={analysis.sheets.length} /><Stat label="Строк" value={analysis.sheets.reduce((sum, sheet) => sum + sheet.rowCount, 0)} /><Stat label="Колонок" value={analysis.columns.length} /><Stat label="Сопоставлено стартов" value={analysis.raceValues.length ? `${Object.keys(raceMappings).length} из ${analysis.raceValues.length}` : analysis.resolvedRaceIds.length} /></div>
+  return <section className="admin-card"><div className="admin-card-heading"><div><h3>3. Сопоставление</h3><p>{analysis.sportsResultsTemplate ? `Шаблон Sports Results v${analysis.templateFormatVersion}: Event и Старты определены автоматически.` : analysis.legacyCsv ? 'Распознан совместимый CSV Sports Results.' : `Распознан внешний ${analysis.fileType}. Неизвестные лишние колонки не импортируются.`}</p></div><StatusBadge value={canValidate ? 'READY' : 'CHECK'} /></div>
+    <div className="admin-stat-grid"><Stat label="Листов" value={analysis.sheets.length} /><Stat label="Строк" value={analysis.sheets.reduce((sum, sheet) => sum + sheet.rowCount, 0)} /><Stat label="Колонок" value={analysis.columns.length} /><Stat label="Сопоставлено стартов" value={analysis.raceValues.length ? `${mappedRaceCount} из ${analysis.raceValues.length}` : analysis.resolvedRaceIds.length} /></div>
     {analysis.sheets.length > 1 && <p className="admin-muted">{analysis.sheets.map((sheet) => `${sheet.name}: ${sheet.rowCount}`).join(' · ')}</p>}
     {analysis.suggestedProfile && <AdminNotice tone="success">Применён профиль «{analysis.suggestedProfile.name}» по точной сигнатуре заголовков.</AdminNotice>}
     {needsColumnMapping && <><h4>Сопоставление колонок</h4><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Колонка файла</th><th>Поле Sports Results</th></tr></thead><tbody>{analysis.columns.map((column) => <tr key={column.header}><td><strong>{column.header}</strong>{column.automatic && <small className="admin-mapping-note"> распознано</small>}</td><td><select aria-label={`Сопоставление ${column.header}`} value={mappings[column.header] ?? ''} onChange={(change) => onMapping(column.header, change.target.value ? change.target.value as CanonicalImportField : null)}><option value="">Не импортировать</option>{analysis.canonicalFields.map((field) => <option key={field.field} value={field.field}>{field.displayName}{field.required ? ' — обязательно' : ''}</option>)}</select></td></tr>)}</tbody></table></div>
@@ -278,9 +272,9 @@ function ImportMapping({ analysis, races, sourceKind, externalScope, mappings, r
       <p className="admin-muted">Система запомнит, как читать файлы с таким набором колонок.</p>
       {saveProfile && <Field label="Название формата файла" hint="Например: MyLaps, ChronoTrack или формат подрядчика Казань"><input maxLength={160} value={profileName} onChange={(change) => onProfileName(change.target.value)} /></Field>}
     </>}
-    {sourceKind === 'EXTERNAL' && externalScope === 'MULTI' && raceFieldMapped && <><div className="admin-form-actions"><button className="admin-button-secondary" type="button" disabled={busy !== null} onClick={onRefresh}>{busy === 'analyze' ? 'Читаем значения…' : 'Найти старты в файле'}</button></div>{analysis.raceValues.length > 0 && <><h4>Сопоставление стартов</h4><p className="admin-muted">Сопоставлено стартов: {Object.keys(raceMappings).length} из {analysis.raceValues.length}</p><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>В файле</th><th>Старт мероприятия</th></tr></thead><tbody>{analysis.raceValues.map((value) => <tr key={value.sourceValue}><td><strong>{value.sourceValue}</strong>{value.automatic && <small className="admin-mapping-note"> распознано</small>}</td><td><select value={raceMappings[value.sourceValue] ?? ''} onChange={(change) => onRaceMapping(value.sourceValue, Number(change.target.value))}><option value="">Выберите Старт</option>{races.map((race) => <option key={race.id} value={race.id}>{race.name}</option>)}</select></td></tr>)}</tbody></table></div><label className="admin-check"><input type="checkbox" checked={saveRaceMappings} onChange={(change) => onSaveRaceMappings(change.target.checked)} /><span>Запомнить сопоставление стартов для следующих импортов</span></label><p className="admin-muted">При следующей загрузке система попробует сопоставить эти обозначения автоматически.</p></>}</>}
+    {sourceKind === 'EXTERNAL' && externalScope === 'MULTI' && raceFieldMapped && <><div className="admin-form-actions"><button className="admin-button-secondary" type="button" disabled={busy !== null} onClick={onRefresh}>{busy === 'analyze' ? 'Читаем значения…' : 'Найти старты в файле'}</button></div>{analysis.raceValues.length > 0 && <><h4>Сопоставление стартов</h4><p className="admin-muted">Сопоставьте найденные в файле дистанции со стартами мероприятия.</p><p className="admin-muted">Сопоставлено стартов: {mappedRaceCount} из {analysis.raceValues.length}</p><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>В файле</th><th>Старт мероприятия</th></tr></thead><tbody>{analysis.raceValues.map((value) => <tr key={value.sourceValue}><td><strong>{value.sourceValue}</strong>{value.automatic && <small className="admin-mapping-note"> распознано</small>}</td><td><select aria-label={`Старт для ${value.sourceValue}`} value={raceMappings[value.sourceValue] ?? ''} onChange={(change) => onRaceMapping(value.sourceValue, change.target.value ? Number(change.target.value) : null)}><option value="">Выберите Старт</option>{races.map((race) => <option key={race.id} value={race.id}>{race.name}</option>)}</select></td></tr>)}</tbody></table></div><label className="admin-check"><input type="checkbox" checked={saveRaceMappings} onChange={(change) => onSaveRaceMappings(change.target.checked)} /><span>Запомнить сопоставление стартов для следующих импортов</span></label><p className="admin-muted">При следующей загрузке система попробует сопоставить эти обозначения автоматически.</p></>}</>}
     {mappingProblems.length > 0 && <AdminNotice tone="danger"><ul>{mappingProblems.map((problem) => <li key={problem}>{problem}</li>)}</ul></AdminNotice>}
-    <div className="admin-form-actions"><button className="admin-button-primary" type="button" disabled={mappingProblems.length > 0 || busy !== null || (saveProfile && !profileName.trim())} onClick={onValidate}>{busy === 'preview' ? 'Проверяем…' : 'Проверить данные'}</button><span>{Object.values(mappings).length} полей будет импортировано</span></div>
+    <div className="admin-form-actions"><button className="admin-button-primary" type="button" disabled={!canValidate || busy !== null || (saveProfile && !profileName.trim())} onClick={onValidate}>{busy === 'preview' ? 'Проверяем…' : 'Проверить данные'}</button><span>{importedFieldCount} полей будет импортировано</span></div>
   </section>
 }
 

@@ -19,6 +19,8 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
@@ -143,6 +145,82 @@ class FlexibleImportFileServiceTest {
         assertThat(multiAnalysis.raceValues()).extracting(ImportFileAnalysisDto.RaceValue::raceId)
                 .containsExactly(11L, 12L);
         assertThat(multiAnalysis.readyForValidation()).isTrue();
+    }
+
+    @Test
+    void compatibleSportsResultsCsvExposesColumnsAndMatchesEquivalentDistanceLabels() throws Exception {
+        Fixture fixture = fixture();
+        fixture.races().get(0).setSourceCode("M52-10");
+        fixture.races().get(0).setName("10 км");
+        fixture.races().get(1).setSourceCode("M52-42");
+        fixture.races().get(1).setName("42,2 км");
+        byte[] csv = Files.readAllBytes(Path.of("..", "samples", "results_m52_2025.csv"));
+
+        ImportFileAnalysisDto analysis = fixture.flexibleService().analyze(7L, "results_m52_2025.csv", csv, null);
+
+        assertThat(analysis.legacyCsv()).isTrue();
+        assertThat(analysis.columnMappings())
+                .containsEntry("name", CanonicalImportField.FIRST_NAME)
+                .containsEntry("surname", CanonicalImportField.LAST_NAME)
+                .containsEntry("event", CanonicalImportField.RACE)
+                .containsEntry("dorsal", CanonicalImportField.BIB)
+                .containsEntry("status", CanonicalImportField.STATUS);
+        assertThat(analysis.raceValues())
+                .extracting(ImportFileAnalysisDto.RaceValue::sourceValue)
+                .containsExactly("10 km", "42.2 km");
+        assertThat(analysis.raceValues())
+                .extracting(ImportFileAnalysisDto.RaceValue::raceId)
+                .containsExactly(11L, 12L);
+        assertThat(analysis.resolvedRaceIds()).containsExactly(11L, 12L);
+        assertThat(analysis.readyForValidation()).isTrue();
+
+        Map<String, Long> raceMappings = analysis.raceValues().stream().collect(java.util.stream.Collectors.toMap(
+                ImportFileAnalysisDto.RaceValue::sourceValue,
+                ImportFileAnalysisDto.RaceValue::raceId,
+                (left, right) -> left,
+                java.util.LinkedHashMap::new
+        ));
+        TimingCsvParseResult parsed = fixture.flexibleService().parse(
+                7L,
+                "results_m52_2025.csv",
+                csv,
+                new ImportInputConfig(null, analysis.columnMappings(), raceMappings, false)
+        );
+        assertThat(parsed.errors()).isEmpty();
+        assertThat(parsed.rows()).isNotEmpty();
+        assertThat(parsed.rows()).extracting(TimingResultImportRow::raceCode)
+                .containsOnly("M52-10", "M52-42");
+    }
+
+    @Test
+    void ambiguousLegacyRaceRequiresAndAcceptsExplicitMapping() {
+        Fixture fixture = fixture();
+        fixture.races().get(0).setSourceCode("RACE-A");
+        fixture.races().get(0).setName("10 км");
+        fixture.races().get(1).setSourceCode("10 km");
+        fixture.races().get(1).setName("Другой старт");
+        byte[] csv = "event,dorsal,status,name\n10 km,SYN-1,finished,Участник\n"
+                .getBytes(StandardCharsets.UTF_8);
+
+        ImportFileAnalysisDto analysis = fixture.flexibleService().analyze(7L, "ambiguous.csv", csv, null);
+
+        assertThat(analysis.raceValues()).singleElement().satisfies(value -> {
+            assertThat(value.sourceValue()).isEqualTo("10 km");
+            assertThat(value.raceId()).isNull();
+            assertThat(value.automatic()).isFalse();
+        });
+        assertThat(analysis.readyForValidation()).isFalse();
+
+        TimingCsvParseResult parsed = fixture.flexibleService().parse(
+                7L,
+                "ambiguous.csv",
+                csv,
+                new ImportInputConfig(null, analysis.columnMappings(), Map.of("10 km", 11L), false)
+        );
+        assertThat(parsed.errors()).isEmpty();
+        assertThat(parsed.rows()).singleElement()
+                .extracting(TimingResultImportRow::raceCode)
+                .isEqualTo("RACE-A");
     }
 
     @Test
