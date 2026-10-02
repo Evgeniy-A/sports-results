@@ -106,6 +106,10 @@ public class AdminResultService {
                             request.categoryId(), registration.getRace().getId())
                     .orElseThrow(() -> new InvalidRequestException(
                             "CATEGORY_RACE_MISMATCH", "category must belong to the registration race"));
+            if (!category.isEnabled() && !Objects.equals(oldCategoryId, category.getId())) {
+                throw new InvalidRequestException(
+                        "CATEGORY_DISABLED", "disabled category cannot be assigned to a current registration");
+            }
             registration.setCategory(category);
         }
         Long newCategoryId = registration.getCategory() == null ? null : registration.getCategory().getId();

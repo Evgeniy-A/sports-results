@@ -53,7 +53,7 @@ export function EventResults({ event }: { event: EventDetails }) {
   const races = useMemo(() => publicResultRaces(event.races), [event.races])
   const selectedRace = useMemo(() => races.find((race) => String(race.id) === raceId), [races, raceId])
   const categories = selectedRace?.rules?.categoryEnabled
-    ? selectedRace.rules.categories.map((category) => ({ id: category.id, name: category.name }))
+    ? selectedRace.rules.availableCategories.map((category) => ({ id: category.id, name: category.name }))
     : []
   const showCategoryColumn = selectedRace?.rules?.categoryEnabled ?? false
   const rankingBasis = selectedRace?.rules?.rankingBasis ?? protocol.content[0]?.rankingBasis

@@ -84,6 +84,7 @@ export interface RaceRules {
   excludeAbsoluteWinnersFromCategory: boolean | null
   ageCalculationMode: 'EVENT_DATE' | 'END_OF_EVENT_YEAR' | null
   categories: CategoryRule[]
+  availableCategories: CategoryRule[]
 }
 
 export interface PublicRace {

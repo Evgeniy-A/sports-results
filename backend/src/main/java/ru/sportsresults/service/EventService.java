@@ -293,8 +293,10 @@ public class EventService {
         if (!categoryStandingEnabled) {
             return List.of();
         }
-        return categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(raceId).stream()
-                .filter(ru.sportsresults.domain.Category::isEnabled)
+        return categoryRepository.findPublicFilterOptionsByEventId(
+                        eventId, PublicResultVisibility.publicStatuses()
+                ).stream()
+                .filter(category -> category.getRace().getId().equals(raceId))
                 .map(category -> new CategoryOptionDto(
                         category.getId(), raceId, race.getName(), categoryPresentation.publicName(category)
                 ))

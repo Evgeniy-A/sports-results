@@ -83,6 +83,28 @@ class AgeCategoryResolverTest {
     }
 
     @Test
+    void neverAssignsDisabledCategoryForAdultMinorOrNoBirthDate() {
+        Category disabledAdult = category("30-39 Male", 30, 39, CategoryGender.MALE);
+        disabledAdult.setEnabled(false);
+        Category disabledMinor = category("CHILD_17", null, null, null);
+        disabledMinor.setEnabled(false);
+
+        assertThat(resolver.resolve(
+                LocalDate.of(1990, 1, 1), "male", "30-39 Male", EVENT_DATE, "UTC",
+                AgeCalculationMode.EVENT_DATE, List.of(disabledAdult)
+        )).isNull();
+        assertThat(resolver.resolve(
+                null, "male", "30-39 Male", EVENT_DATE, "UTC",
+                AgeCalculationMode.EVENT_DATE, List.of(disabledAdult)
+        )).isNull();
+        assertThatThrownBy(() -> resolver.resolve(
+                LocalDate.of(2015, 1, 1), "male", "CHILD_17", EVENT_DATE, "UTC",
+                AgeCalculationMode.END_OF_EVENT_YEAR, List.of(disabledMinor)
+        )).isInstanceOfSatisfying(InvalidRequestException.class,
+                exception -> assertThat(exception.getCode()).isEqualTo("MINOR_SOURCE_CATEGORY_NOT_CONFIGURED"));
+    }
+
+    @Test
     void birthDateWinsOverConflictingSourceAndDoesNotBypassConfiguredGap() {
         Category source = category("30-39 Male", 30, 39, CategoryGender.MALE);
         Category ageFortyToFortyNine = category("40-49 Male", 40, 49, CategoryGender.MALE);

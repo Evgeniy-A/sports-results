@@ -25,14 +25,21 @@ export function CategorySettings({ categories, disabled = false, onCreate, onUpd
   onReload: () => Promise<void>
 }) {
   const [editor, setEditor] = useState<CategoryItem | 'new' | null>(null)
-  const [deleting, setDeleting] = useState<CategoryItem | null>(null)
+  const [actionTarget, setActionTarget] = useState<{ category: CategoryItem; action: 'disable' | 'delete' } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const remove = async () => {
-    if (!deleting) return
+  const applyAction = async () => {
+    if (!actionTarget) return
     setBusy(true); setError(null)
-    try { await onDelete(deleting.id); setDeleting(null); await onReload() }
+    try {
+      if (actionTarget.action === 'disable') {
+        await onUpdate(actionTarget.category.id, command(actionTarget.category, false))
+      } else {
+        await onDelete(actionTarget.category.id)
+      }
+      setActionTarget(null); await onReload()
+    }
     catch (reason) { setError(adminErrorMessage(reason)) }
     finally { setBusy(false) }
   }
@@ -41,16 +48,34 @@ export function CategorySettings({ categories, disabled = false, onCreate, onUpd
     <div className="admin-card-heading"><div><h4>Возрастные категории</h4><p>Категории принадлежат только этому старту.</p></div><button className="admin-button-secondary" type="button" disabled={disabled || busy} onClick={() => setEditor('new')}>+ Добавить категорию</button></div>
     {error && <AdminNotice tone="danger">{error}</AdminNotice>}
     {categories.length ? <div className="admin-category-list">{categories.map((category) => <article key={category.id}>
-      <div><strong>{category.displayName}</strong><p>{ageRange(category)} · {genderLabel(category.gender)} · название в файле: {category.sourceName}</p></div>
-      <div className="admin-row-actions"><button className="admin-link-button" type="button" disabled={disabled || busy} onClick={() => setEditor(category)}>Изменить</button><button className="admin-link-button danger" type="button" disabled={disabled || busy} onClick={() => setDeleting(category)}>Удалить</button></div>
+      <div><strong>{category.displayName}</strong><p>{category.enabled ? 'Активна' : 'Отключена'} · {ageRange(category)} · {genderLabel(category.gender)} · название в файле: {category.sourceName}</p></div>
+      <div className="admin-row-actions"><button className="admin-link-button" type="button" disabled={disabled || busy} onClick={() => setEditor(category)}>Изменить</button>{inUse(category)
+        ? category.enabled && <button className="admin-link-button danger" type="button" disabled={disabled || busy} onClick={() => setActionTarget({ category, action: 'disable' })}>Отключить</button>
+        : <button className="admin-link-button danger" type="button" disabled={disabled || busy} onClick={() => setActionTarget({ category, action: 'delete' })}>Удалить</button>}</div>
     </article>)}</div> : <div className="admin-empty compact">Возрастные категории пока не настроены.</div>}
     {editor && <CategoryDrawer value={editor === 'new' ? null : editor} onClose={() => setEditor(null)} onSave={async (body) => {
       if (editor === 'new') await onCreate(body)
       else await onUpdate(editor.id, body)
       setEditor(null); await onReload()
     }} />}
-    {deleting && <ConfirmDialog title={`Удалить категорию «${deleting.displayName}»?`} description="Шаблонные категории не изменяют уже созданные мероприятия. Категорию конкретного старта нельзя удалить, если она используется участниками." confirmLabel="Удалить" danger busy={busy} onConfirm={() => void remove()} onClose={() => setDeleting(null)} />}
+    {actionTarget && <ConfirmDialog title={actionTarget.action === 'disable' ? `Отключить категорию «${actionTarget.category.displayName}»?` : `Удалить категорию «${actionTarget.category.displayName}»?`} description={actionTarget.action === 'disable' ? 'Категория перестанет участвовать в текущем пересчёте. Старая категория и её исторические связи сохранятся.' : 'Неиспользуемая категория будет удалена без изменения участников.'} confirmLabel={actionTarget.action === 'disable' ? 'Отключить' : 'Удалить'} danger busy={busy} onConfirm={() => void applyAction()} onClose={() => setActionTarget(null)} />}
   </section>
+}
+
+function inUse(category: CategoryItem): category is AdminCategory {
+  return 'inUse' in category && category.inUse
+}
+
+function command(category: CategoryItem, enabled: boolean): CategoryCommand {
+  return {
+    sourceName: category.sourceName,
+    displayName: category.displayName,
+    minAge: category.minAge,
+    maxAge: category.maxAge,
+    gender: category.gender,
+    displayOrder: category.displayOrder,
+    enabled,
+  }
 }
 
 function CategoryDrawer({ value, onClose, onSave }: {

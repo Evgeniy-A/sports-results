@@ -11,6 +11,7 @@ public record AdminCategoryDto(
         Integer maxAge,
         CategoryGender gender,
         int displayOrder,
-        boolean enabled
+        boolean enabled,
+        boolean inUse
 ) {
 }

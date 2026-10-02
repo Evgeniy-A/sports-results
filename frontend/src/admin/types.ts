@@ -88,6 +88,7 @@ export interface AdminCategory {
   gender: 'MALE' | 'FEMALE' | null
   displayOrder: number
   enabled: boolean
+  inUse: boolean
 }
 
 export interface StartCluster {

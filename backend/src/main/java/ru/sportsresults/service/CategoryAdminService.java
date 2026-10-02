@@ -50,7 +50,7 @@ public class CategoryAdminService {
     public List<AdminCategoryDto> list(Long raceId) {
         requireRace(raceId);
         return categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(raceId).stream()
-                .map(CategoryAdminService::toDto)
+                .map(this::toDto)
                 .toList();
     }
 
@@ -225,7 +225,7 @@ public class CategoryAdminService {
         );
     }
 
-    public static AdminCategoryDto toDto(Category category) {
+    private AdminCategoryDto toDto(Category category) {
         return new AdminCategoryDto(
                 category.getId(),
                 category.getRace().getId(),
@@ -235,7 +235,8 @@ public class CategoryAdminService {
                 category.getMaxAge(),
                 category.getGender(),
                 category.getDisplayOrder(),
-                category.isEnabled()
+                category.isEnabled(),
+                registrationRepository.existsByCategoryId(category.getId())
         );
     }
 }

@@ -14,9 +14,11 @@ public record RaceRulesSummaryDto(
         Integer categoryPrizePlaces,
         Boolean excludeAbsoluteWinnersFromCategory,
         AgeCalculationMode ageCalculationMode,
-        List<CategoryRuleDto> categories
+        List<CategoryRuleDto> categories,
+        List<CategoryRuleDto> availableCategories
 ) {
     public RaceRulesSummaryDto {
         categories = List.copyOf(categories);
+        availableCategories = List.copyOf(availableCategories);
     }
 }

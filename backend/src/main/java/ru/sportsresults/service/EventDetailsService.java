@@ -68,6 +68,9 @@ public class EventDetailsService {
         Map<Long, List<Category>> categories = categoryRepository.findAllByRaceEventId(eventId).stream()
                 .filter(Category::isEnabled)
                 .collect(Collectors.groupingBy(category -> category.getRace().getId()));
+        Map<Long, List<Category>> availableCategories = categoryRepository
+                .findPublicFilterOptionsByEventId(eventId, PublicResultVisibility.publicStatuses()).stream()
+                .collect(Collectors.groupingBy(category -> category.getRace().getId()));
         Map<Long, List<StartCluster>> clusters = clusterRepository
                 .findAllByRaceEventIdOrderByRaceDisplayOrderAscDisplayOrderAscIdAsc(eventId).stream()
                 .collect(Collectors.groupingBy(cluster -> cluster.getRace().getId()));
@@ -78,7 +81,11 @@ public class EventDetailsService {
                     AwardPolicy policy = policies.get(race.getId());
                     RaceRulesSummaryDto rules = policy == null
                             ? null
-                            : rules(policy, categories.getOrDefault(race.getId(), List.of()));
+                            : rules(
+                                    policy,
+                                    categories.getOrDefault(race.getId(), List.of()),
+                                    availableCategories.getOrDefault(race.getId(), List.of())
+                            );
                     return new PublicRaceDto(
                             race.getId(), race.getName(), race.getSlug(), race.getDistanceMeters(),
                             race.getStartsAt(), race.getDisplayOrder(), true,
@@ -108,18 +115,29 @@ public class EventDetailsService {
                 flatRaces);
     }
 
-    private static RaceRulesSummaryDto rules(AwardPolicy policy, List<Category> categories) {
+    private static RaceRulesSummaryDto rules(
+            AwardPolicy policy,
+            List<Category> categories,
+            List<Category> availableCategories
+    ) {
         boolean enabled = policy.isCategoryEnabled();
-        List<CategoryRuleDto> categoryRules = enabled ? categories.stream()
-                .sorted(java.util.Comparator.comparingInt(Category::getDisplayOrder).thenComparing(Category::getDisplayName))
-                .map(category -> new CategoryRuleDto(category.getId(), category.getDisplayName(), category.getMinAge(),
-                        category.getMaxAge(), category.getGender(), category.getDisplayOrder()))
-                .toList() : List.of();
+        List<CategoryRuleDto> categoryRules = enabled ? rules(categories) : List.of();
+        List<CategoryRuleDto> availableCategoryRules = enabled ? rules(availableCategories) : List.of();
         return new RaceRulesSummaryDto(policy.getRankingBasis(), policy.getPrimaryStandingMode(),
                 policy.getAbsolutePrizePlaces(), enabled,
                 enabled ? policy.getCategoryPrizePlaces() : null,
                 enabled ? policy.isExcludeAbsoluteWinnersFromCategory() : null,
                 enabled ? policy.getAgeCalculationMode() : null,
-                categoryRules);
+                categoryRules,
+                availableCategoryRules);
+    }
+
+    private static List<CategoryRuleDto> rules(List<Category> categories) {
+        return categories.stream()
+                .sorted(java.util.Comparator.comparingInt(Category::getDisplayOrder)
+                        .thenComparing(Category::getDisplayName))
+                .map(category -> new CategoryRuleDto(category.getId(), category.getDisplayName(), category.getMinAge(),
+                        category.getMaxAge(), category.getGender(), category.getDisplayOrder()))
+                .toList();
     }
 }

@@ -7949,6 +7949,138 @@ class BackendIntegrationTest {
     }
 
     @Test
+    void safelyDisablesAndReplacesUsedCategoryWithoutChangingSourceOrHistory() {
+        StageF5Fixture fixture = stageF5Fixture("stage-f5-disable-replace");
+        Race race = fixture.race();
+        Category oldCategory = fixture.adultThirty();
+        Registration currentBefore = registrationRepository.findById(fixture.adultRegistrationId()).orElseThrow();
+        Registration retiredBefore = registrationRepository.findById(fixture.retiredRegistrationId()).orElseThrow();
+        Map<String, Object> issueSnapshot = resultIssueSnapshotState(fixture.issueId());
+        int absolutePlaceBefore = achievement(resultQueryService.search(
+                fixture.event().getId(), race.getId(), null, "D-35", null, null, null,
+                0, 20, "gunTime", "asc"
+        ).content(), "Runner D-35", "ABSOLUTE").place();
+
+        assertThat(currentBefore.getCategory().getId()).isEqualTo(oldCategory.getId());
+        assertThat(currentBefore.getSourceCategory()).isEqualTo("SOURCE_ADULT");
+        assertThat(categoryAdminService.list(race.getId()))
+                .filteredOn(category -> category.id().equals(oldCategory.getId()))
+                .singleElement()
+                .satisfies(category -> assertThat(category.inUse()).isTrue());
+
+        assertThatThrownBy(() -> categoryAdminService.update(
+                race.getId(), oldCategory.getId(),
+                categoryRequest(
+                        oldCategory.getSourceName(), oldCategory.getDisplayName(),
+                        oldCategory.getMinAge(), oldCategory.getMaxAge(), oldCategory.getGender(),
+                        oldCategory.getDisplayOrder(), false
+                ),
+                ADMIN_USERNAME
+        )).isInstanceOf(RequestConflictException.class)
+                .extracting(exception -> ((RequestConflictException) exception).getCode())
+                .isEqualTo("RACE_RESULTS_MUST_BE_DRAFT");
+
+        raceResultsPublicationService.draft(
+                fixture.event().getId(), race.getId(), "Replace used category", ADMIN_USERNAME
+        );
+        categoryAdminService.update(
+                race.getId(), oldCategory.getId(),
+                categoryRequest(
+                        oldCategory.getSourceName(), oldCategory.getDisplayName(),
+                        oldCategory.getMinAge(), oldCategory.getMaxAge(), oldCategory.getGender(),
+                        oldCategory.getDisplayOrder(), false
+                ),
+                ADMIN_USERNAME
+        );
+        assertThat(categoryRepository.findById(oldCategory.getId()).orElseThrow().isEnabled()).isFalse();
+        assertThat(raceRepository.findById(race.getId()).orElseThrow().isResultRecalculationRequired()).isTrue();
+
+        Registration anotherCurrent = registrationRepository.findAllByRaceIdAndBib(race.getId(), "C-18")
+                .getFirst();
+        assertThatThrownBy(() -> adminResultService.updateRegistration(
+                anotherCurrent.getId(), new UpdateRegistrationRequest(
+                        anotherCurrent.getDisplayName(), anotherCurrent.getFirstName(), anotherCurrent.getLastName(),
+                        anotherCurrent.getBirthDate(), anotherCurrent.getGender(), anotherCurrent.getBib(),
+                        anotherCurrent.getSourceCategory(), anotherCurrent.getCluster().getId(),
+                        anotherCurrent.getEntryKind(), oldCategory.getId()
+                ), ADMIN_USERNAME
+        )).isInstanceOf(InvalidRequestException.class)
+                .extracting(exception -> ((InvalidRequestException) exception).getCode())
+                .isEqualTo("CATEGORY_DISABLED");
+
+        Category replacement = categoryRepository.findById(categoryAdminService.create(
+                race.getId(),
+                categoryRequest(
+                        "ADULT_35_REPLACEMENT", "Adults 35-39 replacement",
+                        35, 39, CategoryGender.MALE, 5, true
+                ),
+                ADMIN_USERNAME
+        ).id()).orElseThrow();
+        assertThat(raceRepository.findById(race.getId()).orElseThrow().isResultRecalculationRequired()).isTrue();
+        assertThatThrownBy(() -> raceResultsPublicationService.publish(
+                fixture.event().getId(), race.getId(), ADMIN_USERNAME
+        )).isInstanceOf(RequestConflictException.class)
+                .extracting(exception -> ((RequestConflictException) exception).getCode())
+                .isEqualTo("RESULT_RECALCULATION_REQUIRED");
+
+        ResultRecalculationPreviewDto preview = resultRecalculationService.preview(
+                fixture.event().getId(), List.of(race.getId()), 100, ADMIN_USERNAME
+        );
+        assertThat(preview.changedCategoryCount()).isOne();
+        assertThat(preview.blockingCount()).isZero();
+        assertThat(preview.rows())
+                .filteredOn(row -> row.registrationId().equals(fixture.adultRegistrationId()))
+                .singleElement()
+                .satisfies(row -> {
+                    assertThat(row.oldEffectiveCategory()).isEqualTo("Adults 30-39");
+                    assertThat(row.newEffectiveCategory()).isEqualTo("Adults 35-39 replacement");
+                    assertThat(row.reason()).isEqualTo("ADULT_RECALCULATED");
+                });
+
+        resultRecalculationService.apply(
+                fixture.event().getId(), preview.operationId(), ADMIN_USERNAME
+        );
+        Registration currentAfter = registrationRepository.findById(fixture.adultRegistrationId()).orElseThrow();
+        assertThat(currentAfter.getCategory().getId()).isEqualTo(replacement.getId());
+        assertThat(currentAfter.getSourceCategory()).isEqualTo("SOURCE_ADULT");
+        assertThat(registrationRepository.findById(retiredBefore.getId()).orElseThrow().getCategory().getId())
+                .isEqualTo(oldCategory.getId());
+        assertThat(resultIssueSnapshotState(fixture.issueId())).isEqualTo(issueSnapshot);
+        assertThat(context.getBean(ru.sportsresults.service.GlobalResultIssueJournalService.class)
+                .get(fixture.issueId()).historicalSnapshot().effectiveCategoryName())
+                .isEqualTo("Adults 30-39");
+
+        raceResultsPublicationService.publish(fixture.event().getId(), race.getId(), ADMIN_USERNAME);
+        var publicResult = resultQueryService.search(
+                fixture.event().getId(), race.getId(), null, "D-35", null, null, null,
+                0, 20, "gunTime", "asc"
+        );
+        assertThat(publicResult.content()).singleElement().satisfies(item -> {
+            assertThat(item.category().id()).isEqualTo(replacement.getId());
+            assertThat(item.category().name()).isEqualTo("Adults 35-39 replacement");
+        });
+        assertThat(achievement(publicResult.content(), "Runner D-35", "CATEGORY").place()).isOne();
+        assertThat(achievement(publicResult.content(), "Runner D-35", "ABSOLUTE").place())
+                .isEqualTo(absolutePlaceBefore);
+
+        var publicCategories = eventService.listPublishedEventCategories(
+                fixture.event().getId(), race.getId()
+        );
+        assertThat(publicCategories.stream().map(category -> category.name()).toList())
+                .contains("Adults 35-39 replacement")
+                .doesNotContain("Adults 30-39");
+        var publicRace = context.getBean(ru.sportsresults.service.EventDetailsService.class)
+                .getPublished(fixture.event().getId()).races().stream()
+                .filter(candidate -> candidate.id().equals(race.getId()))
+                .findFirst().orElseThrow();
+        assertThat(publicRace.rules().categories().stream().map(category -> category.name()).toList())
+                .contains("Adults 35-39 replacement");
+        assertThat(publicRace.rules().availableCategories().stream().map(category -> category.name()).toList())
+                .contains("Adults 35-39 replacement")
+                .doesNotContain("Adults 30-39");
+    }
+
+    @Test
     void eventDateChangeSwitchesMinorAndAdultOnlyAfterExplicitApply() {
         StageF5Fixture fixture = stageF5Fixture("stage-f5-date");
         Event event = eventRepository.findById(fixture.event().getId()).orElseThrow();

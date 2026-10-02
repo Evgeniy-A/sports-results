@@ -42,6 +42,9 @@ test('filter reset preserves race selection and sorting while clearing public fi
 
 test('category controls and cells depend on backend race metadata', () => {
   assert.match(page, /selectedRace\?\.rules\?\.categoryEnabled/)
+  assert.match(page, /selectedRace\.rules\.availableCategories\.map/)
+  assert.doesNotMatch(page, /selectedRace\.rules\.categories\.map/)
+  assert.match(types, /availableCategories: CategoryRule\[\]/)
   assert.match(page, /showCategoryColumn && <th>Категория<\/th>/)
   assert.match(page, /categoryEnabled=\{showCategoryColumn\}/)
 })

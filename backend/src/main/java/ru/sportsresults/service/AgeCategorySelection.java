@@ -90,7 +90,7 @@ final class AgeCategorySelection {
                         "A source category is required for a participant under 18 on the Event date"
                 );
             }
-            List<Candidate<T>> sourceMatches = categories.stream()
+            List<Candidate<T>> sourceMatches = enabled.stream()
                     .filter(category -> category.sourceName().equals(sourceCategory))
                     .toList();
             if (sourceMatches.size() != 1) {
