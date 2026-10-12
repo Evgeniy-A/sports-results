@@ -16,6 +16,7 @@ import type { EventStartDraft } from '../eventStartDrafts'
 import {
   calculateDraftResultInquiryDeadline,
   formatResultInquiryDeadline,
+  mergeResultInquiryDraft,
 } from '../resultInquirySettings'
 
 interface Props { api: AdminApi }
@@ -178,7 +179,7 @@ function CreateEventDrawer({ api, templates, onTemplateCreated, onClose }: {
       <section className="admin-form-section"><h3>Обращения по результатам</h3>
         <ResultInquirySettingsFields
           value={inquiry}
-          onChange={setInquiry}
+          onChange={(patch) => setInquiry((current) => mergeResultInquiryDraft(current, patch))}
           deadlinePreview={inquiryDeadline
             ? formatResultInquiryDeadline(inquiryDeadline, timeZone)
             : null}

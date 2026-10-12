@@ -15,7 +15,7 @@ export function ResultInquirySettingsFields({
   eventDateKnown = false,
 }: {
   value: ResultInquiryConfiguration
-  onChange: (value: ResultInquiryConfiguration) => void
+  onChange: (patch: Partial<ResultInquiryConfiguration>) => void
   enabledLabel?: string
   deadlinePreview?: string | null
   deadlinePreviewLabel?: string
@@ -27,7 +27,7 @@ export function ResultInquirySettingsFields({
     <label className="admin-check"><input
       type="checkbox"
       checked={value.enabled}
-      onChange={(event) => onChange({ ...value, enabled: event.target.checked })}
+      onChange={(event) => onChange({ enabled: event.target.checked })}
     /><span>{enabledLabel}</span></label>
     <fieldset className="admin-deadline-modes">
       <legend>Способ задания срока</legend>
@@ -37,7 +37,7 @@ export function ResultInquirySettingsFields({
           type="radio"
           name={`${fieldId}-deadline-mode`}
           checked={visibility.windowDays}
-          onChange={() => onChange({ ...value, deadlineMode: 'AFTER_EVENT_DAYS' })}
+          onChange={() => onChange({ deadlineMode: 'AFTER_EVENT_DAYS' })}
         /><span>N дней после окончания мероприятия</span></label>
         {visibility.windowDays && <div className="admin-deadline-mode-details">
           <Field label="Количество дней"><input
@@ -47,7 +47,6 @@ export function ResultInquirySettingsFields({
             required={value.enabled}
             value={value.windowDays ?? ''}
             onChange={(event) => onChange({
-              ...value,
               windowDays: event.target.value ? Number(event.target.value) : null,
             })}
           /></Field>
@@ -65,14 +64,14 @@ export function ResultInquirySettingsFields({
           type="radio"
           name={`${fieldId}-deadline-mode`}
           checked={visibility.fixedDate}
-          onChange={() => onChange({ ...value, deadlineMode: 'FIXED_DATE' })}
+          onChange={() => onChange({ deadlineMode: 'FIXED_DATE' })}
         /><span>До выбранной даты</span></label>
         {visibility.fixedDate && <div className="admin-deadline-mode-details">
           <Field label="Последний день подачи"><input
             type="date"
             required={value.enabled}
             value={value.fixedDate ?? ''}
-            onChange={(event) => onChange({ ...value, fixedDate: event.target.value || null })}
+            onChange={(event) => onChange({ fixedDate: event.target.value || null })}
           /></Field>
           <p className="admin-form-help">Обращения принимаются до конца выбранной даты включительно.</p>
           {deadlinePreview && <DeadlinePreview label={deadlinePreviewLabel} value={deadlinePreview} />}
@@ -84,7 +83,7 @@ export function ResultInquirySettingsFields({
       maxLength={320}
       required={value.enabled}
       value={value.email ?? ''}
-      onChange={(event) => onChange({ ...value, email: event.target.value || null })}
+      onChange={(event) => onChange({ email: event.target.value || null })}
     /></Field>
   </>
 }

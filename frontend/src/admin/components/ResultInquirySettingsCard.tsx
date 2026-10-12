@@ -6,6 +6,8 @@ import { adminErrorMessage } from '../utils'
 import {
   calculateResultInquiryDeadline,
   formatResultInquiryDeadline,
+  mergeResultInquiryDraft,
+  resultInquiryUpdatePayload,
   resultInquirySummary,
 } from '../resultInquirySettings'
 import { AdminNotice, Loadable, StatusBadge } from './AdminUi'
@@ -50,13 +52,7 @@ export function ResultInquirySettingsCard({ api, event, compact = false }: {
   const persist = async (next: ResultInquirySettings) => {
     setBusy(true); setMessage(null)
     try {
-      const saved = await api.updateResultInquiry(event.id, {
-        enabled: next.enabled,
-        deadlineMode: next.deadlineMode,
-        windowDays: next.windowDays,
-        fixedDate: next.fixedDate,
-        email: next.email,
-      })
+      const saved = await api.updateResultInquiry(event.id, resultInquiryUpdatePayload(next))
       setSavedSettings(saved)
       setDraftSettings(saved)
       setMessage({ tone: 'success', text: 'Настройки обращений сохранены.' })
@@ -83,7 +79,9 @@ export function ResultInquirySettingsCard({ api, event, compact = false }: {
         {dirty && <AdminNotice tone="info">Изменения не сохранены. Верхняя сводка показывает действующие настройки.</AdminNotice>}
         <ResultInquirySettingsFields
           value={draftSettings}
-          onChange={(next) => setDraftSettings({ ...draftSettings, ...next })}
+          onChange={(patch) => setDraftSettings((current) => (
+            current ? mergeResultInquiryDraft(current, patch) : current
+          ))}
           deadlinePreview={calculatedDeadline
             ? formatResultInquiryDeadline(calculatedDeadline, event.timeZone)
             : null}

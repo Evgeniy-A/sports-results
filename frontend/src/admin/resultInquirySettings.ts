@@ -1,5 +1,9 @@
 import type { EventSummary, ResultInquiryAvailability } from '../api/types'
-import type { ResultInquiryDeadlineMode, ResultInquirySettings } from './types'
+import type {
+  ResultInquiryConfiguration,
+  ResultInquiryDeadlineMode,
+  ResultInquirySettings,
+} from './types'
 import { localDateTimeToIso, toDateTimeLocal } from './time.ts'
 
 export const MAX_RESULT_INQUIRY_WINDOW_DAYS = 3650
@@ -13,6 +17,25 @@ export interface ResultInquirySummary {
   status: string
   term: string
   deadline: string
+}
+
+export function mergeResultInquiryDraft<T extends ResultInquiryConfiguration>(
+  current: T,
+  patch: Partial<ResultInquiryConfiguration>,
+): T {
+  return { ...current, ...patch }
+}
+
+export function resultInquiryUpdatePayload(
+  settings: ResultInquiryConfiguration,
+): ResultInquiryConfiguration {
+  return {
+    enabled: settings.enabled,
+    deadlineMode: settings.deadlineMode,
+    windowDays: settings.windowDays,
+    fixedDate: settings.fixedDate,
+    email: settings.email,
+  }
 }
 
 export function resultInquiryFieldVisibility(

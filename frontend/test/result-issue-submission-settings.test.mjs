@@ -6,9 +6,11 @@ import {
   calculateResultInquiryDeadline,
   formatResultInquiryDeadline,
   MAX_RESULT_INQUIRY_WINDOW_DAYS,
+  mergeResultInquiryDraft,
   resultInquiryAvailabilityLabel,
   resultInquiryFieldVisibility,
   resultInquirySummary,
+  resultInquiryUpdatePayload,
 } from '../src/admin/resultInquirySettings.ts'
 
 const source = async (path) => readFile(new URL(path, import.meta.url), 'utf8')
@@ -40,6 +42,42 @@ test('the same settings card is available in Event main and Results issues', () 
   assert.match(settingsCard, /api\.updateResultInquiry\(event\.id/)
   assert.match(settingsCard, /Закрыть приём/)
   assert.match(settingsCard, /Включить приём/)
+})
+
+test('date and email patches coexist and are preserved in the update payload', () => {
+  const initial = {
+    enabled: false,
+    deadlineMode: 'FIXED_DATE',
+    windowDays: null,
+    fixedDate: null,
+    email: null,
+    availability: 'DISABLED',
+    deadline: null,
+  }
+  const withDate = mergeResultInquiryDraft(initial, { fixedDate: '2026-10-12' })
+  const withDateAndEmail = mergeResultInquiryDraft(withDate, { email: 'uat-issues@example.com' })
+  assert.equal(withDateAndEmail.fixedDate, '2026-10-12')
+  assert.equal(withDateAndEmail.email, 'uat-issues@example.com')
+  assert.deepEqual(resultInquiryUpdatePayload(withDateAndEmail), {
+    enabled: false,
+    deadlineMode: 'FIXED_DATE',
+    windowDays: null,
+    fixedDate: '2026-10-12',
+    email: 'uat-issues@example.com',
+  })
+
+  const withEmail = mergeResultInquiryDraft(initial, { email: 'uat-issues@example.com' })
+  const withEmailAndDate = mergeResultInquiryDraft(withEmail, { fixedDate: '2026-10-12' })
+  assert.equal(withEmailAndDate.email, 'uat-issues@example.com')
+  assert.equal(withEmailAndDate.fixedDate, '2026-10-12')
+})
+
+test('settings fields emit partial patches and the card merges them functionally', () => {
+  assert.doesNotMatch(settingsFields, /onChange\(\{ \.\.\.value,/)
+  assert.match(settingsFields, /onChange\(\{ fixedDate:/)
+  assert.match(settingsFields, /onChange\(\{ email:/)
+  assert.match(settingsCard, /setDraftSettings\(\(current\) =>/)
+  assert.match(settingsCard, /resultInquiryUpdatePayload\(next\)/)
 })
 
 test('deadline mode shows only its own input and switching does not reuse inactive values', () => {

@@ -11,6 +11,7 @@ import { CategorySettings } from '../components/CategorySettings'
 import { awardStatusLabel } from '../awardPolicyPresentation'
 import { defaultPolicy } from '../eventStartDrafts'
 import { ResultInquirySettingsFields } from '../components/ResultInquirySettingsFields'
+import { mergeResultInquiryDraft } from '../resultInquirySettings'
 
 export function AdminTemplatePage({ api, templateId }: { api: AdminApi; templateId: number }) {
   const [template, setTemplate] = useState<EventSeries | null>(null)
@@ -124,7 +125,11 @@ function TemplateInquirySettingsCard({ api, template, onSaved }: {
     <div className="admin-card-heading"><div><h2>Обращения по результатам</h2><p>Значения по умолчанию для новых мероприятий.</p></div></div>
     {message && <AdminNotice tone={message.tone}>{message.text}</AdminNotice>}
     <form className="admin-form" onSubmit={submit}>
-      <ResultInquirySettingsFields value={settings} onChange={setSettings} enabledLabel="Принимать обращения" />
+      <ResultInquirySettingsFields
+        value={settings}
+        onChange={(patch) => setSettings((current) => mergeResultInquiryDraft(current, patch))}
+        enabledLabel="Принимать обращения"
+      />
       <p className="admin-form-help">Эти настройки будут скопированы в новые мероприятия из шаблона. Уже созданные мероприятия не изменятся.</p>
       <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy}>{busy ? 'Сохраняем…' : 'Сохранить настройки'}</button></div>
     </form>
