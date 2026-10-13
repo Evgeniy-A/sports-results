@@ -9,6 +9,9 @@ import { AdminNotice, ConfirmDialog, Drawer, Field, StatusBadge } from '../compo
 import { TimeZoneCombobox } from '../components/TimeZoneCombobox'
 import { EventContentManager } from './EventContentManager'
 import { ResultInquirySettingsCard } from '../components/ResultInquirySettingsCard'
+import { setAdminNavigationBlocker } from '../navigationGuard'
+
+const UNSAVED_CHANGES_MESSAGE = 'Есть несохранённые изменения. Уйти со страницы без сохранения?'
 
 export function EventGeneralTab({ api, event, series, races, onChanged }: {
   api: AdminApi
@@ -31,6 +34,11 @@ export function EventGeneralTab({ api, event, series, races, onChanged }: {
     const warn = (navigation: BeforeUnloadEvent) => { if (dirty) navigation.preventDefault() }
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+
+  useEffect(() => {
+    if (!dirty) return
+    return setAdminNavigationBlocker(() => window.confirm(UNSAVED_CHANGES_MESSAGE))
   }, [dirty])
 
   const set = (field: keyof typeof form, value: string) => { setForm((current) => ({ ...current, [field]: value })); setDirty(true) }

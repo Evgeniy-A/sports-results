@@ -17,6 +17,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   BULK_EVENT_DUPLICATE: 'Исправьте отмеченные дубли перед созданием.',
   BULK_EVENT_CONFLICT: 'Не удалось создать мероприятия: данные изменились. Выполните Preview заново.',
   EVENT_SLUG_EXISTS: 'Такой адрес мероприятия уже используется.',
+  INVALID_EVENT_DATES: 'Окончание мероприятия не может быть раньше начала.',
   INVALID_RESULT_INQUIRY_WINDOW: 'Срок подачи должен быть от 1 до 3650 дней.',
   RESULT_INQUIRY_WINDOW_REQUIRED: 'Укажите срок подачи обращений.',
   RESULT_INQUIRY_FIXED_DATE_REQUIRED: 'Выберите последний день подачи обращений.',

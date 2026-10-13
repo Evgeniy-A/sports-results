@@ -7,6 +7,7 @@ import { awardPolicyUpdate, withRankingBasis } from '../src/admin/awardPolicy.ts
 import { ApiError, readJsonBody } from '../src/api/client.ts'
 import { duplicateLocationIds, normalizedLocation } from '../src/admin/bulkEvents.ts'
 import { authorizeAndOpenAttachment } from '../src/admin/attachmentOpening.ts'
+import { confirmAdminNavigation, setAdminNavigationBlocker } from '../src/admin/navigationGuard.ts'
 import {
   ADMIN_AUTH_SESSION_KEY,
   clearAdminCredentials,
@@ -16,11 +17,12 @@ import {
 } from '../src/admin/adminAuthSession.ts'
 
 const source = async (path) => readFile(new URL(path, import.meta.url), 'utf8')
-const [app, adminApp, api, utils, events, templates, templateDetail, startComposer, categorySettings, awardPresentation, startDrafts, bulkEvents, inlineTemplate, eventPage, core, content, categories, results, resultEditor, imports, publication, policy, issues, issuePage, journal, timeZoneCombobox, css] = await Promise.all([
+const [app, adminApp, api, utils, router, events, templates, templateDetail, startComposer, categorySettings, awardPresentation, startDrafts, bulkEvents, inlineTemplate, eventPage, core, content, categories, results, resultEditor, imports, publication, policy, issues, issuePage, journal, timeZoneCombobox, css] = await Promise.all([
   source('../src/App.tsx'),
   source('../src/admin/AdminApp.tsx'),
   source('../src/admin/api.ts'),
   source('../src/admin/utils.ts'),
+  source('../src/admin/router.tsx'),
   source('../src/admin/pages/AdminEventsPage.tsx'),
   source('../src/admin/pages/AdminTemplatesPage.tsx'),
   source('../src/admin/pages/AdminTemplatePage.tsx'),
@@ -655,6 +657,52 @@ test('central error mapping covers guards and stale operations', () => {
   for (const code of ['RACE_RESULTS_MUST_BE_DRAFT', 'RESULT_RECALCULATION_REQUIRED', 'RECALC_PREVIEW_STALE', 'RETIRED_REGISTRATION_NOT_MUTABLE', 'CATEGORY_IN_USE', 'DUPLICATE_BIB', 'AMBIGUOUS', 'CONFLICT']) {
     assert.match(utils, new RegExp(code))
   }
+})
+
+test('invalid Event dates use the stable backend code and a specific Russian message', () => {
+  assert.match(utils, /INVALID_EVENT_DATES: 'Окончание мероприятия не может быть раньше начала\.'/)
+  assert.match(api, /throw new ApiError\(response\.status, message, code, violations\)/)
+  assert.match(eventGeneralTab, /setDirty\(false\).*Изменения сохранены/s)
+  assert.doesNotMatch(eventGeneralTab.match(/catch \(reason\).*?finally/s)?.[0] ?? '', /setDirty\(false\)/)
+})
+
+test('admin navigation proceeds without confirmation when no dirty blocker is registered', () => {
+  assert.equal(confirmAdminNavigation(), true)
+  assert.match(router, /if \(!confirmAdminNavigation\(\)\) return false/)
+})
+
+test('dirty admin navigation can stay with its draft or leave through the same blocker', () => {
+  let shouldLeave = false
+  let draft = 'changed location'
+  let url = '/admin/events/1'
+  const release = setAdminNavigationBlocker(() => shouldLeave)
+  try {
+    if (confirmAdminNavigation()) url = '/admin/events/1?tab=results'
+    assert.equal(url, '/admin/events/1')
+    assert.equal(draft, 'changed location')
+
+    shouldLeave = true
+    if (confirmAdminNavigation()) {
+      url = '/admin/events/1?tab=results'
+      draft = 'server location'
+    }
+    assert.equal(url, '/admin/events/1?tab=results')
+    assert.equal(draft, 'server location')
+  } finally {
+    release()
+  }
+})
+
+test('Event general dirty state protects AdminLink, tabs and browser history while retaining beforeunload', () => {
+  assert.match(eventGeneralTab, /setAdminNavigationBlocker\(\(\) => window\.confirm\(UNSAVED_CHANGES_MESSAGE\)\)/)
+  assert.match(eventGeneralTab, /window\.addEventListener\('beforeunload', warn\)/)
+  assert.match(eventGeneralTab, /window\.removeEventListener\('beforeunload', warn\)/)
+  assert.match(router, /navigateAdmin\(props\.href\)/)
+  assert.match(router, /window\.addEventListener\('popstate', handleHistoryNavigation\)/)
+  assert.match(router, /window\.history\.go\(delta\)/)
+  assert.match(router, /restoring = true/)
+  assert.match(eventPage, /selectTab.*navigateAdmin/s)
+  assert.match(eventPage, /AdminLink href="\/admin\/events"/)
 })
 
 test('admin UI has loading, confirmations, table overflow and tablet behavior', () => {
