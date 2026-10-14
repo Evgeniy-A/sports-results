@@ -182,7 +182,7 @@ export interface ResultInquirySettings extends ResultInquiryConfiguration {
 }
 
 export interface ParticipantInfo {
-  id: number
+  id: number | null
   shortDescription: string | null
   venueName: string | null
   venueAddress: string | null

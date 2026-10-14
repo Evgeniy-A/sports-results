@@ -17,10 +17,11 @@ import {
 } from '../src/admin/adminAuthSession.ts'
 
 const source = async (path) => readFile(new URL(path, import.meta.url), 'utf8')
-const [app, adminApp, api, utils, router, events, templates, templateDetail, startComposer, categorySettings, awardPresentation, startDrafts, bulkEvents, inlineTemplate, eventPage, core, content, categories, results, resultEditor, imports, publication, policy, issues, issuePage, journal, timeZoneCombobox, css] = await Promise.all([
+const [app, adminApp, api, adminTypes, utils, router, events, templates, templateDetail, startComposer, categorySettings, awardPresentation, startDrafts, bulkEvents, inlineTemplate, eventPage, core, content, categories, results, resultEditor, imports, publication, policy, issues, issuePage, journal, timeZoneCombobox, css] = await Promise.all([
   source('../src/App.tsx'),
   source('../src/admin/AdminApp.tsx'),
   source('../src/admin/api.ts'),
+  source('../src/admin/types.ts'),
   source('../src/admin/utils.ts'),
   source('../src/admin/router.tsx'),
   source('../src/admin/pages/AdminEventsPage.tsx'),
@@ -312,6 +313,20 @@ test('event content CRUD uses protected APIs and FileStorage-backed document dow
   assert.match(content, /ConfirmDialog/)
 })
 
+test('fresh participant information uses a nullable-id JSON DTO and remains editable through PUT', () => {
+  assert.match(adminTypes, /interface ParticipantInfo[\s\S]*id: number \| null/)
+  assert.match(api, /participantInfo:.*\/participant-info/s)
+  assert.match(api, /updateParticipantInfo:.*method: 'PUT'/s)
+  assert.match(core, /api\.participantInfo\(event\.id\)[\s\S]*setInfo\(infoValue\)/)
+  assert.match(core, /\{info && <section className="admin-card"/)
+  assert.match(core, /setInfo\(\(current\) => current \? \{ \.\.\.current, \.\.\.patch \} : current\)/)
+  assert.match(core, /updateInfo\(\{ shortDescription:/)
+  assert.match(core, /updateInfo\(\{ venueName:/)
+  assert.match(core, /api\.updateParticipantInfo\(event\.id/)
+  assert.match(core, /shortDescription: info\.shortDescription[\s\S]*additionalInfo: info\.additionalInfo/)
+  assert.match(core, /setInfo\(await api\.updateParticipantInfo/)
+})
+
 test('Event date inputs round-trip through the configured IANA time zone', () => {
   const instant = localDateTimeToIso('2028-04-12T09:30', 'Asia/Yekaterinburg')
   assert.equal(instant, '2028-04-12T04:30:00.000Z')
@@ -405,6 +420,15 @@ test('registration and result correction round-trip through backend', () => {
   assert.match(resultEditor, /updateResult/)
   assert.match(resultEditor, /Официальные места система рассчитывает/)
   assert.match(resultEditor, /Старт опубликован.*сразу изменит текущие публичные данные/s)
+})
+
+test('Admin Results requests per-Race official ranking and shows the same achievements in list and detail', () => {
+  assert.doesNotMatch(results, /rankingBasis: 'CHIP_TIME'/)
+  assert.match(results, /<td>\{row\.place \?\? '—'\}<\/td>/)
+  assert.match(resultEditor, /<h3>Официальный зачёт<\/h3>/)
+  assert.match(resultEditor, /detail\.rankingAchievements\.map/)
+  assert.match(resultEditor, /achievement\.label/)
+  assert.match(resultEditor, /Официального места нет\./)
 })
 
 test('import exposes three explicit modes and never auto-syncs them', () => {

@@ -47,7 +47,7 @@ public class AdminResultController {
             @RequestParam(defaultValue = "50") int size,
             @RequestParam(defaultValue = "place") String sort,
             @RequestParam(defaultValue = "asc") String direction,
-            @RequestParam(defaultValue = "CHIP_TIME") RankingBasis rankingBasis
+            @RequestParam(required = false) RankingBasis rankingBasis
     ) {
         return resultQueryService.searchAdmin(
                 eventId, raceId, name, bib, gender, categoryId, clusterId, status,

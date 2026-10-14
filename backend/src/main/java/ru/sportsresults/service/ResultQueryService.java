@@ -171,20 +171,26 @@ public class ResultQueryService {
         validatePage(page, size);
         ResultSortField sortField = parseSort(sort);
         Sort.Direction sortDirection = parseDirection(direction);
-        RankingBasis resolvedBasis = rankingBasis == null ? RankingBasis.CHIP_TIME : rankingBasis;
         Page<ResultListProjection> resultPage = resultRepository.search(
                 new ResultSearchCriteria(
                         eventId, raceId, name, bib, gender, categoryId, clusterId, status,
-                        resolvedBasis, false, List.of()
+                        rankingBasis, false, List.of()
                 ),
                 page,
                 size,
                 sortField,
                 sortDirection
         );
+        Map<Long, List<RankingAchievementDto>> achievements =
+                officialRankingService.findForPage(eventId, resultPage.getContent());
         return new PageResponse<>(
                 resultPage.getContent().stream()
-                        .map(item -> mapper.toListItem(item, false, resolvedBasis))
+                        .map(item -> mapper.toListItem(
+                                item,
+                                false,
+                                rankingBasis,
+                                achievements.getOrDefault(item.resultId(), List.of())
+                        ))
                         .toList(),
                 page,
                 size,
@@ -264,7 +270,12 @@ public class ResultQueryService {
                 .orElseThrow(() -> new ResourceNotFoundException("RESULT_NOT_FOUND", "Result not found"));
         return mapper.toAdminDetails(
                 result,
-                splitRepository.findAllByResultIdOrderByCheckpointSequenceNumberAsc(resultId)
+                splitRepository.findAllByResultIdOrderByCheckpointSequenceNumberAsc(resultId),
+                officialRankingService.findForResult(
+                        result.getRegistration().getRace().getEvent().getId(),
+                        result.getRegistration().getRace().getId(),
+                        resultId
+                )
         );
     }
 

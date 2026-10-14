@@ -11,6 +11,7 @@ import ru.sportsresults.domain.Category;
 import ru.sportsresults.domain.Registration;
 import ru.sportsresults.domain.Result;
 import ru.sportsresults.domain.RankingBasis;
+import ru.sportsresults.domain.RankingAchievementType;
 import ru.sportsresults.domain.Split;
 import ru.sportsresults.repository.ResultListProjection;
 
@@ -87,7 +88,9 @@ public class ResultDtoMapper {
                 projection.netOverallPlace(),
                 projection.netGenderPlace(),
                 projection.netCategoryPlace(),
-                effectiveBasis == RankingBasis.NONE ? null : projection.contextualPlace(),
+                rankingBasisOverride == null
+                        ? primaryOfficialPlace(rankingAchievements)
+                        : effectiveBasis == RankingBasis.NONE ? null : projection.contextualPlace(),
                 displayPosition,
                 effectiveBasis.name(),
                 rankingAchievements
@@ -133,7 +136,11 @@ public class ResultDtoMapper {
         );
     }
 
-    public AdminResultDetailsDto toAdminDetails(Result result, List<Split> splits) {
+    public AdminResultDetailsDto toAdminDetails(
+            Result result,
+            List<Split> splits,
+            List<RankingAchievementDto> rankingAchievements
+    ) {
         Registration registration = result.getRegistration();
         Category category = registration.getCategory();
         return new AdminResultDetailsDto(
@@ -162,9 +169,18 @@ public class ResultDtoMapper {
                 result.getNetOverallPlace(),
                 result.getNetGenderPlace(),
                 result.getNetCategoryPlace(),
-                List.of(),
+                rankingAchievements,
                 splits.stream().map(ResultDtoMapper::toSplit).toList()
         );
+    }
+
+    private static Integer primaryOfficialPlace(List<RankingAchievementDto> rankingAchievements) {
+        return rankingAchievements.stream()
+                .filter(achievement -> achievement.type() == RankingAchievementType.ABSOLUTE
+                        || achievement.type() == RankingAchievementType.GENDER)
+                .map(RankingAchievementDto::place)
+                .findFirst()
+                .orElse(null);
     }
 
     private static SplitDto toSplit(Split split) {

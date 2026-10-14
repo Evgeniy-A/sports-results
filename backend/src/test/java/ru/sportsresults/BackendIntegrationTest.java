@@ -6834,6 +6834,140 @@ class BackendIntegrationTest {
     }
 
     @Test
+    void freshParticipantInfoReturnsEmptyJsonWithoutCreatingRowAndPutCreatesIt() throws Exception {
+        Event event = createPublishedEvent("Fresh participant info", "fresh-participant-info");
+        assertThat(participantInfoCount(event.getId())).isZero();
+
+        MvcResult emptyResult = mockMvc.perform(get("/api/admin/events/{eventId}/participant-info", event.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andReturn();
+        var empty = objectMapper.readTree(emptyResult.getResponse().getContentAsString());
+        assertThat(empty.get("id").isNull()).isTrue();
+        for (String field : List.of(
+                "shortDescription", "venueName", "venueAddress", "locationDescription",
+                "latitude", "longitude", "additionalInfo"
+        )) {
+            assertThat(empty.get(field).isNull()).as(field).isTrue();
+        }
+        assertThat(participantInfoCount(event.getId())).isZero();
+
+        mockMvc.perform(put("/api/admin/events/{eventId}/participant-info", event.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "shortDescription":"Синтетическое описание",
+                                  "venueName":"Тестовая площадка",
+                                  "venueAddress":"Тестовая улица, 1",
+                                  "locationDescription":"Вход со стороны старта",
+                                  "latitude":55.7500,
+                                  "longitude":37.6200,
+                                  "additionalInfo":"Только локальный fixture"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").isNumber())
+                .andExpect(jsonPath("$.venueName").value("Тестовая площадка"));
+        assertThat(participantInfoCount(event.getId())).isOne();
+
+        mockMvc.perform(get("/api/admin/events/{eventId}/participant-info", event.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.shortDescription").value("Синтетическое описание"))
+                .andExpect(jsonPath("$.venueName").value("Тестовая площадка"))
+                .andExpect(jsonPath("$.latitude").value(55.75))
+                .andExpect(jsonPath("$.additionalInfo").value("Только локальный fixture"));
+    }
+
+    @Test
+    void adminResultsReusePublicOfficialRankingForEveryRacePolicyAndDetails() {
+        Event event = createPublishedEvent("Admin official ranking", "admin-official-ranking");
+        importPublishedFixture(event.getId(), "ranking.csv", rankingCsv().getBytes(StandardCharsets.UTF_8));
+        Race gunRace = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
+        Race chipRace = raceRepository.findByEventIdAndSourceCode(event.getId(), "10 km").orElseThrow();
+        Category adultCategory = categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(gunRace.getId()).getFirst();
+        adultCategory.setMinAge(18);
+        adultCategory.setMaxAge(null);
+        adultCategory.setGender(null);
+        categoryRepository.saveAndFlush(adultCategory);
+
+        awardPolicyService.upsert(gunRace.getId(), new UpdateAwardPolicyRequest(
+                RankingBasis.GUN_TIME, PrimaryStandingMode.ALL, 3, true,
+                AgeCalculationMode.EVENT_DATE, 3, false
+        ), ADMIN_USERNAME);
+        awardPolicyService.upsert(chipRace.getId(), new UpdateAwardPolicyRequest(
+                RankingBasis.CHIP_TIME, PrimaryStandingMode.ALL, 3, false,
+                AgeCalculationMode.EVENT_DATE, 0, false
+        ), ADMIN_USERNAME);
+        List<Result> importedResults = resultRepository.findAll();
+        importedResults.forEach(result -> {
+            result.setOverallPlace(null);
+            result.setGenderPlace(null);
+            result.setCategoryPlace(null);
+            result.setNetOverallPlace(null);
+            result.setNetGenderPlace(null);
+            result.setNetCategoryPlace(null);
+        });
+        resultRepository.saveAllAndFlush(importedResults);
+        assertThat(resultRepository.findAll()).allSatisfy(result -> {
+            assertThat(result.getOverallPlace()).isNull();
+            assertThat(result.getGenderPlace()).isNull();
+            assertThat(result.getCategoryPlace()).isNull();
+            assertThat(result.getNetOverallPlace()).isNull();
+            assertThat(result.getNetGenderPlace()).isNull();
+            assertThat(result.getNetCategoryPlace()).isNull();
+        });
+
+        assertAdminOfficialRankingMatchesPublic(event.getId(), gunRace.getId());
+        assertAdminOfficialRankingMatchesPublic(event.getId(), chipRace.getId());
+        var allAdmin = resultQueryService.searchAdmin(
+                event.getId(), null, null, null, null, null, null,
+                0, 20, "displayName", "asc", null
+        );
+        assertThat(allAdmin.content()).filteredOn(item -> item.raceId().equals(gunRace.getId()))
+                .allSatisfy(item -> assertThat(item.rankingBasis()).isEqualTo("GUN_TIME"));
+        assertThat(allAdmin.content()).filteredOn(item -> item.raceId().equals(chipRace.getId()))
+                .allSatisfy(item -> assertThat(item.rankingBasis()).isEqualTo("CHIP_TIME"));
+
+        ResultListItemDto gunLeader = resultQueryService.search(
+                event.getId(), gunRace.getId(), "Ган Лидер", null, null, null, null,
+                0, 20, "displayName", "asc"
+        ).content().getFirst();
+        assertThat(resultQueryService.getAdminResult(gunLeader.resultId()).rankingAchievements())
+                .containsExactlyElementsOf(gunLeader.rankingAchievements());
+
+        awardPolicyService.upsert(gunRace.getId(), new UpdateAwardPolicyRequest(
+                RankingBasis.GUN_TIME, PrimaryStandingMode.BY_GENDER, 3, true,
+                AgeCalculationMode.EVENT_DATE, 3, false
+        ), ADMIN_USERNAME);
+        var byGenderAdmin = assertAdminOfficialRankingMatchesPublic(event.getId(), gunRace.getId());
+        assertThat(byGenderAdmin.content()).allSatisfy(item -> {
+            assertThat(item.rankingAchievements()).anyMatch(value -> value.type().name().equals("GENDER"));
+            assertThat(item.rankingAchievements()).anyMatch(value -> value.type().name().equals("CATEGORY"));
+            assertThat(item.place()).isEqualTo(item.rankingAchievements().stream()
+                    .filter(value -> value.type().name().equals("GENDER"))
+                    .findFirst().orElseThrow().place());
+        });
+
+        awardPolicyService.upsert(gunRace.getId(), new UpdateAwardPolicyRequest(
+                RankingBasis.NONE, PrimaryStandingMode.NONE, 0, false,
+                AgeCalculationMode.EVENT_DATE, 0, false
+        ), ADMIN_USERNAME);
+        var noStanding = resultQueryService.searchAdmin(
+                event.getId(), gunRace.getId(), null, null, null, null, null,
+                0, 20, "displayName", "asc", null
+        );
+        assertThat(noStanding.content()).allSatisfy(item -> {
+            assertThat(item.place()).isNull();
+            assertThat(item.rankingBasis()).isEqualTo("NONE");
+            assertThat(item.rankingAchievements()).isEmpty();
+        });
+        assertAdminOfficialRankingMatchesPublic(event.getId(), chipRace.getId());
+    }
+
+    @Test
     void filtersByRaceClusterWithoutRenumberingAchievementsAndRejectsCrossRaceAssignment() {
         Event event = createPublishedEvent("Clusters", "clusters");
         importPublishedFixture(event.getId(), "ranking.csv", rankingCsv().getBytes(StandardCharsets.UTF_8));
@@ -6927,6 +7061,42 @@ class BackendIntegrationTest {
                 .filter(achievement -> achievement.type().name().equals(type))
                 .findFirst()
                 .orElseThrow();
+    }
+
+    private long participantInfoCount(Long eventId) {
+        Long count = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM event_participant_info WHERE event_id = ?",
+                Long.class,
+                eventId
+        );
+        return count == null ? 0L : count;
+    }
+
+    private PageResponse<ResultListItemDto> assertAdminOfficialRankingMatchesPublic(Long eventId, Long raceId) {
+        PageResponse<ResultListItemDto> publicResults = resultQueryService.search(
+                eventId, raceId, null, null, null, null, null,
+                0, 20, "displayName", "asc"
+        );
+        PageResponse<ResultListItemDto> adminResults = resultQueryService.searchAdmin(
+                eventId, raceId, null, null, null, null, null,
+                0, 20, "displayName", "asc", null
+        );
+        Map<Long, ResultListItemDto> publicByResult = publicResults.content().stream()
+                .collect(java.util.stream.Collectors.toMap(ResultListItemDto::resultId, item -> item));
+        assertThat(adminResults.content()).hasSameSizeAs(publicResults.content()).allSatisfy(admin -> {
+            ResultListItemDto publicItem = publicByResult.get(admin.resultId());
+            assertThat(publicItem).isNotNull();
+            assertThat(admin.rankingBasis()).isEqualTo(publicItem.rankingBasis());
+            assertThat(admin.rankingAchievements()).containsExactlyElementsOf(publicItem.rankingAchievements());
+            Integer primaryPlace = publicItem.rankingAchievements().stream()
+                    .filter(value -> value.type().name().equals("ABSOLUTE")
+                            || value.type().name().equals("GENDER"))
+                    .map(RankingAchievementDto::place)
+                    .findFirst()
+                    .orElse(null);
+            assertThat(admin.place()).isEqualTo(primaryPlace);
+        });
+        return adminResults;
     }
 
     private Map<Long, List<RankingAchievementDto>> achievementMap(

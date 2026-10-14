@@ -104,6 +104,9 @@ export function EventInformationTab({ api, event }: { api: AdminApi; event: Even
       .then((infoValue) => { setInfo(infoValue) })
       .catch((reason) => setMessage({ tone: 'danger', text: adminErrorMessage(reason) }))
   }, [api, event.id])
+  const updateInfo = (patch: Partial<ParticipantInfo>) => {
+    setInfo((current) => current ? { ...current, ...patch } : current)
+  }
   const saveInfo = async (submit: FormEvent) => {
     submit.preventDefault(); if (!info) return; setBusy('info'); setMessage(null)
     try {
@@ -120,10 +123,10 @@ export function EventInformationTab({ api, event }: { api: AdminApi; event: Even
   return <div className="admin-stack">
     {message && <AdminNotice tone={message.tone}>{message.text}</AdminNotice>}
     {info && <section className="admin-card"><div className="admin-card-heading"><div><h2>Информация для участников</h2><p>Публичное описание и сведения о площадке.</p></div></div><form className="admin-form" onSubmit={saveInfo}>
-      <Field label="Краткое описание"><textarea value={info.shortDescription ?? ''} onChange={(change) => setInfo({ ...info, shortDescription: change.target.value || null })} /></Field>
-      <div className="admin-form-grid"><Field label="Площадка"><input value={info.venueName ?? ''} onChange={(change) => setInfo({ ...info, venueName: change.target.value || null })} /></Field><Field label="Адрес площадки"><input value={info.venueAddress ?? ''} onChange={(change) => setInfo({ ...info, venueAddress: change.target.value || null })} /></Field></div>
-      <Field label="Как добраться"><textarea value={info.locationDescription ?? ''} onChange={(change) => setInfo({ ...info, locationDescription: change.target.value || null })} /></Field>
-      <Field label="Дополнительная информация"><textarea value={info.additionalInfo ?? ''} onChange={(change) => setInfo({ ...info, additionalInfo: change.target.value || null })} /></Field>
+      <Field label="Краткое описание"><textarea value={info.shortDescription ?? ''} onChange={(change) => updateInfo({ shortDescription: change.target.value || null })} /></Field>
+      <div className="admin-form-grid"><Field label="Площадка"><input value={info.venueName ?? ''} onChange={(change) => updateInfo({ venueName: change.target.value || null })} /></Field><Field label="Адрес площадки"><input value={info.venueAddress ?? ''} onChange={(change) => updateInfo({ venueAddress: change.target.value || null })} /></Field></div>
+      <Field label="Как добраться"><textarea value={info.locationDescription ?? ''} onChange={(change) => updateInfo({ locationDescription: change.target.value || null })} /></Field>
+      <Field label="Дополнительная информация"><textarea value={info.additionalInfo ?? ''} onChange={(change) => updateInfo({ additionalInfo: change.target.value || null })} /></Field>
       <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy === 'info'}>Сохранить информацию</button></div>
     </form></section>}
     <EventContentManager api={api} eventId={event.id} />

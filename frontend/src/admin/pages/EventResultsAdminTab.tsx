@@ -31,7 +31,7 @@ export function EventResultsAdminTab({ api, event, races, mode }: {
         categoryId: filters.categoryId ? Number(filters.categoryId) : undefined,
         clusterId: filters.clusterId ? Number(filters.clusterId) : undefined,
         status: filters.status, page: filters.page, size: 50,
-        sort: filters.sort, direction: filters.direction, rankingBasis: 'CHIP_TIME',
+        sort: filters.sort, direction: filters.direction,
       })
       setRows(page)
     } catch (reason) { setError(adminErrorMessage(reason)) }

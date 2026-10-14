@@ -31,7 +31,9 @@ public class EventContentService {
     @Transactional(readOnly = true)
     public EventParticipantInfoDto getParticipantInfo(Long eventId) {
         eventService.requireEvent(eventId);
-        return participantInfoRepository.findByEventId(eventId).map(EventContentService::toDto).orElse(null);
+        return participantInfoRepository.findByEventId(eventId)
+                .map(EventContentService::toDto)
+                .orElseGet(EventContentService::emptyParticipantInfo);
     }
 
     @Transactional
@@ -152,6 +154,10 @@ public class EventContentService {
         return new EventParticipantInfoDto(info.getId(), info.getShortDescription(), info.getVenueName(),
                 info.getVenueAddress(), info.getLocationDescription(), info.getLatitude(), info.getLongitude(),
                 info.getAdditionalInfo());
+    }
+
+    private static EventParticipantInfoDto emptyParticipantInfo() {
+        return new EventParticipantInfoDto(null, null, null, null, null, null, null, null);
     }
 
     public static EventInfoBlockDto toDto(EventInfoBlock block) {
