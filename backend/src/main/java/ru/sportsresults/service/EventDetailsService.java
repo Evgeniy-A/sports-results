@@ -23,6 +23,7 @@ public class EventDetailsService {
     private final StartClusterRepository clusterRepository;
     private final AwardPolicyRepository awardPolicyRepository;
     private final CategoryRepository categoryRepository;
+    private final EventResultsPublicationStateResolver resultsPublicationStateResolver;
 
     public EventDetailsService(EventRepository eventRepository,
                                EventParticipantInfoRepository participantInfoRepository,
@@ -32,7 +33,8 @@ public class EventDetailsService {
                                RaceRepository raceRepository,
                                StartClusterRepository clusterRepository,
                                AwardPolicyRepository awardPolicyRepository,
-                               CategoryRepository categoryRepository) {
+                               CategoryRepository categoryRepository,
+                               EventResultsPublicationStateResolver resultsPublicationStateResolver) {
         this.eventRepository = eventRepository;
         this.participantInfoRepository = participantInfoRepository;
         this.infoBlockRepository = infoBlockRepository;
@@ -42,6 +44,7 @@ public class EventDetailsService {
         this.clusterRepository = clusterRepository;
         this.awardPolicyRepository = awardPolicyRepository;
         this.categoryRepository = categoryRepository;
+        this.resultsPublicationStateResolver = resultsPublicationStateResolver;
     }
 
     @Transactional(readOnly = true)
@@ -96,15 +99,12 @@ public class EventDetailsService {
                     );
                 })
                 .toList();
-        boolean anyPublishedResults = flatRaces.stream().anyMatch(PublicRaceDto::resultsPublished);
-        ResultsPublicationStatus publicResultsStatus = anyPublishedResults
-                ? ResultsPublicationStatus.PUBLISHED
-                : ResultsPublicationStatus.DRAFT;
+        EventResultsPublicationStateResolver.State publicationState = resultsPublicationStateResolver.resolve(eventId);
 
         return new EventDetailsDto(eventId, event.getEventSeries().getId(), event.getEventSeries().getName(),
                 event.getEventSeries().getSlug(), event.getName(), event.getSlug(), event.getStartsAt(), event.getEndsAt(),
                 event.getLocation(), event.getTimeZone(), EventPhaseCalculator.calculate(event, Instant.now()),
-                event.getPublicationStatus(), publicResultsStatus, anyPublishedResults,
+                event.getPublicationStatus(), publicationState.status(), publicationState.published(),
                 participantInfoRepository.findByEventId(eventId).map(EventContentService::toDto).orElse(null),
                 scheduleRepository.findAllByEventIdOrderByStartsAtAscDisplayOrderAscIdAsc(eventId).stream()
                         .map(EventContentService::toDto).toList(),

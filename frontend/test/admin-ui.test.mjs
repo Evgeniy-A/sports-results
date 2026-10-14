@@ -399,6 +399,14 @@ test('result publication tab reuses Race publication state and APIs', () => {
   assert.doesNotMatch(publication, /updateEventPublication|new publication|resultsPublished\s*=/i)
 })
 
+test('event publication form keeps the legacy results field compatibility-only', () => {
+  assert.match(eventGeneralTab, /api\.updateEventPublication\(event\.id/)
+  assert.match(eventGeneralTab, /resultsPublicationStatus: event\.resultsPublicationStatus/)
+  assert.match(eventGeneralTab, /Статусы результатов стартов не изменены/)
+  assert.match(eventGeneralTab, /const publishedRace = races\.some\(\(race\) => race\.resultsPublicationStatus === 'PUBLISHED'\)/)
+  assert.doesNotMatch(eventGeneralTab, /api\.(?:publishRace|draftRace)\(/)
+})
+
 test('categories remain in award workflow while start waves are not ordinary Event settings', () => {
   assert.match(policy, /CategorySettings/)
   assert.match(categorySettings, /Добавить категорию/)

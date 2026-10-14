@@ -6,6 +6,7 @@ import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Join;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -13,6 +14,7 @@ import org.springframework.data.domain.Pageable;
 import ru.sportsresults.domain.Event;
 import ru.sportsresults.domain.EventPublicationStatus;
 import ru.sportsresults.domain.EventSeries;
+import ru.sportsresults.domain.Race;
 import ru.sportsresults.domain.ResultsPublicationStatus;
 
 import java.time.Instant;
@@ -64,7 +66,7 @@ public class EventCatalogRepositoryImpl implements EventCatalogRepository {
         Root<Event> event = query.from(Event.class);
         event.fetch("eventSeries");
         query.select(event).where(adminPredicates(
-                builder, event, name, location, publicationStatus, resultsPublicationStatus
+                builder, query, event, name, location, publicationStatus, resultsPublicationStatus
         ));
         query.orderBy(builder.asc(builder.isNull(event.get("startsAt"))),
                 builder.desc(event.get("startsAt")), builder.desc(event.get("id")));
@@ -76,7 +78,7 @@ public class EventCatalogRepositoryImpl implements EventCatalogRepository {
         CriteriaQuery<Long> countQuery = builder.createQuery(Long.class);
         Root<Event> countEvent = countQuery.from(Event.class);
         countQuery.select(builder.count(countEvent)).where(adminPredicates(
-                builder, countEvent, name, location, publicationStatus, resultsPublicationStatus
+                builder, countQuery, countEvent, name, location, publicationStatus, resultsPublicationStatus
         ));
         long total = entityManager.createQuery(countQuery).getSingleResult();
         return new PageImpl<>(content, pageable, total);
@@ -84,6 +86,7 @@ public class EventCatalogRepositoryImpl implements EventCatalogRepository {
 
     private Predicate[] adminPredicates(
             CriteriaBuilder builder,
+            CriteriaQuery<?> query,
             Root<Event> event,
             String name,
             String location,
@@ -107,7 +110,17 @@ public class EventCatalogRepositoryImpl implements EventCatalogRepository {
             predicates.add(builder.equal(event.get("publicationStatus"), publicationStatus));
         }
         if (resultsPublicationStatus != null) {
-            predicates.add(builder.equal(event.get("resultsPublicationStatus"), resultsPublicationStatus));
+            Subquery<Long> publishedRace = query.subquery(Long.class);
+            Root<Race> race = publishedRace.from(Race.class);
+            publishedRace.select(builder.literal(1L)).where(
+                    builder.equal(race.get("event").get("id"), event.get("id")),
+                    builder.isTrue(race.get("publicVisible")),
+                    builder.equal(race.get("resultsPublicationStatus"), ResultsPublicationStatus.PUBLISHED)
+            );
+            Predicate hasPublishedRace = builder.exists(publishedRace);
+            predicates.add(resultsPublicationStatus == ResultsPublicationStatus.PUBLISHED
+                    ? hasPublishedRace
+                    : builder.not(hasPublishedRace));
         }
         return predicates.toArray(Predicate[]::new);
     }

@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 import ru.sportsresults.domain.Race;
 import ru.sportsresults.domain.ResultsPublicationStatus;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -24,6 +25,18 @@ public interface RaceRepository extends JpaRepository<Race, Long> {
     boolean existsByEventIdAndPublicVisibleTrueAndResultsPublicationStatus(
             Long eventId,
             ResultsPublicationStatus resultsPublicationStatus
+    );
+
+    @Query("""
+            select distinct race.event.id
+            from Race race
+            where race.event.id in :eventIds
+              and race.publicVisible = true
+              and race.resultsPublicationStatus = :resultsPublicationStatus
+            """)
+    List<Long> findEventIdsWithPublicVisibleResultsStatus(
+            @Param("eventIds") Collection<Long> eventIds,
+            @Param("resultsPublicationStatus") ResultsPublicationStatus resultsPublicationStatus
     );
 
     boolean existsByEventIdAndSlug(Long eventId, String slug);

@@ -27,6 +27,7 @@ import ru.sportsresults.api.dto.ImportReportDto;
 import ru.sportsresults.api.dto.ImportApplyResponseDto;
 import ru.sportsresults.api.dto.ImportPreviewResponseDto;
 import ru.sportsresults.api.dto.AwardPolicyDto;
+import ru.sportsresults.api.dto.EventDto;
 import ru.sportsresults.api.dto.PageResponse;
 import ru.sportsresults.api.dto.RaceDto;
 import ru.sportsresults.api.dto.RankingAchievementDto;
@@ -5852,7 +5853,10 @@ class BackendIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"eventPublicationStatus\":\"PUBLISHED\",\"resultsPublicationStatus\":\"PUBLISHED\"}"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resultsPublicationStatus").value("PUBLISHED"))
                 .andExpect(jsonPath("$.resultsPublished").value(true));
+        assertThat(eventRepository.findById(event.getId()).orElseThrow().getResultsPublicationStatus())
+                .isEqualTo(ResultsPublicationStatus.DRAFT);
         mockMvc.perform(get("/api/events/{eventId}/results", event.getId()).param("raceId", race.getId().toString()))
                 .andExpect(status().isOk());
 
@@ -5860,7 +5864,9 @@ class BackendIntegrationTest {
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"eventPublicationStatus\":\"PUBLISHED\",\"resultsPublicationStatus\":\"DRAFT\"}"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resultsPublicationStatus").value("PUBLISHED"))
+                .andExpect(jsonPath("$.resultsPublished").value(true));
         mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug())).andExpect(status().isOk());
         mockMvc.perform(get("/api/events/{eventId}/results", event.getId()).param("raceId", race.getId().toString()))
                 .andExpect(status().isOk());
@@ -5877,9 +5883,97 @@ class BackendIntegrationTest {
                 .andExpect(status().isNotFound());
         assertThat(raceRepository.findById(race.getId()).orElseThrow().getResultsPublicationStatus())
                 .isEqualTo(ResultsPublicationStatus.PUBLISHED);
+        assertThat(eventRepository.findById(event.getId()).orElseThrow().getResultsPublicationStatus())
+                .isEqualTo(ResultsPublicationStatus.DRAFT);
         assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
                 AuditEntityType.EVENT, event.getId())).extracting(AdminChangeLog::getFieldName)
-                .contains("publicationStatus", "resultsPublicationStatus");
+                .contains("publicationStatus")
+                .doesNotContain("resultsPublicationStatus");
+    }
+
+    @Test
+    void derivesEventResultsPublicationFromPublicVisibleRacesForDtosAndAdminFilters() {
+        EventSeries series = createSeries("Derived publication series", "derived-publication-series");
+        Event noRace = createEvent(series, "Derived publication no race", "derived-no-race",
+                "Казань", "2027-08-15T06:00:00Z");
+        Event draftOnly = createEvent(series, "Derived publication draft", "derived-draft",
+                "Казань", "2027-08-16T06:00:00Z");
+        Race draftRace = createDraftRace(draftOnly, "draft", 0);
+        Event publishedOnly = createEvent(series, "Derived publication published", "derived-published",
+                "Казань", "2027-08-17T06:00:00Z");
+        publishedOnly.setResultsPublicationStatus(ResultsPublicationStatus.DRAFT);
+        eventRepository.saveAndFlush(publishedOnly);
+        Race publishedRace = createDraftRace(publishedOnly, "published", 0);
+        publishedRace.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        raceRepository.saveAndFlush(publishedRace);
+        Event mixed = createEvent(series, "Derived publication mixed", "derived-mixed",
+                "Казань", "2027-08-18T06:00:00Z");
+        mixed.setResultsPublicationStatus(ResultsPublicationStatus.DRAFT);
+        eventRepository.saveAndFlush(mixed);
+        Race mixedPublishedRace = createDraftRace(mixed, "mixed-published", 0);
+        mixedPublishedRace.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        raceRepository.saveAndFlush(mixedPublishedRace);
+        createDraftRace(mixed, "mixed-draft", 1);
+        Event hiddenPublished = createEvent(series, "Derived publication hidden", "derived-hidden",
+                "Казань", "2027-08-19T06:00:00Z");
+        Race hiddenRace = createDraftRace(hiddenPublished, "hidden", 0);
+        hiddenRace.setPublicVisible(false);
+        hiddenRace.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        raceRepository.saveAndFlush(hiddenRace);
+
+        assertThat(eventService.getAdminEvent(noRace.getId()))
+                .extracting(EventDto::resultsPublicationStatus, EventDto::resultsPublished)
+                .containsExactly(ResultsPublicationStatus.DRAFT, false);
+        assertThat(eventService.getAdminEvent(draftOnly.getId()))
+                .extracting(EventDto::resultsPublicationStatus, EventDto::resultsPublished)
+                .containsExactly(ResultsPublicationStatus.DRAFT, false);
+        assertThat(eventService.getAdminEvent(hiddenPublished.getId()))
+                .extracting(EventDto::resultsPublicationStatus, EventDto::resultsPublished)
+                .containsExactly(ResultsPublicationStatus.DRAFT, false);
+        assertThat(eventService.getAdminEvent(publishedOnly.getId()))
+                .extracting(EventDto::resultsPublicationStatus, EventDto::resultsPublished)
+                .containsExactly(ResultsPublicationStatus.PUBLISHED, true);
+        assertThat(eventService.getAdminEvent(mixed.getId()))
+                .extracting(EventDto::resultsPublicationStatus, EventDto::resultsPublished)
+                .containsExactly(ResultsPublicationStatus.PUBLISHED, true);
+
+        for (Event candidate : List.of(noRace, draftOnly, publishedOnly, mixed, hiddenPublished)) {
+            EventDto adminEvent = eventService.getAdminEvent(candidate.getId());
+            EventDto publicCandidate = eventService.getPublishedEvent(candidate.getId());
+            assertThat(publicCandidate.resultsPublicationStatus())
+                    .isEqualTo(adminEvent.resultsPublicationStatus());
+            assertThat(publicCandidate.resultsPublished()).isEqualTo(adminEvent.resultsPublished());
+        }
+
+        EventDto publicEvent = eventService.getPublishedEvent(publishedOnly.getId());
+        assertThat(publicEvent.resultsPublicationStatus()).isEqualTo(ResultsPublicationStatus.PUBLISHED);
+        assertThat(publicEvent.resultsPublished()).isTrue();
+        var publicDetails = context.getBean(ru.sportsresults.service.EventDetailsService.class)
+                .getPublished(publishedOnly.getId());
+        assertThat(publicDetails.resultsPublicationStatus()).isEqualTo(publicEvent.resultsPublicationStatus());
+        assertThat(publicDetails.resultsPublished()).isEqualTo(publicEvent.resultsPublished());
+
+        PageResponse<EventDto> publishedFilter = eventService.searchAdminEvents(
+                "Derived publication", null, null, ResultsPublicationStatus.PUBLISHED, 0, 20
+        );
+        assertThat(publishedFilter.content()).extracting(EventDto::id)
+                .containsExactlyInAnyOrder(publishedOnly.getId(), mixed.getId());
+        PageResponse<EventDto> draftFilter = eventService.searchAdminEvents(
+                "Derived publication", null, null, ResultsPublicationStatus.DRAFT, 0, 20
+        );
+        assertThat(draftFilter.content()).extracting(EventDto::id)
+                .containsExactlyInAnyOrder(noRace.getId(), draftOnly.getId(), hiddenPublished.getId());
+
+        publishedRace.setResultsPublicationStatus(ResultsPublicationStatus.DRAFT);
+        raceRepository.saveAndFlush(publishedRace);
+        assertThat(eventService.getAdminEvent(publishedOnly.getId()))
+                .extracting(EventDto::resultsPublicationStatus, EventDto::resultsPublished)
+                .containsExactly(ResultsPublicationStatus.DRAFT, false);
+        assertThat(eventRepository.findById(publishedOnly.getId()).orElseThrow().getResultsPublicationStatus())
+                .isEqualTo(ResultsPublicationStatus.DRAFT);
+        assertThat(eventRepository.findById(draftOnly.getId()).orElseThrow().getResultsPublicationStatus())
+                .isEqualTo(ResultsPublicationStatus.PUBLISHED);
+        assertThat(draftRace.getResultsPublicationStatus()).isEqualTo(ResultsPublicationStatus.DRAFT);
     }
 
     @Test

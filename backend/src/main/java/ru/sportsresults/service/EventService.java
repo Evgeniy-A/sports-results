@@ -93,6 +93,7 @@ public class EventService {
     private final EventResultDataMutationGuard mutationGuard;
     private final SlugGenerator slugGenerator;
     private final ResultInquiryAvailabilityService resultInquiryAvailabilityService;
+    private final EventResultsPublicationStateResolver resultsPublicationStateResolver;
 
     public EventService(
             EventRepository eventRepository,
@@ -109,7 +110,8 @@ public class EventService {
             EventParticipantInfoRepository participantInfoRepository,
             EventResultDataMutationGuard mutationGuard,
             SlugGenerator slugGenerator,
-            ResultInquiryAvailabilityService resultInquiryAvailabilityService
+            ResultInquiryAvailabilityService resultInquiryAvailabilityService,
+            EventResultsPublicationStateResolver resultsPublicationStateResolver
     ) {
         this.eventRepository = eventRepository;
         this.eventSeriesRepository = eventSeriesRepository;
@@ -126,6 +128,7 @@ public class EventService {
         this.mutationGuard = mutationGuard;
         this.slugGenerator = slugGenerator;
         this.resultInquiryAvailabilityService = resultInquiryAvailabilityService;
+        this.resultsPublicationStateResolver = resultsPublicationStateResolver;
     }
 
     @Transactional(readOnly = true)
@@ -147,8 +150,12 @@ public class EventService {
         Map<Long, EventParticipantInfo> infoByEvent = participantInfoRepository.findAllByEventIdIn(
                         result.getContent().stream().map(Event::getId).toList())
                 .stream().collect(Collectors.toMap(info -> info.getEvent().getId(), info -> info));
+        Map<Long, EventResultsPublicationStateResolver.State> publicationStates =
+                resultsPublicationStateResolver.resolveAll(result.getContent().stream().map(Event::getId).toList());
         return new PageResponse<>(
-                result.getContent().stream().map(event -> toPublicDto(event, infoByEvent.get(event.getId()))).toList(),
+                result.getContent().stream().map(event -> toDto(
+                        event, infoByEvent.get(event.getId()), publicationStates.get(event.getId())
+                )).toList(),
                 page,
                 size,
                 result.getTotalElements(),
@@ -178,8 +185,12 @@ public class EventService {
         Map<Long, EventParticipantInfo> infoByEvent = participantInfoRepository.findAllByEventIdIn(
                         result.getContent().stream().map(Event::getId).toList())
                 .stream().collect(Collectors.toMap(info -> info.getEvent().getId(), info -> info));
+        Map<Long, EventResultsPublicationStateResolver.State> publicationStates =
+                resultsPublicationStateResolver.resolveAll(result.getContent().stream().map(Event::getId).toList());
         return new PageResponse<>(
-                result.getContent().stream().map(event -> toDto(event, infoByEvent.get(event.getId()))).toList(),
+                result.getContent().stream().map(event -> toDto(
+                        event, infoByEvent.get(event.getId()), publicationStates.get(event.getId())
+                )).toList(),
                 page,
                 size,
                 result.getTotalElements(),
@@ -688,15 +699,10 @@ public class EventService {
         if (request.eventPublicationStatus() == EventPublicationStatus.PUBLISHED && event.getStartsAt() == null) {
             throw new InvalidRequestException("EVENT_DATE_REQUIRED", "A published event must have a start date");
         }
-        if (request.resultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED
-                && request.eventPublicationStatus() != EventPublicationStatus.PUBLISHED) {
-            throw new InvalidRequestException("EVENT_MUST_BE_PUBLISHED", "Publish the event before publishing results");
-        }
+        // resultsPublicationStatus remains in the request for API compatibility; Race publication is authoritative.
         List<AdminChangeLog> changes = new ArrayList<>();
         addChange(changes, actor, eventId, "publicationStatus", event.getPublicationStatus(), request.eventPublicationStatus());
-        addChange(changes, actor, eventId, "resultsPublicationStatus", event.getResultsPublicationStatus(), request.resultsPublicationStatus());
         event.setPublicationStatus(request.eventPublicationStatus());
-        event.setResultsPublicationStatus(request.resultsPublicationStatus());
         Event saved = eventRepository.save(event);
         changeLogRepository.saveAll(changes);
         return toDto(saved, participantInfoRepository.findByEventId(eventId).orElse(null));
@@ -813,39 +819,32 @@ public class EventService {
         changes.add(log);
     }
 
-    public static EventDto toDto(Event event) {
+    private EventDto toDto(Event event) {
         return toDto(event, null);
     }
 
-    public static EventDto toDto(Event event, EventParticipantInfo info) {
+    private EventDto toDto(Event event, EventParticipantInfo info) {
+        return toDto(event, info, resultsPublicationStateResolver.resolve(event.getId()));
+    }
+
+    private static EventDto toDto(
+            Event event,
+            EventParticipantInfo info,
+            EventResultsPublicationStateResolver.State publicationState
+    ) {
         return new EventDto(
                 event.getId(), event.getEventSeries().getId(), event.getEventSeries().getName(), event.getEventSeries().getSlug(),
                 event.getName(), event.getSlug(), event.getStartsAt(), event.getEndsAt(), event.getLocation(), event.getTimeZone(),
-                event.getPublicationStatus(), event.getResultsPublicationStatus(),
+                event.getPublicationStatus(), publicationState.status(),
                 EventPhaseCalculator.calculate(event, Instant.now()),
                 info == null ? null : info.getShortDescription(),
                 info == null ? null : info.getVenueName(),
-                event.getResultsPublicationStatus() == ResultsPublicationStatus.PUBLISHED
+                publicationState.published()
         );
     }
 
     private EventDto toPublicDto(Event event, EventParticipantInfo info) {
-        boolean anyPublishedResults = raceRepository
-                .existsByEventIdAndPublicVisibleTrueAndResultsPublicationStatus(
-                        event.getId(), ResultsPublicationStatus.PUBLISHED
-                );
-        ResultsPublicationStatus status = anyPublishedResults
-                ? ResultsPublicationStatus.PUBLISHED
-                : ResultsPublicationStatus.DRAFT;
-        return new EventDto(
-                event.getId(), event.getEventSeries().getId(), event.getEventSeries().getName(),
-                event.getEventSeries().getSlug(), event.getName(), event.getSlug(), event.getStartsAt(),
-                event.getEndsAt(), event.getLocation(), event.getTimeZone(), event.getPublicationStatus(), status,
-                EventPhaseCalculator.calculate(event, Instant.now()),
-                info == null ? null : info.getShortDescription(),
-                info == null ? null : info.getVenueName(),
-                anyPublishedResults
-        );
+        return toDto(event, info, resultsPublicationStateResolver.resolve(event.getId()));
     }
 
     private void applyInitialResultInquirySettings(
