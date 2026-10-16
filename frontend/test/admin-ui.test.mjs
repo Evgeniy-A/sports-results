@@ -452,6 +452,18 @@ test('import exposes three explicit modes and never auto-syncs them', () => {
   assert.doesNotMatch(imports, /Синхронизировать всё/)
 })
 
+test('update import exposes authoritative per-field manual conflict resolution', () => {
+  assert.match(imports, /manualConflicts/)
+  assert.match(imports, /ordinaryBlockingErrorsPresent/)
+  assert.match(imports, /Оставить все ручные/)
+  assert.match(imports, /Принять всё из файла/)
+  assert.match(imports, /Оставить ручное/)
+  assert.match(imports, /Принять из файла/)
+  assert.match(imports, /manualConflictResolutionPayload/)
+  assert.match(api, /manualConflictResolutions/)
+  assert.match(api, /JSON\.stringify\(manualConflictResolutions\)/)
+})
+
 test('import preview explains manual result conflicts and invalid statuses in Russian', () => {
   assert.match(imports, /MANUAL_RESULT_OVERRIDE_CONFLICT: 'Значение из файла конфликтует с ручной корректировкой результата'/)
   assert.match(imports, /MANUAL_RESULT_OVERRIDE_WOULD_BE_RETIRED: 'Экстренная замена затронет результат с ручными корректировками'/)
@@ -478,7 +490,7 @@ test('flexible import keeps data verification separate from Apply and emergency 
   assert.match(api, /import-mapping-profiles/)
   assert.match(api, /form\.append\('options', JSON\.stringify\(options\)\)/)
   assert.match(imports, /Файл не является актуальным шаблоном Sports Results/)
-  assert.match(imports, /blockingErrorsPresent/)
+  assert.match(imports, /ordinaryBlockingErrorsPresent/)
   assert.match(imports, /api\.importApply/)
   assert.match(imports, /confirmation === 'ЗАМЕНИТЬ'/)
   assert.match(utils, /IMPORT_PREVIEW_STALE.*Повторите проверку данных/s)
@@ -491,7 +503,7 @@ test('no-op import is informational and cannot be applied from the preview', () 
   assert.match(imports, /actionableCount === 0/)
   assert.match(imports, /disabled=\{busy !== null \|\| noChangesToApply\}/)
   assert.match(imports, /AdminNotice tone="info">Изменений для применения нет\./)
-  assert.match(imports, /if \(!preview \|\| !file \|\| preview\.blockingErrorsPresent \|\| noChangesToApply\) return/)
+  assert.match(imports, /if \(!preview \|\| !file \|\| applyBlocked \|\| noChangesToApply\) return/)
 })
 
 test('import presentation translates technical decisions and category or cluster changes', () => {
@@ -694,6 +706,7 @@ test('XLSX is downloaded as binary and share batch can be revoked', () => {
 })
 
 test('central error mapping covers guards and stale operations', () => {
+  assert.match(utils, /PREVIEW_STALE: 'Данные или настройки изменились\. Повторите проверку данных\.'/)
   for (const code of ['RACE_RESULTS_MUST_BE_DRAFT', 'RESULT_RECALCULATION_REQUIRED', 'RECALC_PREVIEW_STALE', 'RETIRED_REGISTRATION_NOT_MUTABLE', 'CATEGORY_IN_USE', 'DUPLICATE_BIB', 'AMBIGUOUS', 'CONFLICT']) {
     assert.match(utils, new RegExp(code))
   }

@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.sportsresults.api.dto.ImportApplyResponseDto;
 import ru.sportsresults.api.dto.ImportPreviewResponseDto;
+import ru.sportsresults.api.dto.ManualConflictResolutionDto;
 import ru.sportsresults.domain.AgeCalculationMode;
 import ru.sportsresults.domain.AdminChangeLog;
 import ru.sportsresults.domain.AuditEntityType;
@@ -51,6 +52,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -76,6 +78,7 @@ class ImportApplyTransactionService {
     private final ResultIssueRequestRepository issueRepository;
     private final ResultIssueLifecycleService issueLifecycleService;
     private final AdminChangeLogRepository auditRepository;
+    private final ManualConflictResolutionService manualConflictResolutionService;
 
     ImportApplyTransactionService(
             EventResultDataMutationGuard mutationGuard,
@@ -93,7 +96,8 @@ class ImportApplyTransactionService {
             AgeCategoryResolver ageCategoryResolver,
             ResultIssueRequestRepository issueRepository,
             ResultIssueLifecycleService issueLifecycleService,
-            AdminChangeLogRepository auditRepository
+            AdminChangeLogRepository auditRepository,
+            ManualConflictResolutionService manualConflictResolutionService
     ) {
         this.mutationGuard = mutationGuard;
         this.operationRepository = operationRepository;
@@ -111,6 +115,7 @@ class ImportApplyTransactionService {
         this.issueRepository = issueRepository;
         this.issueLifecycleService = issueLifecycleService;
         this.auditRepository = auditRepository;
+        this.manualConflictResolutionService = manualConflictResolutionService;
     }
 
     @Transactional
@@ -118,6 +123,7 @@ class ImportApplyTransactionService {
             Long eventId,
             UUID operationId,
             PreparedImportFile prepared,
+            List<ManualConflictResolutionDto> manualConflictResolutions,
             String actor
     ) {
         // Global order for result-data writes: Event, sorted selected Races, operation.
@@ -186,15 +192,25 @@ class ImportApplyTransactionService {
         if (!operation.getPlanDigest().equals(plan.planDigest())) {
             throw new RequestConflictException("PREVIEW_STALE", "Import plan differs from the confirmed preview");
         }
-        if (plan.blockingErrorsPresent()) {
+        if (plan.ordinaryBlockingErrorsPresent()) {
             throw new RequestConflictException("PREVIEW_BLOCKED", "Import plan contains blocking rows");
         }
-        int applicableCount = switch (operation.getMode()) {
-            case ADD_NEW -> plan.totals().newCount();
-            case UPDATE_EXISTING -> plan.totals().changedCount();
-            case EMERGENCY_REPLACE -> plan.emergencySummary().totals().retireCount()
-                    + plan.emergencySummary().totals().insertCount();
-        };
+        ManualConflictResolutionPlan resolutionPlan = manualConflictResolutionService.resolve(
+                operation.getMode(), plan, manualConflictResolutions
+        );
+        Set<Integer> resolvedManualRows = resolutionPlan.resolvedRows();
+        ImportPreviewDecision applicableDecision = operation.getMode() == ImportOperationMode.UPDATE_EXISTING
+                ? ImportPreviewDecision.EXISTING_CHANGED
+                : ImportPreviewDecision.NEW;
+        List<ImportPreviewResponseDto.Row> applicableRows = plan.rows().stream()
+                .filter(row -> row.decision() == applicableDecision
+                        || operation.getMode() == ImportOperationMode.UPDATE_EXISTING
+                        && resolvedManualRows.contains(row.sourceRowNumber()))
+                .toList();
+        int applicableCount = operation.getMode() == ImportOperationMode.EMERGENCY_REPLACE
+                ? plan.emergencySummary().totals().retireCount()
+                        + plan.emergencySummary().totals().insertCount()
+                : applicableRows.size();
         if (applicableCount == 0) {
             return noOpResponse(operation, plan, event.getResultDataRevision());
         }
@@ -212,13 +228,6 @@ class ImportApplyTransactionService {
         if (!racesById.keySet().containsAll(scopeRaceIds)) {
             throw new RequestConflictException("PREVIEW_STALE", "Import Race scope changed after preview");
         }
-        ImportPreviewDecision applicableDecision = operation.getMode() == ImportOperationMode.UPDATE_EXISTING
-                ? ImportPreviewDecision.EXISTING_CHANGED
-                : ImportPreviewDecision.NEW;
-        List<ImportPreviewResponseDto.Row> applicableRows = plan.rows().stream()
-                .filter(row -> row.decision() == applicableDecision)
-                .toList();
-
         int importedSourceRows = operation.getMode() == ImportOperationMode.EMERGENCY_REPLACE
                 ? plan.emergencySummary().totals().insertCount()
                 : applicableCount;
@@ -257,7 +266,8 @@ class ImportApplyTransactionService {
                     event, batch, applicableRows, sourceByRow, racesById, clusters, categoriesByRace, ageModes
             );
             case UPDATE_EXISTING -> updateExisting(
-                    event, batch, applicableRows, sourceByRow, racesById, clusters, categoriesByRace, ageModes
+                    event, batch, operation, appliedAt, actor, applicableRows, sourceByRow, racesById,
+                    clusters, categoriesByRace, ageModes, resolutionPlan
             );
         };
 
@@ -452,12 +462,16 @@ class ImportApplyTransactionService {
     private MutationOutcome updateExisting(
             Event event,
             ImportBatch batch,
+            ImportOperation operation,
+            Instant appliedAt,
+            String actor,
             List<ImportPreviewResponseDto.Row> rows,
             Map<Integer, TimingResultImportRow> sourceByRow,
             Map<Long, Race> racesById,
             List<StartCluster> clusters,
             Map<Long, List<Category>> categoriesByRace,
-            Map<Long, AgeCalculationMode> ageModes
+            Map<Long, AgeCalculationMode> ageModes,
+            ManualConflictResolutionPlan resolutionPlan
     ) {
         List<Long> registrationIds = rows.stream()
                 .map(ImportPreviewResponseDto.Row::matchedRegistrationId)
@@ -482,6 +496,7 @@ class ImportApplyTransactionService {
         Map<Integer, Result> resultsByRow = new LinkedHashMap<>();
         List<Registration> changedRegistrations = new ArrayList<>(rows.size());
         List<Result> changedResults = new ArrayList<>(rows.size());
+        List<AdminChangeLog> acceptedSourceAudits = new ArrayList<>();
         int resultCreatedCount = 0;
 
         for (ImportPreviewResponseDto.Row planned : rows) {
@@ -533,13 +548,30 @@ class ImportApplyTransactionService {
                 result.setRegistration(registration);
                 resultCreatedCount++;
             }
-            applyResult(result, source);
+            Set<String> keepManualFields = resolutionPlan.keepManualFields(planned.sourceRowNumber());
+            Set<String> acceptSourceFields = resolutionPlan.acceptSourceFields(planned.sourceRowNumber());
+            for (String field : acceptSourceFields) {
+                ImportPreviewResponseDto.FieldDiff diff = planned.diffs().stream()
+                        .filter(candidate -> candidate.field().equals(field))
+                        .findFirst()
+                        .orElseThrow(() -> new RequestConflictException(
+                                "PREVIEW_STALE", "Manual conflict field changed after preview"
+                        ));
+                acceptedSourceAudits.add(acceptedSourceAudit(
+                        actor, operation.getId(), appliedAt, result.getId(), field,
+                        diff.oldValue(), diff.newValue()
+                ));
+            }
+            applyResult(result, source, keepManualFields);
             changedResults.add(result);
             resultsByRow.put(planned.sourceRowNumber(), result);
         }
 
         registrationRepository.saveAllAndFlush(changedRegistrations);
         resultRepository.saveAllAndFlush(changedResults);
+        if (!acceptedSourceAudits.isEmpty()) {
+            auditRepository.saveAll(acceptedSourceAudits);
+        }
         return new MutationOutcome(registrationsByRow, resultsByRow, 0, rows.size(), resultCreatedCount);
     }
 
@@ -705,16 +737,55 @@ class ImportApplyTransactionService {
         return null;
     }
 
-    private static void applyResult(Result result, TimingResultImportRow source) {
-        result.setStatus(source.status());
-        result.setGunTime(apply(result.getGunTime(), source.gunTimeSource()));
-        result.setChipTime(apply(result.getChipTime(), source.chipTimeSource()));
-        result.setOverallPlace(apply(result.getOverallPlace(), source.overallPlaceSource()));
-        result.setGenderPlace(apply(result.getGenderPlace(), source.genderPlaceSource()));
-        result.setCategoryPlace(apply(result.getCategoryPlace(), source.categoryPlaceSource()));
-        result.setNetOverallPlace(apply(result.getNetOverallPlace(), source.netOverallPlaceSource()));
-        result.setNetGenderPlace(apply(result.getNetGenderPlace(), source.netGenderPlaceSource()));
-        result.setNetCategoryPlace(apply(result.getNetCategoryPlace(), source.netCategoryPlaceSource()));
+    private static void applyResult(Result result, TimingResultImportRow source, Set<String> keepManualFields) {
+        if (!keepManualFields.contains("status")) result.setStatus(source.status());
+        if (!keepManualFields.contains("gunTimeMs")) {
+            result.setGunTime(apply(result.getGunTime(), source.gunTimeSource()));
+        }
+        if (!keepManualFields.contains("chipTimeMs")) {
+            result.setChipTime(apply(result.getChipTime(), source.chipTimeSource()));
+        }
+        if (!keepManualFields.contains("overallPlace")) {
+            result.setOverallPlace(apply(result.getOverallPlace(), source.overallPlaceSource()));
+        }
+        if (!keepManualFields.contains("genderPlace")) {
+            result.setGenderPlace(apply(result.getGenderPlace(), source.genderPlaceSource()));
+        }
+        if (!keepManualFields.contains("categoryPlace")) {
+            result.setCategoryPlace(apply(result.getCategoryPlace(), source.categoryPlaceSource()));
+        }
+        if (!keepManualFields.contains("netOverallPlace")) {
+            result.setNetOverallPlace(apply(result.getNetOverallPlace(), source.netOverallPlaceSource()));
+        }
+        if (!keepManualFields.contains("netGenderPlace")) {
+            result.setNetGenderPlace(apply(result.getNetGenderPlace(), source.netGenderPlaceSource()));
+        }
+        if (!keepManualFields.contains("netCategoryPlace")) {
+            result.setNetCategoryPlace(apply(result.getNetCategoryPlace(), source.netCategoryPlaceSource()));
+        }
+    }
+
+    private static AdminChangeLog acceptedSourceAudit(
+            String actor,
+            UUID operationId,
+            Instant changedAt,
+            Long resultId,
+            String field,
+            String oldValue,
+            String newValue
+    ) {
+        if (resultId == null) {
+            throw new RequestConflictException("PREVIEW_STALE", "Manual conflict Result changed after preview");
+        }
+        AdminChangeLog log = new AdminChangeLog();
+        log.setActor(actor);
+        log.setChangedAt(changedAt);
+        log.setEntityType(AuditEntityType.RESULT);
+        log.setEntityId(resultId);
+        log.setFieldName(ManualResultCorrectionFields.acceptedSourceAuditField(operationId, field));
+        log.setOldValue(oldValue);
+        log.setNewValue(newValue);
+        return log;
     }
 
     private static <T> T apply(T current, SourceField<T> source) {
@@ -746,10 +817,12 @@ class ImportApplyTransactionService {
         item.setOperation(operation);
         item.setSourceRowNumber(row.sourceRowNumber());
         item.setBib(row.bib());
-        item.setDecision(row.decision());
-        item.setAction(row.futureAction());
         Registration affectedRegistration = outcome.registrationsByRow().get(row.sourceRowNumber());
         Result affectedResult = outcome.resultsByRow().get(row.sourceRowNumber());
+        boolean resolvedManualConflict = affectedRegistration != null
+                && "MANUAL_RESULT_OVERRIDE_CONFLICT".equals(row.reasonCode());
+        item.setDecision(resolvedManualConflict ? ImportPreviewDecision.EXISTING_CHANGED : row.decision());
+        item.setAction(resolvedManualConflict ? ImportPreviewAction.UPDATE : row.futureAction());
         if (affectedRegistration != null) {
             item.setRegistrationId(affectedRegistration.getId());
             item.setResultId(affectedResult == null ? null : affectedResult.getId());

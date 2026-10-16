@@ -234,10 +234,17 @@ public class AdminEventController {
             @PathVariable Long eventId,
             @PathVariable UUID operationId,
             @RequestPart("file") MultipartFile file,
+            @RequestParam(required = false, defaultValue = "[]") String manualConflictResolutions,
             Principal principal
     ) {
         try {
-            return importApplyService.apply(eventId, operationId, file.getBytes(), principal.getName());
+            return importApplyService.apply(
+                    eventId,
+                    operationId,
+                    file.getBytes(),
+                    manualConflictResolutions,
+                    principal.getName()
+            );
         } catch (IOException exception) {
             throw new InvalidRequestException("UPLOAD_READ_FAILED", "Uploaded file could not be read");
         }

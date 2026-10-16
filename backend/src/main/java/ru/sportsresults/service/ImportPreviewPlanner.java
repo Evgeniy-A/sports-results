@@ -95,13 +95,20 @@ public class ImportPreviewPlanner {
         }
         plannedRows.sort(Comparator.comparingInt(ImportPreviewResponseDto.Row::sourceRowNumber));
 
+        List<ImportPreviewResponseDto.ManualConflict> manualConflicts = manualConflicts(
+                plannedRows, snapshot.registrations()
+        );
+        Set<Integer> manualConflictRows = manualConflicts.stream()
+                .map(ImportPreviewResponseDto.ManualConflict::sourceRowNumber)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         ImportPreviewResponseDto.Totals totals = totals(parsed.totalRows(), plannedRows);
-        ImportPreviewResponseDto.ModeSummary modeSummary = modeSummary(mode, totals);
-        boolean blocking = totals.ambiguousCount() > 0
-                || totals.conflictCount() > 0
+        ImportPreviewResponseDto.ModeSummary modeSummary = modeSummary(mode, totals, manualConflictRows.size());
+        boolean ordinaryBlocking = totals.ambiguousCount() > 0
+                || totals.conflictCount() > manualConflictRows.size()
                 || totals.invalidCount() > 0
                 || !duplicateAnalysis.diagnostics().isEmpty()
                 || diagnosticAnalysis.all().stream().anyMatch(diagnostic -> diagnostic.sourceRowNumber() == null);
+        boolean blocking = ordinaryBlocking || !manualConflicts.isEmpty();
         List<ImportPreviewResponseDto.Diagnostic> combinedDiagnostics = new ArrayList<>(diagnosticAnalysis.all());
         if (mode == ImportOperationMode.EMERGENCY_REPLACE) {
             snapshot.registrations().stream()
@@ -136,21 +143,27 @@ public class ImportPreviewPlanner {
         List<ImportPreviewResponseDto.Diagnostic> allDiagnostics = combinedDiagnostics.stream()
                 .sorted(diagnosticOrder())
                 .toList();
-        blocking = blocking || allDiagnostics.stream().anyMatch(diagnostic -> diagnostic.sourceRowNumber() == null);
+        boolean globalDiagnosticBlocking = allDiagnostics.stream()
+                .anyMatch(diagnostic -> diagnostic.sourceRowNumber() == null);
+        ordinaryBlocking = ordinaryBlocking || globalDiagnosticBlocking;
+        blocking = blocking || globalDiagnosticBlocking;
         ImportPreviewResponseDto.EmergencySummary emergencySummary = mode == ImportOperationMode.EMERGENCY_REPLACE
                 ? emergencySummary(sourceFilename, fileSha256, scopeRaceIds, snapshot, plannedRows, totals, allDiagnostics)
                 : null;
         String digest = digest(
                 eventId, mode, scopeRaceIds, fileSha256, snapshot.resultDataRevision(),
-                plannedRows, duplicateAnalysis.diagnostics(), allDiagnostics, snapshot, emergencySummary
+                plannedRows, duplicateAnalysis.diagnostics(), allDiagnostics, manualConflicts, snapshot,
+                emergencySummary
         );
         return new ImportPreviewPlan(
                 totals,
                 modeSummary,
                 blocking,
+                ordinaryBlocking,
                 plannedRows,
                 duplicateAnalysis.diagnostics(),
                 allDiagnostics,
+                manualConflicts,
                 digest,
                 emergencySummary
         );
@@ -386,7 +399,7 @@ public class ImportPreviewPlanner {
                         ImportPreviewDecision.CONFLICT, ImportPreviewAction.BLOCKED,
                         "MANUAL_RESULT_OVERRIDE_CONFLICT",
                         "Source values conflict with manually corrected result fields",
-                        manualConflicts);
+                        diffs);
             }
         }
         ImportPreviewDecision decision = diffs.isEmpty()
@@ -661,9 +674,10 @@ public class ImportPreviewPlanner {
 
     private static ImportPreviewResponseDto.ModeSummary modeSummary(
             ImportOperationMode mode,
-            ImportPreviewResponseDto.Totals totals
+            ImportPreviewResponseDto.Totals totals,
+            int manualConflictRowCount
     ) {
-        int blocked = totals.ambiguousCount() + totals.conflictCount()
+        int blocked = totals.ambiguousCount() + totals.conflictCount() - manualConflictRowCount
                 + totals.invalidCount() + totals.duplicateCount();
         if (mode == ImportOperationMode.EMERGENCY_REPLACE) {
             return new ImportPreviewResponseDto.ModeSummary(
@@ -677,8 +691,42 @@ public class ImportPreviewPlanner {
             );
         }
         return new ImportPreviewResponseDto.ModeSummary(
-                0, totals.changedCount(), 0, totals.newCount(), totals.unchangedCount(), blocked
+                0, totals.changedCount() + manualConflictRowCount,
+                0, totals.newCount(), totals.unchangedCount(), blocked
         );
+    }
+
+    private static List<ImportPreviewResponseDto.ManualConflict> manualConflicts(
+            List<ImportPreviewResponseDto.Row> rows,
+            List<ImportPreviewDatabaseSnapshot.RegistrationSnapshot> registrations
+    ) {
+        Map<Long, ImportPreviewDatabaseSnapshot.RegistrationSnapshot> registrationsById = registrations.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        ImportPreviewDatabaseSnapshot.RegistrationSnapshot::id,
+                        Function.identity(),
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
+        List<ImportPreviewResponseDto.ManualConflict> conflicts = new ArrayList<>();
+        rows.stream()
+                .filter(row -> "MANUAL_RESULT_OVERRIDE_CONFLICT".equals(row.reasonCode()))
+                .forEach(row -> {
+                    ImportPreviewDatabaseSnapshot.RegistrationSnapshot registration =
+                            registrationsById.get(row.matchedRegistrationId());
+                    Set<String> manualFields = registration == null || registration.result() == null
+                            ? Set.of()
+                            : registration.result().manualCorrectionFields();
+                    row.diffs().stream()
+                            .filter(diff -> manualFields.contains(diff.field()))
+                            .forEach(diff -> conflicts.add(new ImportPreviewResponseDto.ManualConflict(
+                                    row.sourceRowNumber(), row.bib(), row.participantName(), row.matchedResultId(),
+                                    diff.field(), diff.oldValue(), diff.newValue()
+                            )));
+                });
+        return conflicts.stream()
+                .sorted(Comparator.comparingInt(ImportPreviewResponseDto.ManualConflict::sourceRowNumber)
+                        .thenComparing(ImportPreviewResponseDto.ManualConflict::field))
+                .toList();
     }
 
     private static int count(List<ImportPreviewResponseDto.Row> rows, ImportPreviewDecision decision) {
@@ -912,6 +960,7 @@ public class ImportPreviewPlanner {
             List<ImportPreviewResponseDto.Row> rows,
             List<ImportPreviewResponseDto.DuplicateBib> duplicateBibs,
             List<ImportPreviewResponseDto.Diagnostic> diagnostics,
+            List<ImportPreviewResponseDto.ManualConflict> manualConflicts,
             ImportPreviewDatabaseSnapshot snapshot,
             ImportPreviewResponseDto.EmergencySummary emergencySummary
     ) {
@@ -938,6 +987,9 @@ public class ImportPreviewPlanner {
         diagnostics.stream().sorted(diagnosticOrder())
                 .forEach(diagnostic -> writer.add(diagnostic.sourceRowNumber()).add(diagnostic.field())
                         .add(diagnostic.code()).add(diagnostic.message()));
+        manualConflicts.forEach(conflict -> writer.add("MANUAL_CONFLICT")
+                .add(conflict.sourceRowNumber()).add(conflict.matchedResultId()).add(conflict.field())
+                .add(conflict.currentValue()).add(conflict.incomingValue()));
         if (emergencySummary != null) {
             Set<Long> scope = new LinkedHashSet<>(scopeRaceIds);
             snapshot.races().stream()

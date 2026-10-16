@@ -6,6 +6,7 @@ import ru.sportsresults.domain.Result;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -38,6 +39,23 @@ class ManualResultCorrectionFieldsTest {
         assertThat(ManualResultCorrectionFields.active(
                 result, List.of(change("gunTimeMs", null))
         )).containsExactly("gunTimeMs");
+    }
+
+    @Test
+    void acceptingSourceDeactivatesOldManualOverrideWithoutBecomingANewOne() {
+        Result result = new Result();
+        result.setStatus("finished");
+        result.setGunTime(Duration.ofMillis(2_000));
+
+        AdminChangeLog manual = change("gunTimeMs", "1500");
+        AdminChangeLog accepted = change(
+                ManualResultCorrectionFields.acceptedSourceAuditField(UUID.randomUUID(), "gunTimeMs"),
+                "2000"
+        );
+        assertThat(ManualResultCorrectionFields.active(result, List.of(manual, accepted))).isEmpty();
+
+        result.setGunTime(Duration.ofMillis(1_500));
+        assertThat(ManualResultCorrectionFields.active(result, List.of(manual, accepted))).isEmpty();
     }
 
     private static AdminChangeLog change(String field, String newValue) {

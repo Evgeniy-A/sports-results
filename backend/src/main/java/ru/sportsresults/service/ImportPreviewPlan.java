@@ -8,9 +8,11 @@ record ImportPreviewPlan(
         ImportPreviewResponseDto.Totals totals,
         ImportPreviewResponseDto.ModeSummary modeSummary,
         boolean blockingErrorsPresent,
+        boolean ordinaryBlockingErrorsPresent,
         List<ImportPreviewResponseDto.Row> rows,
         List<ImportPreviewResponseDto.DuplicateBib> duplicateBibs,
         List<ImportPreviewResponseDto.Diagnostic> diagnostics,
+        List<ImportPreviewResponseDto.ManualConflict> manualConflicts,
         String planDigest,
         ImportPreviewResponseDto.EmergencySummary emergencySummary
 ) {
@@ -18,5 +20,6 @@ record ImportPreviewPlan(
         rows = List.copyOf(rows);
         duplicateBibs = List.copyOf(duplicateBibs);
         diagnostics = List.copyOf(diagnostics);
+        manualConflicts = List.copyOf(manualConflicts);
     }
 }

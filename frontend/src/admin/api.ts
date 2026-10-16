@@ -24,6 +24,7 @@ import type {
   ImportMappingProfile,
   ImportMode,
   ImportPreview,
+  ManualConflictResolution,
   IssueStatus,
   JournalDetail,
   JournalFilters,
@@ -350,9 +351,15 @@ export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: (
     deleteImportMappingProfile: (profileId: number) => request<void>(
       `/admin/import-mapping-profiles/${profileId}`, { method: 'DELETE' }, true,
     ),
-    importApply: (eventId: number, operationId: string, file: File) => {
+    importApply: (
+      eventId: number,
+      operationId: string,
+      file: File,
+      manualConflictResolutions: ManualConflictResolution[] = [],
+    ) => {
       const form = new FormData()
       form.append('file', file)
+      form.append('manualConflictResolutions', JSON.stringify(manualConflictResolutions))
       return request<ImportApplyResult>(
         `/admin/events/${eventId}/imports/${encodeURIComponent(operationId)}/apply`,
         { method: 'POST', body: form },

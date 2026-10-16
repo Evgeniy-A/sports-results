@@ -292,6 +292,7 @@ export interface ImportPreview {
     blocked: number
   }
   blockingErrorsPresent: boolean
+  ordinaryBlockingErrorsPresent: boolean
   rowLimit: number
   rowsTruncated: boolean
   rows: ImportPreviewRow[]
@@ -302,6 +303,7 @@ export interface ImportPreview {
     message: string
   }>
   diagnosticsTruncated: boolean
+  manualConflicts: ImportManualConflict[]
   emergencySummary: null | {
     dangerousOperation: boolean
     event: { name: string; location: string | null; startsAt: string | null }
@@ -325,6 +327,24 @@ export interface ImportPreview {
       blockingCount: number
     }
   }
+}
+
+export type ManualConflictDecision = 'KEEP_MANUAL' | 'ACCEPT_SOURCE'
+
+export interface ImportManualConflict {
+  sourceRowNumber: number
+  bib: string | null
+  participantName: string | null
+  matchedResultId: number
+  field: string
+  currentValue: string | null
+  incomingValue: string | null
+}
+
+export interface ManualConflictResolution {
+  sourceRowNumber: number
+  field: string
+  decision: ManualConflictDecision
 }
 
 export interface ImportRaceRef {

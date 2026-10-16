@@ -10,8 +10,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 final class ManualResultCorrectionFields {
+
+    private static final String ACCEPTED_SOURCE_PREFIX = "importAcceptedSource:";
 
     static final Set<String> SUPPORTED_FIELDS = Set.of(
             "status",
@@ -30,9 +33,16 @@ final class ManualResultCorrectionFields {
 
     static Set<String> active(Result result, List<AdminChangeLog> changes) {
         Map<String, AdminChangeLog> latestByField = new LinkedHashMap<>();
-        changes.stream()
-                .filter(change -> SUPPORTED_FIELDS.contains(change.getFieldName()))
-                .forEach(change -> latestByField.put(change.getFieldName(), change));
+        changes.forEach(change -> {
+            if (SUPPORTED_FIELDS.contains(change.getFieldName())) {
+                latestByField.put(change.getFieldName(), change);
+                return;
+            }
+            String acceptedField = acceptedSourceField(change.getFieldName());
+            if (acceptedField != null) {
+                latestByField.remove(acceptedField);
+            }
+        });
 
         Set<String> active = new LinkedHashSet<>();
         SUPPORTED_FIELDS.stream().sorted().forEach(field -> {
@@ -42,6 +52,26 @@ final class ManualResultCorrectionFields {
             }
         });
         return Set.copyOf(active);
+    }
+
+    static String acceptedSourceAuditField(UUID operationId, String field) {
+        if (!SUPPORTED_FIELDS.contains(field)) {
+            throw new IllegalArgumentException("Unsupported Result field: " + field);
+        }
+        return ACCEPTED_SOURCE_PREFIX + field + ":" + operationId;
+    }
+
+    private static String acceptedSourceField(String fieldName) {
+        if (fieldName == null || !fieldName.startsWith(ACCEPTED_SOURCE_PREFIX)) {
+            return null;
+        }
+        String remainder = fieldName.substring(ACCEPTED_SOURCE_PREFIX.length());
+        int separator = remainder.indexOf(':');
+        if (separator <= 0 || separator == remainder.length() - 1) {
+            return null;
+        }
+        String field = remainder.substring(0, separator);
+        return SUPPORTED_FIELDS.contains(field) ? field : null;
     }
 
     private static String currentValue(Result result, String field) {

@@ -1131,6 +1131,14 @@ class BackendIntegrationTest {
                 List.of(race.getId()), 100, ADMIN_USERNAME
         );
         assertThat(conflict.blockingErrorsPresent()).isTrue();
+        assertThat(conflict.ordinaryBlockingErrorsPresent()).isFalse();
+        assertThat(conflict.manualConflicts()).singleElement().satisfies(manualConflict -> {
+            assertThat(manualConflict.sourceRowNumber()).isEqualTo(2);
+            assertThat(manualConflict.matchedResultId()).isEqualTo(result.getId());
+            assertThat(manualConflict.field()).isEqualTo("gunTimeMs");
+            assertThat(manualConflict.currentValue()).isEqualTo("1500");
+            assertThat(manualConflict.incomingValue()).isEqualTo("2000");
+        });
         assertThat(conflict.rows()).singleElement().satisfies(row -> {
             assertThat(row.reasonCode()).isEqualTo("MANUAL_RESULT_OVERRIDE_CONFLICT");
             assertThat(row.futureAction()).isEqualTo(ImportPreviewAction.BLOCKED);
@@ -1141,7 +1149,7 @@ class BackendIntegrationTest {
                 event.getId(), conflict.operationId(), overwrite, ADMIN_USERNAME
         )).isInstanceOf(RequestConflictException.class)
                 .extracting(exception -> ((RequestConflictException) exception).getCode())
-                .isEqualTo("PREVIEW_BLOCKED");
+                .isEqualTo("MANUAL_CONFLICT_RESOLUTION_REQUIRED");
         assertThat(resultRepository.findById(result.getId()).orElseThrow().getGunTime())
                 .isEqualTo(Duration.ofMillis(1_500));
 
@@ -1160,6 +1168,163 @@ class BackendIntegrationTest {
         )).isInstanceOf(RequestConflictException.class)
                 .extracting(exception -> ((RequestConflictException) exception).getCode())
                 .isEqualTo("PREVIEW_BLOCKED");
+    }
+
+    @Test
+    void updateExistingKeepsOnlyResolvedManualFieldAndAppliesOtherSourceChanges() {
+        Event event = createPublishedEvent("Part 7 keep", "part-7-keep");
+        byte[] initial = oneRowCsv("1000.0").getBytes(StandardCharsets.UTF_8);
+        importPublishedFixture(event.getId(), "initial.csv", initial);
+        Race race = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
+        Registration registration = registrationRepository.findAllByRaceIdAndBib(race.getId(), "A-1").getFirst();
+        Result result = resultRepository.findByRegistrationId(registration.getId()).orElseThrow();
+        adminResultService.updateResult(result.getId(), new UpdateResultRequest(
+                result.getStatus(), 1_500L, result.getChipTime().toMillis(),
+                result.getOverallPlace(), result.getGenderPlace(), result.getCategoryPlace(),
+                result.getNetOverallPlace(), result.getNetGenderPlace(), result.getNetCategoryPlace()
+        ), ADMIN_USERNAME);
+
+        byte[] incoming = oneRowResultCsv("2000.0", "800.0", "finished")
+                .getBytes(StandardCharsets.UTF_8);
+        ImportPreviewResponseDto preview = importPreviewService.preview(
+                event.getId(), "keep.csv", incoming, ImportOperationMode.UPDATE_EXISTING,
+                List.of(race.getId()), 100, ADMIN_USERNAME
+        );
+        assertThat(preview.manualConflicts()).extracting(ImportPreviewResponseDto.ManualConflict::field)
+                .containsExactly("gunTimeMs");
+        assertThat(preview.rows()).singleElement().satisfies(row ->
+                assertThat(row.diffs()).extracting(ImportPreviewResponseDto.FieldDiff::field)
+                        .containsExactlyInAnyOrder("gunTimeMs", "chipTimeMs"));
+
+        ImportApplyResponseDto applied = importApplyService.apply(
+                event.getId(), preview.operationId(), incoming,
+                "[{\"sourceRowNumber\":2,\"field\":\"gunTimeMs\",\"decision\":\"KEEP_MANUAL\"}]",
+                ADMIN_USERNAME
+        );
+        Result persisted = resultRepository.findById(result.getId()).orElseThrow();
+        assertThat(persisted.getGunTime()).isEqualTo(Duration.ofMillis(1_500));
+        assertThat(persisted.getChipTime()).isEqualTo(Duration.ofMillis(800));
+        assertThat(applied.updatedCount()).isOne();
+        assertThat(importOperationItemRepository.findAllByOperationIdOrderBySourceRowNumberAsc(
+                preview.operationId())).singleElement().satisfies(item -> {
+                    assertThat(item.getDecision().name()).isEqualTo("EXISTING_CHANGED");
+                    assertThat(item.getAction().name()).isEqualTo("UPDATE");
+                });
+    }
+
+    @Test
+    void updateExistingAcceptsSourceAuditsDecisionAndClearsManualOverrideSemantics() {
+        Event event = createPublishedEvent("Part 7 accept", "part-7-accept");
+        importPublishedFixture(
+                event.getId(), "initial.csv", oneRowCsv("1000.0").getBytes(StandardCharsets.UTF_8));
+        Race race = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
+        Registration registration = registrationRepository.findAllByRaceIdAndBib(race.getId(), "A-1").getFirst();
+        Result result = resultRepository.findByRegistrationId(registration.getId()).orElseThrow();
+        adminResultService.updateResult(result.getId(), new UpdateResultRequest(
+                result.getStatus(), 1_500L, result.getChipTime().toMillis(),
+                result.getOverallPlace(), result.getGenderPlace(), result.getCategoryPlace(),
+                result.getNetOverallPlace(), result.getNetGenderPlace(), result.getNetCategoryPlace()
+        ), ADMIN_USERNAME);
+
+        byte[] accepted = oneRowCsv("2000.0").getBytes(StandardCharsets.UTF_8);
+        ImportPreviewResponseDto preview = importPreviewService.preview(
+                event.getId(), "accept.csv", accepted, ImportOperationMode.UPDATE_EXISTING,
+                List.of(race.getId()), 100, ADMIN_USERNAME
+        );
+        importApplyService.apply(
+                event.getId(), preview.operationId(), accepted,
+                "[{\"sourceRowNumber\":2,\"field\":\"gunTimeMs\",\"decision\":\"ACCEPT_SOURCE\"}]",
+                ADMIN_USERNAME
+        );
+
+        assertThat(resultRepository.findById(result.getId()).orElseThrow().getGunTime())
+                .isEqualTo(Duration.ofMillis(2_000));
+        assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
+                AuditEntityType.RESULT, result.getId()
+        )).anySatisfy(change -> {
+            assertThat(change.getFieldName()).startsWith("importAcceptedSource:gunTimeMs:");
+            assertThat(change.getActor()).isEqualTo(ADMIN_USERNAME);
+            assertThat(change.getOldValue()).isEqualTo("1500");
+            assertThat(change.getNewValue()).isEqualTo("2000");
+        });
+
+        byte[] nextSource = oneRowCsv("2100.0").getBytes(StandardCharsets.UTF_8);
+        ImportPreviewResponseDto nextPreview = importPreviewService.preview(
+                event.getId(), "next-source.csv", nextSource, ImportOperationMode.UPDATE_EXISTING,
+                List.of(race.getId()), 100, ADMIN_USERNAME
+        );
+        assertThat(nextPreview.manualConflicts()).isEmpty();
+        assertThat(nextPreview.rows()).singleElement().satisfies(row -> {
+            assertThat(row.decision().name()).isEqualTo("EXISTING_CHANGED");
+            assertThat(row.futureAction()).isEqualTo(ImportPreviewAction.UPDATE);
+        });
+    }
+
+    @Test
+    void updateExistingSupportsMixedDecisionsAndRejectsStaleOrForgedResolutions() {
+        Event event = createPublishedEvent("Part 7 mixed", "part-7-mixed");
+        importPublishedFixture(
+                event.getId(), "initial.csv", oneRowCsv("1000.0").getBytes(StandardCharsets.UTF_8));
+        Race race = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
+        Registration registration = registrationRepository.findAllByRaceIdAndBib(race.getId(), "A-1").getFirst();
+        Result result = resultRepository.findByRegistrationId(registration.getId()).orElseThrow();
+        adminResultService.updateResult(result.getId(), new UpdateResultRequest(
+                result.getStatus(), 1_500L, 1_400L,
+                result.getOverallPlace(), result.getGenderPlace(), result.getCategoryPlace(),
+                result.getNetOverallPlace(), result.getNetGenderPlace(), result.getNetCategoryPlace()
+        ), ADMIN_USERNAME);
+
+        byte[] mixed = oneRowResultCsv("2000.0", "1900.0", "finished")
+                .getBytes(StandardCharsets.UTF_8);
+        ImportPreviewResponseDto forgedPreview = importPreviewService.preview(
+                event.getId(), "forged.csv", mixed, ImportOperationMode.UPDATE_EXISTING,
+                List.of(race.getId()), 100, ADMIN_USERNAME
+        );
+        assertThatThrownBy(() -> importApplyService.apply(
+                event.getId(), forgedPreview.operationId(), mixed,
+                "[{\"sourceRowNumber\":2,\"field\":\"overallPlace\",\"decision\":\"ACCEPT_SOURCE\"}]",
+                ADMIN_USERNAME
+        )).isInstanceOf(InvalidRequestException.class)
+                .extracting(exception -> ((InvalidRequestException) exception).getCode())
+                .isEqualTo("INVALID_MANUAL_CONFLICT_RESOLUTION");
+        assertThat(resultRepository.findById(result.getId()).orElseThrow().getGunTime())
+                .isEqualTo(Duration.ofMillis(1_500));
+
+        ImportPreviewResponseDto preview = importPreviewService.preview(
+                event.getId(), "mixed.csv", mixed, ImportOperationMode.UPDATE_EXISTING,
+                List.of(race.getId()), 100, ADMIN_USERNAME
+        );
+        assertThat(preview.manualConflicts()).extracting(ImportPreviewResponseDto.ManualConflict::field)
+                .containsExactlyInAnyOrder("gunTimeMs", "chipTimeMs");
+        importApplyService.apply(
+                event.getId(), preview.operationId(), mixed,
+                "[{\"sourceRowNumber\":2,\"field\":\"gunTimeMs\",\"decision\":\"KEEP_MANUAL\"},"
+                        + "{\"sourceRowNumber\":2,\"field\":\"chipTimeMs\",\"decision\":\"ACCEPT_SOURCE\"}]",
+                ADMIN_USERNAME
+        );
+        Result persisted = resultRepository.findById(result.getId()).orElseThrow();
+        assertThat(persisted.getGunTime()).isEqualTo(Duration.ofMillis(1_500));
+        assertThat(persisted.getChipTime()).isEqualTo(Duration.ofMillis(1_900));
+
+        byte[] staleSource = oneRowCsv("2200.0").getBytes(StandardCharsets.UTF_8);
+        ImportPreviewResponseDto stale = importPreviewService.preview(
+                event.getId(), "stale-manual.csv", staleSource, ImportOperationMode.UPDATE_EXISTING,
+                List.of(race.getId()), 100, ADMIN_USERNAME
+        );
+        adminResultService.updateResult(result.getId(), new UpdateResultRequest(
+                persisted.getStatus(), 1_600L, persisted.getChipTime().toMillis(),
+                persisted.getOverallPlace(), persisted.getGenderPlace(), persisted.getCategoryPlace(),
+                persisted.getNetOverallPlace(), persisted.getNetGenderPlace(), persisted.getNetCategoryPlace()
+        ), ADMIN_USERNAME);
+        assertThatThrownBy(() -> importApplyService.apply(
+                event.getId(), stale.operationId(), staleSource,
+                "[{\"sourceRowNumber\":2,\"field\":\"gunTimeMs\",\"decision\":\"KEEP_MANUAL\"}]",
+                ADMIN_USERNAME
+        )).isInstanceOf(RequestConflictException.class)
+                .extracting(exception -> ((RequestConflictException) exception).getCode())
+                .isEqualTo("PREVIEW_STALE");
+        assertThat(resultRepository.findById(result.getId()).orElseThrow().getGunTime())
+                .isEqualTo(Duration.ofMillis(1_600));
     }
 
     @Test
@@ -10034,10 +10199,14 @@ class BackendIntegrationTest {
     }
 
     private static String oneRowCsv(String gunTime) {
+        return oneRowResultCsv(gunTime, "900.0", "finished");
+    }
+
+    private static String oneRowResultCsv(String gunTime, String chipTime, String status) {
         return """
                 name,surname,gender,birthdate,event,dorsal,category,status,times.official_:::finish:::,times.real_:::finish:::,rankings_:::full-1:::,rankings.gen_:::full-1:::,rankings.cat_:::full-1:::,netrankings_:::full-1:::,netrankings.gen_:::full-1:::,netrankings.cat_:::full-1:::
-                Иван,Иванов,male,1990-01-01,5 km,A-1,Open,finished,%s,900.0,1.0,1.0,1.0,1.0,1.0,1.0
-                """.formatted(gunTime);
+                Иван,Иванов,male,1990-01-01,5 km,A-1,Open,%s,%s,%s,1.0,1.0,1.0,1.0,1.0,1.0
+                """.formatted(status, gunTime, chipTime);
     }
 
     private static String namesCsv() {

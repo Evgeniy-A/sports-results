@@ -22,6 +22,7 @@ public record ImportPreviewResponseDto(
         Totals totals,
         ModeSummary modeSummary,
         boolean blockingErrorsPresent,
+        boolean ordinaryBlockingErrorsPresent,
         int rowLimit,
         boolean rowsTruncated,
         List<Row> rows,
@@ -29,6 +30,7 @@ public record ImportPreviewResponseDto(
         boolean duplicateGroupsTruncated,
         List<Diagnostic> diagnostics,
         boolean diagnosticsTruncated,
+        List<ManualConflict> manualConflicts,
         EmergencySummary emergencySummary
 ) {
     public ImportPreviewResponseDto {
@@ -36,6 +38,7 @@ public record ImportPreviewResponseDto(
         rows = List.copyOf(rows);
         duplicateBibs = List.copyOf(duplicateBibs);
         diagnostics = List.copyOf(diagnostics);
+        manualConflicts = List.copyOf(manualConflicts);
     }
 
     public record Totals(
@@ -87,6 +90,17 @@ public record ImportPreviewResponseDto(
     }
 
     public record FieldDiff(String field, String oldValue, String newValue) {
+    }
+
+    public record ManualConflict(
+            int sourceRowNumber,
+            String bib,
+            String participantName,
+            Long matchedResultId,
+            String field,
+            String currentValue,
+            String incomingValue
+    ) {
     }
 
     public record DuplicateBib(String bib, int count, boolean rowsTruncated, List<DuplicateBibRow> rows) {

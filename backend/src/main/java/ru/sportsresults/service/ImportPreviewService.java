@@ -156,6 +156,7 @@ public class ImportPreviewService {
                 plan.totals(),
                 plan.modeSummary(),
                 plan.blockingErrorsPresent(),
+                plan.ordinaryBlockingErrorsPresent(),
                 rowLimit,
                 plan.rows().size() > rowLimit,
                 plan.rows().stream().limit(rowLimit).toList(),
@@ -166,6 +167,7 @@ public class ImportPreviewService {
                 plan.duplicateBibs().size() > MAX_DUPLICATE_GROUPS,
                 plan.diagnostics().stream().limit(MAX_DIAGNOSTICS).toList(),
                 plan.diagnostics().size() > MAX_DIAGNOSTICS,
+                plan.manualConflicts(),
                 plan.emergencySummary()
         );
     }
@@ -205,6 +207,7 @@ public class ImportPreviewService {
             summary.put("totals", plan.totals());
             summary.put("modeSummary", plan.modeSummary());
             summary.put("blockingErrorsPresent", plan.blockingErrorsPresent());
+            summary.put("ordinaryBlockingErrorsPresent", plan.ordinaryBlockingErrorsPresent());
             if (plan.emergencySummary() != null) summary.put("emergencySummary", plan.emergencySummary());
             return objectMapper.writeValueAsString(summary);
         } catch (Exception exception) {

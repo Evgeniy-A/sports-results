@@ -13,6 +13,15 @@ import type {
 import { adminErrorMessage } from '../utils'
 import { AdminNotice, ConfirmDialog, Field, StatusBadge } from '../components/AdminUi'
 import { calculateImportReadiness } from '../importReadiness'
+import { formatDuration, statusLabel } from '../../utils/format'
+import {
+  manualConflictKey,
+  manualConflictResolutionPayload,
+  resolveAllManualConflicts,
+  resolveManualConflict,
+  unresolvedManualConflictCount,
+  type ManualConflictResolutionState,
+} from '../manualConflictResolutions'
 
 const MODES: Array<{ value: ImportMode; label: string; description: string }> = [
   { value: 'ADD_NEW', label: 'Добавить новые', description: 'Создаёт только новых участников и результаты. Существующие строки не изменяются.' },
@@ -44,6 +53,8 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmation, setConfirmation] = useState('')
   const [previewUpdatedAt, setPreviewUpdatedAt] = useState<Date | null>(null)
+  const [manualConflictResolutions, setManualConflictResolutions] =
+    useState<ManualConflictResolutionState>({})
 
   const readiness = useMemo(() => analysis === null ? null : calculateImportReadiness({
     analysis,
@@ -66,11 +77,18 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
     : mode === 'ADD_NEW'
       ? preview.totals.newCount
       : mode === 'UPDATE_EXISTING'
-        ? preview.totals.changedCount
+        ? preview.modeSummary.wouldUpdate
         : (preview.emergencySummary?.totals.retireCount ?? 0)
           + (preview.emergencySummary?.totals.insertCount ?? 0)
+  const manualConflicts = preview?.manualConflicts ?? []
+  const unresolvedManualConflicts = unresolvedManualConflictCount(
+    manualConflicts,
+    manualConflictResolutions,
+  )
+  const applyBlocked = preview !== null
+    && (preview.ordinaryBlockingErrorsPresent || unresolvedManualConflicts > 0)
   const noChangesToApply = preview !== null
-    && !preview.blockingErrorsPresent
+    && !applyBlocked
     && actionableCount === 0
 
   const options = (): ImportInputOptions | undefined => {
@@ -85,9 +103,10 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
 
   const resetAfterFile = () => {
     setAnalysis(null); setColumnMappings({}); setRaceMappings({}); setPreview(null); setPreviewUpdatedAt(null); setApplied(null)
+    setManualConflictResolutions({})
     setError(null); setSuccess(null); setSaveProfile(false); setProfileName(''); setSaveRaceMappings(false)
   }
-  const chooseMode = (value: ImportMode) => { setMode(value); setPreview(null); setPreviewUpdatedAt(null); setApplied(null); setError(null) }
+  const chooseMode = (value: ImportMode) => { setMode(value); setPreview(null); setPreviewUpdatedAt(null); setManualConflictResolutions({}); setApplied(null); setError(null) }
   const chooseSource = (value: SourceKind) => { setSourceKind(value); setFile(null); resetAfterFile() }
 
   const downloadTemplate = async () => {
@@ -151,6 +170,7 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
         })
       }
       setPreview(await api.importPreview(event.id, mode, scopeRaceIds, file, options()))
+      setManualConflictResolutions({})
       setPreviewUpdatedAt(new Date())
       setSuccess('Проверка данных обновлена.')
     } catch (reason) { setPreview(null); setError(adminErrorMessage(reason)) }
@@ -158,7 +178,7 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
   }
 
   const requestApply = () => {
-    if (!preview || !file || preview.blockingErrorsPresent || noChangesToApply) return
+    if (!preview || !file || applyBlocked || noChangesToApply) return
     if (mode === 'EMERGENCY_REPLACE') { setConfirmation(''); setConfirmOpen(true) }
     else void runApply()
   }
@@ -166,7 +186,12 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
     if (!preview || !file) return
     setBusy('apply'); setError(null)
     try {
-      const result = await api.importApply(event.id, preview.operationId, file)
+      const result = await api.importApply(
+        event.id,
+        preview.operationId,
+        file,
+        manualConflictResolutionPayload(manualConflicts, manualConflictResolutions),
+      )
       setApplied(result); setPreview(null); setConfirmOpen(false)
     } catch (reason) { setError(adminErrorMessage(reason)); setConfirmOpen(false) }
     finally { setBusy(null) }
@@ -219,15 +244,16 @@ export function EventImportTab({ api, event, races }: { api: AdminApi; event: Ev
     {success && <AdminNotice tone="success">{success}</AdminNotice>}
     {emergencyBlocked && <AdminNotice tone="warning">Экстренная замена доступна только для Стартов в черновике.</AdminNotice>}
 
-    {preview && <section className="admin-card"><div className="admin-card-heading"><div><h3>4. Проверка данных</h3><p>{file?.name}{previewUpdatedAt ? ` · обновлено ${previewUpdatedAt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}</p></div><StatusBadge value={preview.blockingErrorsPresent ? 'BLOCKING' : preview.operationStatus} /></div>
+    {preview && <section className="admin-card"><div className="admin-card-heading"><div><h3>4. Проверка данных</h3><p>{file?.name}{previewUpdatedAt ? ` · обновлено ${previewUpdatedAt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}</p></div><StatusBadge value={applyBlocked ? 'BLOCKING' : preview.operationStatus} /></div>
       <div className="admin-stat-grid"><Stat label="Строк" value={preview.totals.totalRows} /><Stat label="Новых" value={preview.totals.newCount} /><Stat label="Без изменений" value={preview.totals.unchangedCount} /><Stat label="Изменятся" value={preview.totals.changedCount} /><Stat label="Заблокировано" value={preview.modeSummary.blocked} /><Stat label="Вне выбранных Стартов" value={preview.totals.outOfScopeCount} /><Stat label="Дубли номеров" value={preview.totals.duplicateCount} /><Stat label="Ошибки" value={preview.totals.invalidCount} /></div>
       {mode === 'EMERGENCY_REPLACE' && <div className="admin-scope-summary"><strong>Будут изменены результаты:</strong> {selectedRaces.map((race) => race.name).join(', ') || '—'}{races.some((race) => !scopeRaceIds.includes(race.id)) && <><br /><strong>Не будут затронуты:</strong> {races.filter((race) => !scopeRaceIds.includes(race.id)).map((race) => race.name).join(', ')}</>}</div>}
       {preview.emergencySummary && <div className="admin-danger-summary"><h4>План экстренной замены</h4><div className="admin-stat-grid"><Stat label="Текущих" value={preview.emergencySummary.totals.currentCount} /><Stat label="Будет перенесено в историю" value={preview.emergencySummary.totals.retireCount} /><Stat label="Будет добавлено" value={preview.emergencySummary.totals.insertCount} /><Stat label="Обращений в архив" value={preview.emergencySummary.totals.activeIssuesArchiveCount} /></div></div>}
+      {manualConflicts.length > 0 && <section className="admin-manual-conflicts" aria-label="Ручные изменения конфликтуют с файлом"><div className="admin-card-heading"><div><h4>Ручные изменения конфликтуют с файлом</h4><p>{manualConflicts.length} {manualConflicts.length === 1 ? 'конфликт' : 'конфликта'} у {new Set(manualConflicts.map((conflict) => conflict.sourceRowNumber)).size} участников · осталось решить: {unresolvedManualConflicts}</p></div><div className="admin-form-actions"><button type="button" className="admin-button-secondary" onClick={() => setManualConflictResolutions(resolveAllManualConflicts(manualConflicts, 'KEEP_MANUAL'))}>Оставить все ручные</button><button type="button" className="admin-button-secondary" onClick={() => setManualConflictResolutions(resolveAllManualConflicts(manualConflicts, 'ACCEPT_SOURCE'))}>Принять всё из файла</button></div></div><div className="admin-manual-conflict-list">{manualConflicts.map((conflict) => { const key = manualConflictKey(conflict); const selected = manualConflictResolutions[key]; return <article className="admin-manual-conflict" key={key}><header><strong>№{conflict.bib ?? '—'} · {conflict.participantName ?? 'Участник'}</strong><span>Строка {conflict.sourceRowNumber}</span></header><h5>{importFieldLabel(conflict.field)}</h5><dl><div><dt>Ручное значение</dt><dd>{importDiffValue(conflict.field, conflict.currentValue)}</dd></div><div><dt>Из файла</dt><dd>{importDiffValue(conflict.field, conflict.incomingValue)}</dd></div></dl><div className="admin-inline-options"><label><input type="radio" name={`manual-conflict-${key}`} checked={selected === 'KEEP_MANUAL'} onChange={() => setManualConflictResolutions((current) => resolveManualConflict(current, conflict, 'KEEP_MANUAL'))} /> Оставить ручное</label><label><input type="radio" name={`manual-conflict-${key}`} checked={selected === 'ACCEPT_SOURCE'} onChange={() => setManualConflictResolutions((current) => resolveManualConflict(current, conflict, 'ACCEPT_SOURCE'))} /> Принять из файла</label></div></article> })}</div></section>}
       {preview.diagnostics.length > 0 && <><h4>Проблемы</h4><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Строка</th><th>Лист / колонка</th><th>Описание</th></tr></thead><tbody>{preview.diagnostics.map((item, index) => <tr key={`${item.sourceRowNumber}-${item.code}-${index}`}><td>{item.sourceRowNumber ?? 'Файл'}</td><td>{item.field ?? '—'}</td><td>{importDiagnostic(item.code, item.message)}</td></tr>)}</tbody></table></div>{preview.diagnosticsTruncated && <p className="admin-muted">Показана только часть диагностики.</p>}</>}
       <h4>Решения по строкам</h4><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Строка</th><th>Номер</th><th>Участник</th><th>Старт</th><th>Решение</th><th>Причина</th><th>Изменения</th></tr></thead><tbody>{preview.rows.map((row) => <tr key={row.sourceRowNumber}><td>{row.sourceRowNumber}</td><td>{row.bib ?? '—'}</td><td>{row.participantName ?? '—'}</td><td>{row.targetRace?.raceName ?? '—'}</td><td><StatusBadge value={row.decision} /></td><td>{importReason(row.reasonCode, row.reason)}</td><td>{row.diffs.length ? row.diffs.map((diff) => <div className="admin-diff" key={diff.field}><strong>{importFieldLabel(diff.field)}</strong>{diff.oldValue && <del>{importDiffValue(diff.field, diff.oldValue)}</del>}<ins>{importDiffValue(diff.field, diff.newValue)}</ins></div>) : '—'}</td></tr>)}</tbody></table></div>
       {preview.rowsTruncated && <p className="admin-muted">Показана часть строк; при применении будут обработаны все проверенные строки.</p>}
-      {preview.blockingErrorsPresent
-        ? <AdminNotice tone="danger">Применение недоступно: исправьте блокирующие ошибки и повторите проверку.</AdminNotice>
+      {applyBlocked
+        ? <AdminNotice tone={preview.ordinaryBlockingErrorsPresent ? 'danger' : 'warning'}>{preview.ordinaryBlockingErrorsPresent ? 'Применение недоступно: исправьте блокирующие ошибки и повторите проверку.' : `Выберите решение для каждого ручного конфликта. Осталось: ${unresolvedManualConflicts}.`}</AdminNotice>
         : <><div className="admin-form-actions"><button className={mode === 'EMERGENCY_REPLACE' ? 'admin-button-danger' : 'admin-button-primary'} type="button" disabled={busy !== null || noChangesToApply} onClick={requestApply}>{busy === 'apply' ? 'Применяем…' : mode === 'EMERGENCY_REPLACE' ? 'Применить экстренную замену' : 'Применить импорт'}</button><span>Проверка действует до {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(preview.expiresAt))}</span></div>{noChangesToApply && <AdminNotice tone="info">Изменений для применения нет.</AdminNotice>}</>}
     </section>}
 
@@ -336,10 +362,15 @@ function importFieldLabel(field: string): string {
 }
 
 function importDiffValue(field: string, value: string | null): string {
-  if (!value) return '—'
+  if (value === null || value === '') return '—'
   if (field === 'categoryDefinition') return `Будет создана: ${value.replace(/^CREATE:/, '')}`
   if (field === 'clusterDefinition') return `Будет добавлена: ${value}`
   if (field === 'result' && value === 'CREATE') return 'Будет создан'
+  if (field === 'gunTimeMs' || field === 'chipTimeMs') {
+    const milliseconds = Number(value)
+    return Number.isFinite(milliseconds) ? formatDuration(milliseconds) : value
+  }
+  if (field === 'status') return statusLabel(value)
   return value
 }
 
