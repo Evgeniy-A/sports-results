@@ -104,6 +104,20 @@ public class ImportPreviewPlanner {
                 || diagnosticAnalysis.all().stream().anyMatch(diagnostic -> diagnostic.sourceRowNumber() == null);
         List<ImportPreviewResponseDto.Diagnostic> combinedDiagnostics = new ArrayList<>(diagnosticAnalysis.all());
         if (mode == ImportOperationMode.EMERGENCY_REPLACE) {
+            snapshot.registrations().stream()
+                    .filter(registration -> scope.contains(registration.race().id()))
+                    .filter(registration -> registration.result() != null)
+                    .filter(registration -> !registration.result().manualCorrectionFields().isEmpty())
+                    .sorted(Comparator.comparing(ImportPreviewDatabaseSnapshot.RegistrationSnapshot::id))
+                    .forEach(registration -> combinedDiagnostics.add(new ImportPreviewResponseDto.Diagnostic(
+                            null,
+                            "result",
+                            "MANUAL_RESULT_OVERRIDE_WOULD_BE_RETIRED",
+                            "Emergency replacement would retire manually corrected result for bib "
+                                    + registration.bib() + " (fields: "
+                                    + String.join(", ", registration.result().manualCorrectionFields().stream()
+                                            .sorted().toList()) + ")"
+                    )));
             for (Long raceId : scopeRaceIds) {
                 long currentCount = snapshot.registrations().stream()
                         .filter(registration -> registration.race().id().equals(raceId)).count();
@@ -363,6 +377,18 @@ public class ImportPreviewPlanner {
             }
         }
         List<ImportPreviewResponseDto.FieldDiff> diffs = differences(row, candidate, targetRace, cluster, snapshot);
+        if (mode == ImportOperationMode.UPDATE_EXISTING && candidate.result() != null) {
+            List<ImportPreviewResponseDto.FieldDiff> manualConflicts = diffs.stream()
+                    .filter(diff -> candidate.result().manualCorrectionFields().contains(diff.field()))
+                    .toList();
+            if (!manualConflicts.isEmpty()) {
+                return row(row, bib, participantName, targetRaceRef, candidate,
+                        ImportPreviewDecision.CONFLICT, ImportPreviewAction.BLOCKED,
+                        "MANUAL_RESULT_OVERRIDE_CONFLICT",
+                        "Source values conflict with manually corrected result fields",
+                        manualConflicts);
+            }
+        }
         ImportPreviewDecision decision = diffs.isEmpty()
                 ? ImportPreviewDecision.EXISTING_UNCHANGED
                 : ImportPreviewDecision.EXISTING_CHANGED;
@@ -593,8 +619,11 @@ public class ImportPreviewPlanner {
             all.add(diagnostic);
         }
         for (ImportErrorDto error : validationErrors) {
+            String code = "status".equals(error.field())
+                    ? "INVALID_RESULT_STATUS"
+                    : "SOURCE_VALUE_INVALID";
             ImportPreviewResponseDto.Diagnostic diagnostic = new ImportPreviewResponseDto.Diagnostic(
-                    error.row(), error.field(), "SOURCE_VALUE_INVALID", error.message()
+                    error.row(), error.field(), code, error.message()
             );
             if (error.row() != null) {
                 add(byRow, error.row(), diagnostic);

@@ -7,6 +7,9 @@ import ru.sportsresults.domain.AwardPolicy;
 import ru.sportsresults.domain.Category;
 import ru.sportsresults.domain.Registration;
 import ru.sportsresults.domain.Result;
+import ru.sportsresults.domain.AdminChangeLog;
+import ru.sportsresults.domain.AuditEntityType;
+import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.AwardPolicyRepository;
 import ru.sportsresults.repository.CategoryRepository;
 import ru.sportsresults.repository.EventRepository;
@@ -32,6 +35,7 @@ public class ImportPreviewSnapshotLoader {
     private final RegistrationRepository registrationRepository;
     private final ResultRepository resultRepository;
     private final ResultIssueRequestRepository issueRepository;
+    private final AdminChangeLogRepository changeLogRepository;
 
     public ImportPreviewSnapshotLoader(
             EventRepository eventRepository,
@@ -41,7 +45,8 @@ public class ImportPreviewSnapshotLoader {
             AwardPolicyRepository awardPolicyRepository,
             RegistrationRepository registrationRepository,
             ResultRepository resultRepository,
-            ResultIssueRequestRepository issueRepository
+            ResultIssueRequestRepository issueRepository,
+            AdminChangeLogRepository changeLogRepository
     ) {
         this.eventRepository = eventRepository;
         this.raceRepository = raceRepository;
@@ -51,6 +56,7 @@ public class ImportPreviewSnapshotLoader {
         this.registrationRepository = registrationRepository;
         this.resultRepository = resultRepository;
         this.issueRepository = issueRepository;
+        this.changeLogRepository = changeLogRepository;
     }
 
     @Transactional(readOnly = true)
@@ -110,10 +116,22 @@ public class ImportPreviewSnapshotLoader {
                         LinkedHashMap::new
                 ));
 
+        List<Long> resultIds = resultsByRegistration.values().stream().map(Result::getId).toList();
+        Map<Long, List<AdminChangeLog>> changesByResult = resultIds.isEmpty()
+                ? Map.of()
+                : changeLogRepository.findAllByEntityTypeAndEntityIdInOrderByChangedAtAscIdAsc(
+                                AuditEntityType.RESULT, resultIds
+                        ).stream()
+                        .collect(java.util.stream.Collectors.groupingBy(
+                                AdminChangeLog::getEntityId,
+                                LinkedHashMap::new,
+                                java.util.stream.Collectors.toList()
+                        ));
+
         List<ImportPreviewDatabaseSnapshot.RegistrationSnapshot> registrationSnapshots = registrations.stream()
                 .map(registration -> registration(registration, racesById, clustersById,
                         categoriesById,
-                        resultsByRegistration.get(registration.getId())))
+                        resultsByRegistration.get(registration.getId()), changesByResult))
                 .toList();
 
         List<ImportPreviewDatabaseSnapshot.ActiveIssueSnapshot> activeIssues = races.isEmpty() ? List.of() : issueRepository
@@ -140,7 +158,8 @@ public class ImportPreviewSnapshotLoader {
             Map<Long, ImportPreviewDatabaseSnapshot.RaceSnapshot> races,
             Map<Long, ImportPreviewDatabaseSnapshot.ClusterSnapshot> clusters,
             Map<Long, ImportPreviewDatabaseSnapshot.CategorySnapshot> categories,
-            Result result
+            Result result,
+            Map<Long, List<AdminChangeLog>> changesByResult
     ) {
         return new ImportPreviewDatabaseSnapshot.RegistrationSnapshot(
                 registration.getId(),
@@ -154,7 +173,7 @@ public class ImportPreviewSnapshotLoader {
                 races.get(registration.getRace().getId()),
                 registration.getCluster() == null ? null : clusters.get(registration.getCluster().getId()),
                 registration.getCategory() == null ? null : categories.get(registration.getCategory().getId()),
-                result == null ? null : result(result)
+                result == null ? null : result(result, changesByResult.getOrDefault(result.getId(), List.of()))
         );
     }
 
@@ -172,7 +191,10 @@ public class ImportPreviewSnapshotLoader {
         );
     }
 
-    private static ImportPreviewDatabaseSnapshot.ResultSnapshot result(Result result) {
+    private static ImportPreviewDatabaseSnapshot.ResultSnapshot result(
+            Result result,
+            List<AdminChangeLog> changes
+    ) {
         return new ImportPreviewDatabaseSnapshot.ResultSnapshot(
                 result.getId(),
                 result.getStatus(),
@@ -183,7 +205,8 @@ public class ImportPreviewSnapshotLoader {
                 result.getCategoryPlace(),
                 result.getNetOverallPlace(),
                 result.getNetGenderPlace(),
-                result.getNetCategoryPlace()
+                result.getNetCategoryPlace(),
+                ManualResultCorrectionFields.active(result, changes)
         );
     }
 }

@@ -8,6 +8,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 
 record ImportPreviewDatabaseSnapshot(
         long resultDataRevision,
@@ -125,8 +126,28 @@ record ImportPreviewDatabaseSnapshot(
             Integer categoryPlace,
             Integer netOverallPlace,
             Integer netGenderPlace,
-            Integer netCategoryPlace
+            Integer netCategoryPlace,
+            Set<String> manualCorrectionFields
     ) {
+        ResultSnapshot {
+            manualCorrectionFields = Set.copyOf(manualCorrectionFields);
+        }
+
+        ResultSnapshot(
+                Long id,
+                String status,
+                Duration gunTime,
+                Duration chipTime,
+                Integer overallPlace,
+                Integer genderPlace,
+                Integer categoryPlace,
+                Integer netOverallPlace,
+                Integer netGenderPlace,
+                Integer netCategoryPlace
+        ) {
+            this(id, status, gunTime, chipTime, overallPlace, genderPlace, categoryPlace,
+                    netOverallPlace, netGenderPlace, netCategoryPlace, Set.of());
+        }
     }
 
     record ActiveIssueSnapshot(Long id, Long registrationId, Long raceId) {

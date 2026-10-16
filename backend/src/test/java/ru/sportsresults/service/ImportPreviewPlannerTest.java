@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -65,6 +66,129 @@ class ImportPreviewPlannerTest {
             assertThat(summary.wouldInsertCount()).isOne();
             assertThat(summary.activeIssuesWouldArchiveCount()).isOne();
         });
+    }
+
+    @Test
+    void updateBlocksOnlyIncomingChangesToActiveManualResultFields() {
+        var current = withManualFields(
+                registration(1, "MANUAL", RACE_A, null, DOB, "Manual", 1_000),
+                Set.of("gunTimeMs")
+        );
+
+        ImportPreviewPlan conflict = plan(
+                ImportOperationMode.UPDATE_EXISTING,
+                List.of(10L),
+                List.of(row(2, "MANUAL", "A", SourceField.value(DOB), SourceField.absent(), 1_100, "Manual")),
+                List.of(current)
+        );
+
+        assertThat(conflict.blockingErrorsPresent()).isTrue();
+        assertThat(find(conflict, 2).decision()).isEqualTo(ImportPreviewDecision.CONFLICT);
+        assertThat(find(conflict, 2).futureAction()).isEqualTo(ImportPreviewAction.BLOCKED);
+        assertThat(find(conflict, 2).reasonCode()).isEqualTo("MANUAL_RESULT_OVERRIDE_CONFLICT");
+        assertThat(find(conflict, 2).diffs()).extracting(ImportPreviewResponseDto.FieldDiff::field)
+                .containsExactly("gunTimeMs");
+
+        ImportPreviewPlan equalValue = plan(
+                ImportOperationMode.UPDATE_EXISTING,
+                List.of(10L),
+                List.of(row(2, "MANUAL", "A", SourceField.value(DOB), SourceField.absent(), 1_000, "Manual")),
+                List.of(current)
+        );
+        assertThat(find(equalValue, 2).decision()).isEqualTo(ImportPreviewDecision.EXISTING_UNCHANGED);
+
+        TimingResultImportRow absentGun = withTimes(
+                row(2, "MANUAL", "A", SourceField.value(DOB), SourceField.absent(), 1_000, "Manual"),
+                SourceField.absent(),
+                SourceField.value(Duration.ofMillis(900))
+        );
+        ImportPreviewPlan omittedValue = plan(
+                ImportOperationMode.UPDATE_EXISTING, List.of(10L), List.of(absentGun), List.of(current)
+        );
+        assertThat(find(omittedValue, 2).decision()).isEqualTo(ImportPreviewDecision.EXISTING_UNCHANGED);
+
+        ImportPreviewPlan ordinaryUpdate = plan(
+                ImportOperationMode.UPDATE_EXISTING,
+                List.of(10L),
+                List.of(row(2, "PLAIN", "A", SourceField.value(DOB), SourceField.absent(), 1_100, "Plain")),
+                List.of(registration(2, "PLAIN", RACE_A, null, DOB, "Plain", 1_000))
+        );
+        assertThat(find(ordinaryUpdate, 2).decision()).isEqualTo(ImportPreviewDecision.EXISTING_CHANGED);
+        assertThat(find(ordinaryUpdate, 2).futureAction()).isEqualTo(ImportPreviewAction.UPDATE);
+    }
+
+    @Test
+    void emergencyBlocksBeforeRetiringAnyManuallyCorrectedResult() {
+        var draftRace = draftRace(10L, "A");
+        var corrected = withManualFields(
+                registration(1, "MANUAL", draftRace, null, DOB, "Manual", 1_000),
+                Set.of("gunTimeMs", "status")
+        );
+
+        ImportPreviewPlan plan = emergencyPlan(
+                List.of(10L),
+                List.of(row(2, "NEW", "A", SourceField.value(DOB), SourceField.absent(), 2_000, "New")),
+                List.of(corrected),
+                List.of()
+        );
+
+        assertThat(plan.blockingErrorsPresent()).isTrue();
+        assertThat(plan.diagnostics()).anySatisfy(diagnostic -> {
+            assertThat(diagnostic.code()).isEqualTo("MANUAL_RESULT_OVERRIDE_WOULD_BE_RETIRED");
+            assertThat(diagnostic.message()).contains("MANUAL", "gunTimeMs", "status");
+        });
+    }
+
+    @Test
+    void emergencyBlocksCorrectedResultForUnambiguousAndAmbiguousCurrentIdentity() {
+        var draftRace = draftRace(10L, "A");
+        var corrected = withManualFields(
+                registration(1, "MANUAL", draftRace, null, DOB, "Corrected", 1_000),
+                Set.of("gunTimeMs")
+        );
+        TimingResultImportRow sameBib = row(
+                2, "MANUAL", "A", SourceField.value(DOB), SourceField.absent(), 2_000, "Incoming"
+        );
+
+        ImportPreviewPlan unambiguous = emergencyPlan(
+                List.of(10L), List.of(sameBib), List.of(corrected), List.of()
+        );
+        assertThat(unambiguous.blockingErrorsPresent()).isTrue();
+        assertThat(unambiguous.diagnostics()).extracting(ImportPreviewResponseDto.Diagnostic::code)
+                .contains("MANUAL_RESULT_OVERRIDE_WOULD_BE_RETIRED");
+
+        var duplicateCurrent = registration(2, "MANUAL", draftRace, null, DOB, "Duplicate", 1_100);
+        ImportPreviewPlan ambiguous = emergencyPlan(
+                List.of(10L), List.of(sameBib), List.of(corrected, duplicateCurrent), List.of()
+        );
+        assertThat(ambiguous.blockingErrorsPresent()).isTrue();
+        assertThat(ambiguous.diagnostics()).extracting(ImportPreviewResponseDto.Diagnostic::code)
+                .contains("MANUAL_RESULT_OVERRIDE_WOULD_BE_RETIRED");
+    }
+
+    @Test
+    void unknownStatusProducesDedicatedBlockingDiagnostic() {
+        TimingResultImportRow invalid = withStatus(
+                row(2, "INVALID", "A", SourceField.value(DOB), SourceField.absent(), 1_000, "Invalid"),
+                "UNKNOWN_RESULT"
+        );
+        List<ru.sportsresults.api.dto.ImportErrorDto> validationErrors = new ImportValidator()
+                .validate(List.of(invalid));
+
+        ImportPreviewPlan plan = planner.plan(
+                EVENT_ID,
+                ImportOperationMode.ADD_NEW,
+                List.of(10L),
+                FILE_SHA,
+                new TimingCsvParseResult(1, List.of(invalid), List.of()),
+                validationErrors,
+                snapshot(0, List.of(RACE_A), List.of(), List.of())
+        );
+
+        assertThat(plan.blockingErrorsPresent()).isTrue();
+        assertThat(find(plan, 2).decision()).isEqualTo(ImportPreviewDecision.INVALID);
+        assertThat(plan.diagnostics()).anySatisfy(diagnostic ->
+                assertThat(diagnostic.code()).isEqualTo("INVALID_RESULT_STATUS"));
     }
 
     @Test
@@ -495,6 +619,49 @@ class ImportPreviewPlannerTest {
                         id + 1_000, "finished", Duration.ofMillis(gunTimeMs), Duration.ofMillis(900),
                         1, 1, 1, 1, 1, 1
                 )
+        );
+    }
+
+    private static ImportPreviewDatabaseSnapshot.RegistrationSnapshot withManualFields(
+            ImportPreviewDatabaseSnapshot.RegistrationSnapshot registration,
+            Set<String> fields
+    ) {
+        ImportPreviewDatabaseSnapshot.ResultSnapshot result = registration.result();
+        return new ImportPreviewDatabaseSnapshot.RegistrationSnapshot(
+                registration.id(), registration.bib(), registration.displayName(), registration.firstName(),
+                registration.lastName(), registration.gender(), registration.birthDate(), registration.sourceCategory(),
+                registration.race(), registration.cluster(), registration.category(),
+                new ImportPreviewDatabaseSnapshot.ResultSnapshot(
+                        result.id(), result.status(), result.gunTime(), result.chipTime(), result.overallPlace(),
+                        result.genderPlace(), result.categoryPlace(), result.netOverallPlace(),
+                        result.netGenderPlace(), result.netCategoryPlace(), fields
+                )
+        );
+    }
+
+    private static TimingResultImportRow withTimes(
+            TimingResultImportRow row,
+            SourceField<Duration> gunTime,
+            SourceField<Duration> chipTime
+    ) {
+        return new TimingResultImportRow(
+                row.sourceRowNumber(), row.sourceRowHash(), row.firstNameSource(), row.lastNameSource(),
+                row.genderSource(), row.birthDateSource(), row.raceCode(), row.bib(), row.categorySource(),
+                row.clusterCodeSource(), row.clusterNameSource(), row.clusterSourceNameSource(), row.status(),
+                row.entryKind(), gunTime, chipTime, row.overallPlaceSource(), row.genderPlaceSource(),
+                row.categoryPlaceSource(), row.netOverallPlaceSource(), row.netGenderPlaceSource(),
+                row.netCategoryPlaceSource()
+        );
+    }
+
+    private static TimingResultImportRow withStatus(TimingResultImportRow row, String status) {
+        return new TimingResultImportRow(
+                row.sourceRowNumber(), row.sourceRowHash(), row.firstNameSource(), row.lastNameSource(),
+                row.genderSource(), row.birthDateSource(), row.raceCode(), row.bib(), row.categorySource(),
+                row.clusterCodeSource(), row.clusterNameSource(), row.clusterSourceNameSource(), status,
+                row.entryKind(), row.gunTimeSource(), row.chipTimeSource(), row.overallPlaceSource(),
+                row.genderPlaceSource(), row.categoryPlaceSource(), row.netOverallPlaceSource(),
+                row.netGenderPlaceSource(), row.netCategoryPlaceSource()
         );
     }
 

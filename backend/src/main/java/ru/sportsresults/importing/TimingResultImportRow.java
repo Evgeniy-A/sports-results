@@ -1,6 +1,7 @@
 package ru.sportsresults.importing;
 
 import ru.sportsresults.domain.RegistrationEntryKind;
+import ru.sportsresults.domain.ResultStatus;
 
 import java.time.Duration;
 import java.time.LocalDate;
@@ -31,6 +32,9 @@ public record TimingResultImportRow(
         SourceField<Integer> netCategoryPlaceSource
 ) {
     public TimingResultImportRow {
+        String sourceStatus = status;
+        status = ResultStatus.normalize(sourceStatus)
+                .orElse(sourceStatus == null ? null : sourceStatus.strip());
         Objects.requireNonNull(firstNameSource, "firstNameSource");
         Objects.requireNonNull(lastNameSource, "lastNameSource");
         Objects.requireNonNull(genderSource, "genderSource");

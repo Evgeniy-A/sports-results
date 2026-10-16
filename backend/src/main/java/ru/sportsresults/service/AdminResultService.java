@@ -9,6 +9,7 @@ import ru.sportsresults.domain.AuditEntityType;
 import ru.sportsresults.domain.Category;
 import ru.sportsresults.domain.Registration;
 import ru.sportsresults.domain.Result;
+import ru.sportsresults.domain.ResultStatus;
 import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.CategoryRepository;
 import ru.sportsresults.repository.RegistrationRepository;
@@ -133,9 +134,14 @@ public class AdminResultService {
                 .orElseThrow(() -> new ResourceNotFoundException("RESULT_NOT_FOUND", "Result not found"));
         rejectRetired(result.getRegistration());
         List<AdminChangeLog> changes = new ArrayList<>();
+        String status = ResultStatus.normalize(request.status())
+                .orElseThrow(() -> new InvalidRequestException(
+                        "INVALID_RESULT_STATUS",
+                        "Unknown result status. Allowed values: " + ResultStatus.allowedCodes()
+                ));
 
         change(changes, actor, AuditEntityType.RESULT, resultId, "status",
-                result.getStatus(), request.status().strip(), result::setStatus);
+                result.getStatus(), status, result::setStatus);
         change(changes, actor, AuditEntityType.RESULT, resultId, "gunTimeMs",
                 milliseconds(result.getGunTime()), request.gunTimeMs(),
                 value -> result.setGunTime(duration(value)));

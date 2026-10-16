@@ -452,6 +452,14 @@ test('import exposes three explicit modes and never auto-syncs them', () => {
   assert.doesNotMatch(imports, /Синхронизировать всё/)
 })
 
+test('import preview explains manual result conflicts and invalid statuses in Russian', () => {
+  assert.match(imports, /MANUAL_RESULT_OVERRIDE_CONFLICT: 'Значение из файла конфликтует с ручной корректировкой результата'/)
+  assert.match(imports, /MANUAL_RESULT_OVERRIDE_WOULD_BE_RETIRED: 'Экстренная замена затронет результат с ручными корректировками'/)
+  assert.match(imports, /INVALID_RESULT_STATUS: 'Неизвестный статус результата\. Выберите допустимый статус\.'/)
+  assert.match(imports, /Стартовый номер: \$\{details\[1\]\}/)
+  assert.match(imports, /details\[2\]\.split\(', '\)\.map\(importFieldLabel\)/)
+})
+
 test('flexible import keeps data verification separate from Apply and emergency replace needs typed confirmation', () => {
   assert.match(imports, /Рекомендуемый формат/)
   assert.match(imports, /Другой файл хронометражиста/)

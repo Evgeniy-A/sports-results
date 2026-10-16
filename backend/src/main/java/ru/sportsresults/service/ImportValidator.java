@@ -3,6 +3,7 @@ package ru.sportsresults.service;
 import org.springframework.stereotype.Component;
 import ru.sportsresults.api.dto.ImportErrorDto;
 import ru.sportsresults.importing.TimingResultImportRow;
+import ru.sportsresults.domain.ResultStatus;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +28,19 @@ public class ImportValidator {
             checkLength(errors, row, "clusterName", row.clusterName(), 255);
             checkLength(errors, row, "clusterSourceName", row.clusterSourceName(), 255);
             checkLength(errors, row, "status", row.status(), 64);
+            if (row.status() == null || row.status().isBlank()) {
+                errors.add(new ImportErrorDto(
+                        row.sourceRowNumber(),
+                        "status",
+                        "Result status is required. Allowed values: " + ResultStatus.allowedCodes()
+                ));
+            } else if (ResultStatus.normalize(row.status()).isEmpty()) {
+                errors.add(new ImportErrorDto(
+                        row.sourceRowNumber(),
+                        "status",
+                        "Unknown result status. Allowed values: " + ResultStatus.allowedCodes()
+                ));
+            }
             String displayName = ImportDisplayName.from(row);
             if (displayName == null) {
                 errors.add(new ImportErrorDto(

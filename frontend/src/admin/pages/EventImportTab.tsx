@@ -300,14 +300,24 @@ function importReason(code: string, fallback: string): string {
     CROSS_SCOPE_BIB_CONFLICT: 'Такой номер уже используется в старте вне области замены',
     EMPTY_REPLACEMENT_SCOPE: 'В файле нет строк для выбранных стартов',
     MINOR_SOURCE_CATEGORY_REQUIRED: 'Для несовершеннолетнего без даты рождения нужна категория из файла',
+    MANUAL_RESULT_OVERRIDE_CONFLICT: 'Значение из файла конфликтует с ручной корректировкой результата',
+    MANUAL_RESULT_OVERRIDE_WOULD_BE_RETIRED: 'Экстренная замена затронет результат с ручными корректировками',
   }
   return reasons[code] ?? fallback
 }
 
 function importDiagnostic(code: string, fallback: string): string {
+  if (code === 'MANUAL_RESULT_OVERRIDE_WOULD_BE_RETIRED') {
+    const details = /bib (.*?) \(fields: (.*?)\)$/.exec(fallback)
+    if (details) {
+      const fields = details[2].split(', ').map(importFieldLabel).join(', ')
+      return `Экстренная замена затронет результат с ручными корректировками. Стартовый номер: ${details[1]}. Поля: ${fields}.`
+    }
+  }
   const diagnostics: Record<string, string> = {
     CSV_VALUE_INVALID: 'Проверьте значение в указанной колонке.',
     SOURCE_VALUE_INVALID: 'Проверьте значение в указанной колонке.',
+    INVALID_RESULT_STATUS: 'Неизвестный статус результата. Выберите допустимый статус.',
   }
   return diagnostics[code] ?? importReason(code, fallback)
 }

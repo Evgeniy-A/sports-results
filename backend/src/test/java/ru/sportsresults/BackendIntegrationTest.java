@@ -73,6 +73,7 @@ import ru.sportsresults.domain.ResultIssueType;
 import ru.sportsresults.domain.ResultsPublicationStatus;
 import ru.sportsresults.domain.StartCluster;
 import ru.sportsresults.importing.TabularImportFileReader;
+import ru.sportsresults.importing.ImportPreviewAction;
 import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.CategoryRepository;
 import ru.sportsresults.repository.EventRepository;
@@ -1107,6 +1108,58 @@ class BackendIntegrationTest {
                 .extracting(exception -> ((RequestConflictException) exception).getCode())
                 .isEqualTo("PREVIEW_STALE");
         assertThat(registrationRepository.findAllByRaceIdAndBib(race.getId(), "STALE-NEW")).isEmpty();
+    }
+
+    @Test
+    void importPreviewAndApplyProtectManualResultCorrectionAndRejectUnknownStatus() {
+        Event event = createPublishedEvent("Part 6 safety", "part-6-safety");
+        importPublishedFixture(
+                event.getId(), "initial.csv", oneRowCsv("1000.0").getBytes(StandardCharsets.UTF_8));
+        Race race = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
+        Registration registration = registrationRepository.findAllByRaceIdAndBib(race.getId(), "A-1").getFirst();
+        Result result = resultRepository.findByRegistrationId(registration.getId()).orElseThrow();
+
+        adminResultService.updateResult(result.getId(), new UpdateResultRequest(
+                result.getStatus(), 1_500L, result.getChipTime().toMillis(),
+                result.getOverallPlace(), result.getGenderPlace(), result.getCategoryPlace(),
+                result.getNetOverallPlace(), result.getNetGenderPlace(), result.getNetCategoryPlace()
+        ), ADMIN_USERNAME);
+
+        byte[] overwrite = oneRowCsv("2000.0").getBytes(StandardCharsets.UTF_8);
+        ImportPreviewResponseDto conflict = importPreviewService.preview(
+                event.getId(), "overwrite.csv", overwrite, ImportOperationMode.UPDATE_EXISTING,
+                List.of(race.getId()), 100, ADMIN_USERNAME
+        );
+        assertThat(conflict.blockingErrorsPresent()).isTrue();
+        assertThat(conflict.rows()).singleElement().satisfies(row -> {
+            assertThat(row.reasonCode()).isEqualTo("MANUAL_RESULT_OVERRIDE_CONFLICT");
+            assertThat(row.futureAction()).isEqualTo(ImportPreviewAction.BLOCKED);
+            assertThat(row.diffs()).extracting(ImportPreviewResponseDto.FieldDiff::field)
+                    .containsExactly("gunTimeMs");
+        });
+        assertThatThrownBy(() -> importApplyService.apply(
+                event.getId(), conflict.operationId(), overwrite, ADMIN_USERNAME
+        )).isInstanceOf(RequestConflictException.class)
+                .extracting(exception -> ((RequestConflictException) exception).getCode())
+                .isEqualTo("PREVIEW_BLOCKED");
+        assertThat(resultRepository.findById(result.getId()).orElseThrow().getGunTime())
+                .isEqualTo(Duration.ofMillis(1_500));
+
+        byte[] invalidStatus = oneRowCsv("1500.0")
+                .replace(",finished,", ",UNKNOWN_RESULT,")
+                .getBytes(StandardCharsets.UTF_8);
+        ImportPreviewResponseDto invalid = importPreviewService.preview(
+                event.getId(), "invalid-status.csv", invalidStatus, ImportOperationMode.UPDATE_EXISTING,
+                List.of(race.getId()), 100, ADMIN_USERNAME
+        );
+        assertThat(invalid.blockingErrorsPresent()).isTrue();
+        assertThat(invalid.diagnostics()).anySatisfy(diagnostic ->
+                assertThat(diagnostic.code()).isEqualTo("INVALID_RESULT_STATUS"));
+        assertThatThrownBy(() -> importApplyService.apply(
+                event.getId(), invalid.operationId(), invalidStatus, ADMIN_USERNAME
+        )).isInstanceOf(RequestConflictException.class)
+                .extracting(exception -> ((RequestConflictException) exception).getCode())
+                .isEqualTo("PREVIEW_BLOCKED");
     }
 
     @Test
@@ -4593,7 +4646,7 @@ class BackendIntegrationTest {
         Registration registration = registrationRepository.findAll().getFirst();
         String resultUpdate = """
                 {
-                  "status": "reviewed",
+                  "status": "running",
                   "gunTimeMs": 1200,
                   "chipTimeMs": 1100,
                   "overallPlace": 2,
@@ -4634,7 +4687,7 @@ class BackendIntegrationTest {
 
         Result updatedResult = resultRepository.findById(result.getId()).orElseThrow();
         Registration updatedRegistration = registrationRepository.findById(registration.getId()).orElseThrow();
-        assertThat(updatedResult.getStatus()).isEqualTo("reviewed");
+        assertThat(updatedResult.getStatus()).isEqualTo("running");
         assertThat(updatedResult.getChipTime()).isEqualTo(Duration.ofMillis(1_100));
         assertThat(updatedRegistration.getDisplayName()).isEqualTo("Исправленное имя");
         assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
@@ -4649,7 +4702,7 @@ class BackendIntegrationTest {
         mockMvc.perform(get("/api/admin/results/{resultId}", result.getId())
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("reviewed"))
+                .andExpect(jsonPath("$.status").value("running"))
                 .andExpect(jsonPath("$.chipTimeMs").value(1_100));
 
         long auditCount = changeLogRepository.count();
@@ -4763,6 +4816,21 @@ class BackendIntegrationTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESULT_NOT_FOUND"))
                 .andExpect(jsonPath("$.message").value("Result not found"));
+
+        Registration registration = registrationRepository.findAllByRaceIdAndBib(race.getId(), "A-1").getFirst();
+        Result result = resultRepository.findByRegistrationId(registration.getId()).orElseThrow();
+        String unknownStatus = objectMapper.writeValueAsString(new UpdateResultRequest(
+                "UNKNOWN_RESULT", result.getGunTime().toMillis(), result.getChipTime().toMillis(),
+                result.getOverallPlace(), result.getGenderPlace(), result.getCategoryPlace(),
+                result.getNetOverallPlace(), result.getNetGenderPlace(), result.getNetCategoryPlace()
+        ));
+        mockMvc.perform(put("/api/admin/results/{resultId}", result.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(unknownStatus))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_RESULT_STATUS"));
+        assertThat(resultRepository.findById(result.getId()).orElseThrow().getStatus()).isEqualTo("finished");
     }
 
     @Test
@@ -10041,7 +10109,6 @@ class BackendIntegrationTest {
                 Скрытый Старт,,male,1990-01-01,5 km,3,Open,notstarted,,,,,,,,
                 Скрытый Running,,male,1990-01-01,5 km,4,Open,running,,,,,,,,
                 Скрытый Quarantine,,female,1990-01-01,5 km,5,Open,quarantine,,,,,,,,
-                Скрытый Unknown,,female,1990-01-01,5 km,6,Open,unknown,,,,,,,,
                 """;
     }
 
