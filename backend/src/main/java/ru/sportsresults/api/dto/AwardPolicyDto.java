@@ -8,6 +8,7 @@ public record AwardPolicyDto(
         Long id,
         Long raceId,
         RankingBasis rankingBasis,
+        RankingBasis categoryRankingBasis,
         PrimaryStandingMode primaryStandingMode,
         int absolutePrizePlaces,
         boolean categoryEnabled,

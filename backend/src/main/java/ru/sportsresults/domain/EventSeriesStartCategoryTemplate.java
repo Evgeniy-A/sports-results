@@ -53,6 +53,10 @@ public class EventSeriesStartCategoryTemplate extends BaseEntity {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "ranking_basis_override", length = 32)
+    private RankingBasis rankingBasisOverride;
+
     public EventSeriesStartTemplate getTemplateStart() { return templateStart; }
     public void setTemplateStart(EventSeriesStartTemplate templateStart) { this.templateStart = templateStart; }
     public String getSourceName() { return sourceName; }
@@ -69,4 +73,8 @@ public class EventSeriesStartCategoryTemplate extends BaseEntity {
     public void setGender(CategoryGender gender) { this.gender = gender; }
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    public RankingBasis getRankingBasisOverride() { return rankingBasisOverride; }
+    public void setRankingBasisOverride(RankingBasis rankingBasisOverride) {
+        this.rankingBasisOverride = rankingBasisOverride;
+    }
 }

@@ -4,14 +4,19 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.sportsresults.api.dto.AdminCategoryDto;
+import ru.sportsresults.api.dto.BulkCategoryRankingBasisRequest;
 import ru.sportsresults.api.dto.UpsertCategoryRequest;
 import ru.sportsresults.domain.AdminChangeLog;
 import ru.sportsresults.domain.AuditEntityType;
 import ru.sportsresults.domain.Category;
 import ru.sportsresults.domain.CategoryGender;
+import ru.sportsresults.domain.CategoryRankingBasisBulkAction;
 import ru.sportsresults.domain.Event;
 import ru.sportsresults.domain.Race;
+import ru.sportsresults.domain.RankingBasis;
+import ru.sportsresults.domain.AwardPolicy;
 import ru.sportsresults.repository.AdminChangeLogRepository;
+import ru.sportsresults.repository.AwardPolicyRepository;
 import ru.sportsresults.repository.CategoryRepository;
 import ru.sportsresults.repository.RaceRepository;
 import ru.sportsresults.repository.RegistrationRepository;
@@ -29,6 +34,7 @@ public class CategoryAdminService {
     private final ResultConfigurationChangeGuard configurationGuard;
     private final AdminChangeLogRepository auditRepository;
     private final EventResultDataMutationGuard mutationGuard;
+    private final AwardPolicyRepository awardPolicyRepository;
 
     public CategoryAdminService(
             CategoryRepository categoryRepository,
@@ -36,7 +42,8 @@ public class CategoryAdminService {
             RegistrationRepository registrationRepository,
             ResultConfigurationChangeGuard configurationGuard,
             AdminChangeLogRepository auditRepository,
-            EventResultDataMutationGuard mutationGuard
+            EventResultDataMutationGuard mutationGuard,
+            AwardPolicyRepository awardPolicyRepository
     ) {
         this.categoryRepository = categoryRepository;
         this.raceRepository = raceRepository;
@@ -44,6 +51,7 @@ public class CategoryAdminService {
         this.configurationGuard = configurationGuard;
         this.auditRepository = auditRepository;
         this.mutationGuard = mutationGuard;
+        this.awardPolicyRepository = awardPolicyRepository;
     }
 
     @Transactional(readOnly = true)
@@ -62,6 +70,7 @@ public class CategoryAdminService {
         validateSourceName(raceId, request.sourceName().strip(), null);
         Category category = new Category();
         category.setRace(race);
+        validateRankingBasisOverride(request.rankingBasisOverride());
         apply(category, request);
         validate(category, null);
         try {
@@ -80,6 +89,7 @@ public class CategoryAdminService {
         Event event = mutationGuard.lock(eventId(raceId));
         Category category = requireCategory(raceId, categoryId);
         Race race = category.getRace();
+        validateRankingBasisOverride(request.rankingBasisOverride());
         validateSourceName(raceId, request.sourceName().strip(), categoryId);
         List<AdminChangeLog> changes = new ArrayList<>();
         addChange(changes, actor, categoryId, "sourceName", category.getSourceName(), request.sourceName().strip());
@@ -89,10 +99,13 @@ public class CategoryAdminService {
         addChange(changes, actor, categoryId, "gender", category.getGender(), request.gender());
         addChange(changes, actor, categoryId, "displayOrder", category.getDisplayOrder(), request.displayOrder());
         addChange(changes, actor, categoryId, "enabled", category.isEnabled(), request.enabled());
+        addChange(changes, actor, categoryId, "rankingBasisOverride",
+                category.getRankingBasisOverride(), request.rankingBasisOverride());
         boolean resultAffecting = !Objects.equals(category.getSourceName(), request.sourceName().strip())
                 || !Objects.equals(category.getMinAge(), request.minAge())
                 || !Objects.equals(category.getMaxAge(), request.maxAge())
                 || !Objects.equals(category.getGender(), request.gender())
+                || !Objects.equals(category.getRankingBasisOverride(), request.rankingBasisOverride())
                 || category.isEnabled() != request.enabled();
         if (resultAffecting) {
             configurationGuard.requireDraft(List.of(race));
@@ -130,6 +143,54 @@ public class CategoryAdminService {
         categoryRepository.delete(category);
         categoryRepository.flush();
         auditRepository.save(log(actor, categoryId, "deleted", oldValue, null));
+        configurationGuard.markRecalculationRequiredForCurrentData(List.of(race));
+        mutationGuard.bump(event);
+    }
+
+    @Transactional
+    public void bulkRankingBasis(Long raceId, BulkCategoryRankingBasisRequest request, String actor) {
+        Event event = mutationGuard.lock(eventId(raceId));
+        Race race = requireRace(raceId);
+        AwardPolicy policy = awardPolicyRepository.findByRaceId(raceId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "AWARD_POLICY_NOT_FOUND", "Award policy not configured"
+                ));
+        List<Category> categories = categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(raceId);
+        RankingBasis requestedDefault = switch (request.action()) {
+            case SET_ALL_GUN_TIME -> RankingBasis.GUN_TIME;
+            case SET_ALL_CHIP_TIME -> RankingBasis.CHIP_TIME;
+            case RESET_OVERRIDES -> policy.getCategoryRankingBasis();
+        };
+        if (policy.getRankingBasis() == RankingBasis.NONE
+                && request.action() != CategoryRankingBasisBulkAction.RESET_OVERRIDES) {
+            throw new InvalidRequestException(
+                    "INVALID_CATEGORY_RANKING_BASIS",
+                    "Category ranking basis cannot be enabled while the official ranking is NONE"
+            );
+        }
+        List<AdminChangeLog> changes = new ArrayList<>();
+        if (!Objects.equals(policy.getCategoryRankingBasis(), requestedDefault)) {
+            changes.add(log(
+                    actor, AuditEntityType.AWARD_POLICY, policy.getId(), "categoryRankingBasis",
+                    policy.getCategoryRankingBasis(), requestedDefault
+            ));
+        }
+        for (Category category : categories) {
+            if (category.getRankingBasisOverride() != null) {
+                changes.add(log(
+                        actor, AuditEntityType.CATEGORY, category.getId(), "rankingBasisOverride",
+                        category.getRankingBasisOverride(), null
+                ));
+            }
+        }
+        if (changes.isEmpty()) {
+            return;
+        }
+        configurationGuard.requireDraft(List.of(race));
+        policy.setCategoryRankingBasis(requestedDefault);
+        awardPolicyRepository.save(policy);
+        categoryRepository.clearRankingBasisOverridesByRaceId(raceId);
+        auditRepository.saveAll(changes);
         configurationGuard.markRecalculationRequiredForCurrentData(List.of(race));
         mutationGuard.bump(event);
     }
@@ -186,6 +247,7 @@ public class CategoryAdminService {
         category.setGender(request.gender());
         category.setDisplayOrder(request.displayOrder());
         category.setEnabled(request.enabled());
+        category.setRankingBasisOverride(request.rankingBasisOverride());
     }
 
     private static void addChange(
@@ -218,6 +280,33 @@ public class CategoryAdminService {
         return log;
     }
 
+    private static AdminChangeLog log(
+            String actor,
+            AuditEntityType entityType,
+            Long entityId,
+            String field,
+            Object oldValue,
+            Object newValue
+    ) {
+        AdminChangeLog log = new AdminChangeLog();
+        log.setActor(actor);
+        log.setEntityType(entityType);
+        log.setEntityId(entityId);
+        log.setFieldName(field);
+        log.setOldValue(oldValue == null ? null : oldValue.toString());
+        log.setNewValue(newValue == null ? null : newValue.toString());
+        return log;
+    }
+
+    private static void validateRankingBasisOverride(RankingBasis basis) {
+        if (basis == RankingBasis.NONE) {
+            throw new InvalidRequestException(
+                    "INVALID_CATEGORY_RANKING_BASIS_OVERRIDE",
+                    "Category ranking basis override must be GUN_TIME, CHIP_TIME, or null"
+            );
+        }
+    }
+
     private static RequestConflictException duplicateSourceName() {
         return new RequestConflictException(
                 "CATEGORY_SOURCE_NAME_EXISTS",
@@ -236,7 +325,8 @@ public class CategoryAdminService {
                 category.getGender(),
                 category.getDisplayOrder(),
                 category.isEnabled(),
-                registrationRepository.existsByCategoryId(category.getId())
+                registrationRepository.existsByCategoryId(category.getId()),
+                category.getRankingBasisOverride()
         );
     }
 }

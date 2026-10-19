@@ -480,6 +480,7 @@ public class EventService {
                 category.setGender(templateCategory.getGender());
                 category.setDisplayOrder(templateCategory.getDisplayOrder());
                 category.setEnabled(templateCategory.isEnabled());
+                category.setRankingBasisOverride(templateCategory.getRankingBasisOverride());
                 categoryRepository.save(category);
             }
             created.add(toDto(race, policy.isCategoryEnabled()));
@@ -556,7 +557,8 @@ public class EventService {
             EventSeriesStartAwardPolicyTemplate policy
     ) {
         return new UpdateAwardPolicyRequest(
-                policy.getRankingBasis(), policy.getPrimaryStandingMode(), policy.getAbsolutePrizePlaces(),
+                policy.getRankingBasis(), policy.getCategoryRankingBasis(), policy.getPrimaryStandingMode(),
+                policy.getAbsolutePrizePlaces(),
                 policy.isCategoryEnabled(), policy.getAgeCalculationMode(), policy.getCategoryPrizePlaces(),
                 policy.isExcludeAbsoluteWinnersFromCategory()
         );

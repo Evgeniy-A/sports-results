@@ -221,6 +221,14 @@ export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: (
       { method: 'DELETE' },
       true,
     ),
+    bulkCategoryRankingBasis: (
+      raceId: number,
+      action: 'SET_ALL_GUN_TIME' | 'SET_ALL_CHIP_TIME' | 'RESET_OVERRIDES',
+    ) => request<void>(
+      `/admin/races/${raceId}/categories/ranking-basis`,
+      { method: 'PUT', ...json({ action }) },
+      true,
+    ),
     clusters: (eventId: number, raceId: number) =>
       request<StartCluster[]>(`/admin/events/${eventId}/races/${raceId}/clusters`),
     createCluster: (eventId: number, raceId: number, body: object) => request<StartCluster>(

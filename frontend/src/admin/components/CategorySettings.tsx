@@ -14,10 +14,12 @@ export interface CategoryCommand {
   gender: 'MALE' | 'FEMALE' | null
   displayOrder: number
   enabled: boolean
+  rankingBasisOverride: 'GUN_TIME' | 'CHIP_TIME' | null
 }
 
-export function CategorySettings({ categories, disabled = false, onCreate, onUpdate, onDelete, onReload }: {
+export function CategorySettings({ categories, defaultRankingBasis, disabled = false, onCreate, onUpdate, onDelete, onReload }: {
   categories: CategoryItem[]
+  defaultRankingBasis: 'GUN_TIME' | 'CHIP_TIME'
   disabled?: boolean
   onCreate: (body: CategoryCommand) => Promise<unknown>
   onUpdate: (id: number, body: CategoryCommand) => Promise<unknown>
@@ -48,12 +50,12 @@ export function CategorySettings({ categories, disabled = false, onCreate, onUpd
     <div className="admin-card-heading"><div><h4>Возрастные категории</h4><p>Категории принадлежат только этому старту.</p></div><button className="admin-button-secondary" type="button" disabled={disabled || busy} onClick={() => setEditor('new')}>+ Добавить категорию</button></div>
     {error && <AdminNotice tone="danger">{error}</AdminNotice>}
     {categories.length ? <div className="admin-category-list">{categories.map((category) => <article key={category.id}>
-      <div><strong>{category.displayName}</strong><p>{category.enabled ? 'Активна' : 'Отключена'} · {ageRange(category)} · {genderLabel(category.gender)} · название в файле: {category.sourceName}</p></div>
+      <div><strong>{category.displayName}</strong><p>{category.enabled ? 'Активна' : 'Отключена'} · {ageRange(category)} · {genderLabel(category.gender)} · название в файле: {category.sourceName}</p><p><strong>Время зачёта:</strong> {categoryBasisLabel(category.rankingBasisOverride, defaultRankingBasis)}</p></div>
       <div className="admin-row-actions"><button className="admin-link-button" type="button" disabled={disabled || busy} onClick={() => setEditor(category)}>Изменить</button>{inUse(category)
         ? category.enabled && <button className="admin-link-button danger" type="button" disabled={disabled || busy} onClick={() => setActionTarget({ category, action: 'disable' })}>Отключить</button>
         : <button className="admin-link-button danger" type="button" disabled={disabled || busy} onClick={() => setActionTarget({ category, action: 'delete' })}>Удалить</button>}</div>
     </article>)}</div> : <div className="admin-empty compact">Возрастные категории пока не настроены.</div>}
-    {editor && <CategoryDrawer value={editor === 'new' ? null : editor} onClose={() => setEditor(null)} onSave={async (body) => {
+    {editor && <CategoryDrawer value={editor === 'new' ? null : editor} defaultRankingBasis={defaultRankingBasis} onClose={() => setEditor(null)} onSave={async (body) => {
       if (editor === 'new') await onCreate(body)
       else await onUpdate(editor.id, body)
       setEditor(null); await onReload()
@@ -75,11 +77,13 @@ function command(category: CategoryItem, enabled: boolean): CategoryCommand {
     gender: category.gender,
     displayOrder: category.displayOrder,
     enabled,
+    rankingBasisOverride: category.rankingBasisOverride,
   }
 }
 
-function CategoryDrawer({ value, onClose, onSave }: {
+function CategoryDrawer({ value, defaultRankingBasis, onClose, onSave }: {
   value: CategoryItem | null
+  defaultRankingBasis: 'GUN_TIME' | 'CHIP_TIME'
   onClose: () => void
   onSave: (body: CategoryCommand) => Promise<void>
 }) {
@@ -91,6 +95,7 @@ function CategoryDrawer({ value, onClose, onSave }: {
     gender: value?.gender ?? '',
     displayOrder: value?.displayOrder ?? 0,
     enabled: value?.enabled ?? true,
+    rankingBasisOverride: value?.rankingBasisOverride ?? '',
   })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -102,6 +107,9 @@ function CategoryDrawer({ value, onClose, onSave }: {
         minAge: form.minAge === '' ? null : Number(form.minAge),
         maxAge: form.maxAge === '' ? null : Number(form.maxAge),
         gender: form.gender === '' ? null : form.gender as 'MALE' | 'FEMALE',
+        rankingBasisOverride: form.rankingBasisOverride === ''
+          ? null
+          : form.rankingBasisOverride as 'GUN_TIME' | 'CHIP_TIME',
       })
     } catch (reason) { setError(adminErrorMessage(reason)) }
     finally { setBusy(false) }
@@ -112,6 +120,7 @@ function CategoryDrawer({ value, onClose, onSave }: {
     <Field label="Название в файле" hint="Используется как fallback, если дата рождения отсутствует"><input required maxLength={255} value={form.sourceName} onChange={(event) => setForm({ ...form, sourceName: event.target.value })} /></Field>
     <div className="admin-form-grid"><Field label="Минимальный возраст"><input type="number" min="0" max="150" value={form.minAge} onChange={(event) => setForm({ ...form, minAge: event.target.value })} /></Field><Field label="Максимальный возраст"><input type="number" min="0" max="150" value={form.maxAge} onChange={(event) => setForm({ ...form, maxAge: event.target.value })} /></Field></div>
     <div className="admin-form-grid"><Field label="Пол"><select value={form.gender} onChange={(event) => setForm({ ...form, gender: event.target.value as typeof form.gender })}><option value="">Любой</option><option value="MALE">Мужской</option><option value="FEMALE">Женский</option></select></Field><Field label="Порядок"><input type="number" min="0" value={form.displayOrder} onChange={(event) => setForm({ ...form, displayOrder: Number(event.target.value) })} /></Field></div>
+    <Field label="Время зачёта"><select value={form.rankingBasisOverride} onChange={(event) => setForm({ ...form, rankingBasisOverride: event.target.value as typeof form.rankingBasisOverride })}><option value="">По умолчанию — {basisName(defaultRankingBasis)}</option><option value="GUN_TIME">Официальное время (Gun Time)</option><option value="CHIP_TIME">Чистое время (Chip Time)</option></select></Field>
     <label className="admin-check"><input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} /><span>Категория активна</span></label>
     <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy}>{busy ? 'Сохраняем…' : 'Сохранить'}</button><button className="admin-button-secondary" type="button" onClick={onClose}>Отмена</button></div>
   </form></Drawer>
@@ -128,4 +137,15 @@ function genderLabel(gender: CategoryItem['gender']): string {
   if (gender === 'MALE') return 'мужчины'
   if (gender === 'FEMALE') return 'женщины'
   return 'любой пол'
+}
+
+function basisName(basis: 'GUN_TIME' | 'CHIP_TIME'): string {
+  return basis === 'GUN_TIME' ? 'Официальное время' : 'Чистое время'
+}
+
+function categoryBasisLabel(
+  override: 'GUN_TIME' | 'CHIP_TIME' | null,
+  defaultBasis: 'GUN_TIME' | 'CHIP_TIME',
+): string {
+  return override ? basisName(override) : `По умолчанию · ${basisName(defaultBasis)}`
 }

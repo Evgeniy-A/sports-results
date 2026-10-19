@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import ru.sportsresults.api.dto.AdminCategoryDto;
+import ru.sportsresults.api.dto.BulkCategoryRankingBasisRequest;
 import ru.sportsresults.api.dto.UpsertCategoryRequest;
 import ru.sportsresults.service.CategoryAdminService;
 
@@ -63,6 +64,16 @@ public class AdminCategoryController {
             Principal principal
     ) {
         service.delete(raceId, categoryId, principal.getName());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PutMapping("/ranking-basis")
+    public ResponseEntity<Void> bulkRankingBasis(
+            @PathVariable Long raceId,
+            @Valid @RequestBody BulkCategoryRankingBasisRequest request,
+            Principal principal
+    ) {
+        service.bulkRankingBasis(raceId, request, principal.getName());
         return ResponseEntity.noContent().build();
     }
 }

@@ -84,7 +84,13 @@ public class RacePublicSettingsService {
         }
         if (policy != null) {
             if (policy.getRankingBasis() != request.publicRankingBasis()) {
+                RankingBasis oldPrimary = policy.getRankingBasis();
                 policy.setRankingBasis(request.publicRankingBasis());
+                if (request.publicRankingBasis() == RankingBasis.NONE) {
+                    policy.setCategoryRankingBasis(RankingBasis.NONE);
+                } else if (oldPrimary == RankingBasis.NONE) {
+                    policy.setCategoryRankingBasis(request.publicRankingBasis());
+                }
                 awardPolicyRepository.save(policy);
             }
         }

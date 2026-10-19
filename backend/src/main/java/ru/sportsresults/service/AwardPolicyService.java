@@ -64,6 +64,8 @@ public class AwardPolicyService {
         List<AdminChangeLog> changes = new ArrayList<>();
         if (existing) {
             change(changes, actor, policy.getId(), "rankingBasis", policy.getRankingBasis(), request.rankingBasis());
+            change(changes, actor, policy.getId(), "categoryRankingBasis",
+                    policy.getCategoryRankingBasis(), effectiveCategoryBasis(request));
             change(changes, actor, policy.getId(), "primaryStandingMode", policy.getPrimaryStandingMode(), request.primaryStandingMode());
             change(changes, actor, policy.getId(), "absolutePrizePlaces", policy.getAbsolutePrizePlaces(), request.absolutePrizePlaces());
             change(changes, actor, policy.getId(), "categoryEnabled", policy.isCategoryEnabled(), request.categoryEnabled());
@@ -95,6 +97,7 @@ public class AwardPolicyService {
 
     static void apply(AwardPolicy policy, UpdateAwardPolicyRequest request) {
         policy.setRankingBasis(request.rankingBasis());
+        policy.setCategoryRankingBasis(effectiveCategoryBasis(request));
         policy.setPrimaryStandingMode(request.primaryStandingMode());
         policy.setAbsolutePrizePlaces(request.absolutePrizePlaces());
         policy.setCategoryEnabled(request.categoryEnabled());
@@ -104,10 +107,18 @@ public class AwardPolicyService {
     }
 
     static void validate(UpdateAwardPolicyRequest request) {
+        RankingBasis categoryBasis = effectiveCategoryBasis(request);
         if (request.rankingBasis() != RankingBasis.NONE) {
+            if (categoryBasis == RankingBasis.NONE) {
+                throw new InvalidRequestException(
+                        "INVALID_CATEGORY_RANKING_BASIS",
+                        "Category ranking basis must be GUN_TIME or CHIP_TIME when ranking is enabled"
+                );
+            }
             return;
         }
-        if (request.primaryStandingMode() != PrimaryStandingMode.NONE
+        if (categoryBasis != RankingBasis.NONE
+                || request.primaryStandingMode() != PrimaryStandingMode.NONE
                 || request.absolutePrizePlaces() != 0
                 || request.categoryEnabled()
                 || request.categoryPrizePlaces() != 0
@@ -123,6 +134,7 @@ public class AwardPolicyService {
         AwardPolicy policy = new AwardPolicy();
         policy.setRace(race);
         policy.setRankingBasis(RankingBasis.CHIP_TIME);
+        policy.setCategoryRankingBasis(RankingBasis.CHIP_TIME);
         policy.setPrimaryStandingMode(PrimaryStandingMode.ALL);
         policy.setAbsolutePrizePlaces(0);
         policy.setCategoryEnabled(false);
@@ -157,10 +169,15 @@ public class AwardPolicyService {
 
     public static AwardPolicyDto toDto(AwardPolicy policy) {
         return new AwardPolicyDto(
-                policy.getId(), policy.getRace().getId(), policy.getRankingBasis(), policy.getPrimaryStandingMode(),
+                policy.getId(), policy.getRace().getId(), policy.getRankingBasis(),
+                policy.getCategoryRankingBasis(), policy.getPrimaryStandingMode(),
                 policy.getAbsolutePrizePlaces(), policy.isCategoryEnabled(), policy.getAgeCalculationMode(),
                 policy.getCategoryPrizePlaces(),
                 policy.isExcludeAbsoluteWinnersFromCategory()
         );
+    }
+
+    static RankingBasis effectiveCategoryBasis(UpdateAwardPolicyRequest request) {
+        return request.categoryRankingBasis() == null ? request.rankingBasis() : request.categoryRankingBasis();
     }
 }

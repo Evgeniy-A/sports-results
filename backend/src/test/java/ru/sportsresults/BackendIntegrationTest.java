@@ -17,6 +17,9 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
@@ -39,6 +42,7 @@ import ru.sportsresults.domain.AdminChangeLog;
 import ru.sportsresults.domain.AttachmentScanStatus;
 import ru.sportsresults.domain.AttachmentUploadStatus;
 import ru.sportsresults.domain.Category;
+import ru.sportsresults.domain.CategoryRankingBasisBulkAction;
 import ru.sportsresults.domain.Event;
 import ru.sportsresults.domain.EventPublicationStatus;
 import ru.sportsresults.domain.EventSeries;
@@ -81,6 +85,7 @@ import ru.sportsresults.repository.EventSeriesRepository;
 import ru.sportsresults.repository.ImportBatchRepository;
 import ru.sportsresults.repository.ImportOperationRepository;
 import ru.sportsresults.repository.ImportOperationItemRepository;
+import ru.sportsresults.repository.OfficialRankingQueryRepositoryImpl;
 import ru.sportsresults.repository.RaceRepository;
 import ru.sportsresults.repository.RaceResultPublicationHistoryRepository;
 import ru.sportsresults.repository.RegistrationRepository;
@@ -97,6 +102,7 @@ import ru.sportsresults.service.ImportApplyService;
 import ru.sportsresults.service.AwardPolicyService;
 import ru.sportsresults.service.EventService;
 import ru.sportsresults.api.dto.UpdateAwardPolicyRequest;
+import ru.sportsresults.api.dto.BulkCategoryRankingBasisRequest;
 import ru.sportsresults.api.dto.UpdateEventRequest;
 import ru.sportsresults.api.dto.UpdateRegistrationRequest;
 import ru.sportsresults.api.dto.UpdateResultRequest;
@@ -6765,7 +6771,8 @@ class BackendIntegrationTest {
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"rankingBasis":"CHIP_TIME","primaryStandingMode":"NONE",
+                                {"rankingBasis":"GUN_TIME","categoryRankingBasis":"CHIP_TIME",
+                                 "primaryStandingMode":"NONE",
                                  "absolutePrizePlaces":0,"categoryEnabled":true,
                                  "ageCalculationMode":"END_OF_EVENT_YEAR","categoryPrizePlaces":3,
                                  "excludeAbsoluteWinnersFromCategory":false}
@@ -6779,7 +6786,7 @@ class BackendIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"sourceName":"18-29","displayName":"18–29","minAge":18,"maxAge":29,
-                                 "gender":null,"displayOrder":0,"enabled":true}
+                                 "gender":null,"displayOrder":0,"enabled":true,"rankingBasisOverride":null}
                                 """))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.templateStartId").value(start))
@@ -6793,7 +6800,8 @@ class BackendIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"sourceName":"30-39","displayName":"30–39","minAge":30,"maxAge":39,
-                                 "gender":null,"displayOrder":1,"enabled":true}
+                                 "gender":null,"displayOrder":1,"enabled":true,
+                                 "rankingBasisOverride":"GUN_TIME"}
                                 """))
                 .andExpect(status().isCreated())
                 .andReturn();
@@ -6835,6 +6843,14 @@ class BackendIntegrationTest {
             assertThat(category.getId()).isNotNull();
             assertThat(category.getRace().getId()).isEqualTo(race.getId());
         });
+        assertThat(copied.get(0).getRankingBasisOverride()).isNull();
+        assertThat(copied.get(1).getRankingBasisOverride()).isEqualTo(RankingBasis.GUN_TIME);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT ranking_basis FROM award_policies WHERE race_id=?", String.class, race.getId()))
+                .isEqualTo("GUN_TIME");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT category_ranking_basis FROM award_policies WHERE race_id=?", String.class, race.getId()))
+                .isEqualTo("CHIP_TIME");
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT age_calculation_mode FROM award_policies WHERE race_id=?", String.class, race.getId()))
                 .isEqualTo("END_OF_EVENT_YEAR");
@@ -10200,6 +10216,273 @@ class BackendIntegrationTest {
 
     private static String oneRowCsv(String gunTime) {
         return oneRowResultCsv(gunTime, "900.0", "finished");
+    }
+
+    @Test
+    void ranksPrimaryAndCategoriesByIndependentTimesWithOverridesMissingTimesAndExclusion() {
+        Event event = createPublishedEvent("Separate ranking basis", "separate-ranking-basis");
+        Race race = createDraftRace(event, "PART9", 0);
+        Category inheritedChip = part9Category(race, "A", "Category A", 0, null);
+        Category gunOverride = part9Category(race, "B", "Category B", 1, RankingBasis.GUN_TIME);
+        ImportBatch batch = raceImportBatch(event, race, "part9.csv");
+
+        part9Result(race, batch, inheritedChip, 1, "A", 2_400L, 2_390L);
+        part9Result(race, batch, inheritedChip, 2, "B", 2_405L, 2_370L);
+        part9Result(race, batch, inheritedChip, 3, "C", null, 2_380L);
+        part9Result(race, batch, inheritedChip, 4, "D", 2_410L, null);
+        part9Result(race, batch, gunOverride, 5, "E", 2_500L, 2_300L);
+        part9Result(race, batch, gunOverride, 6, "F", 2_490L, 2_400L);
+        part9Result(race, batch, inheritedChip, 7, "G", 2_600L, 2_385L);
+        part9Result(race, batch, inheritedChip, 8, "H", 2_600L, 2_385L);
+
+        awardPolicyService.upsert(race.getId(), new UpdateAwardPolicyRequest(
+                RankingBasis.GUN_TIME, RankingBasis.CHIP_TIME, PrimaryStandingMode.ALL,
+                1, true, AgeCalculationMode.EVENT_DATE, 3, true
+        ), ADMIN_USERNAME);
+        raceResultsPublicationService.publish(event.getId(), race.getId(), ADMIN_USERNAME);
+
+        var gunPrimaryChipCategory = resultQueryService.search(
+                event.getId(), race.getId(), null, null, null, null, null,
+                0, 20, "displayName", "asc"
+        );
+        assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic A", "ABSOLUTE").place()).isEqualTo(1);
+        assertThat(item(gunPrimaryChipCategory.content(), "Synthetic A").rankingAchievements())
+                .noneMatch(value -> value.type().name().equals("CATEGORY"));
+        assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic B", "CATEGORY").place()).isEqualTo(1);
+        assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic C", "CATEGORY").place()).isEqualTo(2);
+        assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic G", "CATEGORY").place()).isEqualTo(3);
+        assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic H", "CATEGORY").place()).isEqualTo(3);
+        assertThat(item(gunPrimaryChipCategory.content(), "Synthetic C").rankingAchievements())
+                .noneMatch(value -> value.type().name().equals("ABSOLUTE"));
+        assertThat(item(gunPrimaryChipCategory.content(), "Synthetic D").rankingAchievements())
+                .noneMatch(value -> value.type().name().equals("CATEGORY"));
+        assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic F", "CATEGORY").place()).isEqualTo(1);
+        assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic E", "CATEGORY").place()).isEqualTo(2);
+        assertAdminOfficialRankingMatchesPublic(event.getId(), race.getId());
+
+        awardPolicyService.upsert(race.getId(), new UpdateAwardPolicyRequest(
+                RankingBasis.CHIP_TIME, RankingBasis.GUN_TIME, PrimaryStandingMode.ALL,
+                0, true, AgeCalculationMode.EVENT_DATE, 3, false
+        ), ADMIN_USERNAME);
+        var chipPrimaryGunCategory = resultQueryService.search(
+                event.getId(), race.getId(), null, null, null, null, null,
+                0, 20, "displayName", "asc"
+        );
+        assertThat(achievement(chipPrimaryGunCategory.content(), "Synthetic E", "ABSOLUTE").place()).isEqualTo(1);
+        assertThat(item(chipPrimaryGunCategory.content(), "Synthetic D").rankingAchievements())
+                .noneMatch(value -> value.type().name().equals("ABSOLUTE"));
+        assertThat(achievement(chipPrimaryGunCategory.content(), "Synthetic A", "CATEGORY").place()).isEqualTo(1);
+        assertThat(achievement(chipPrimaryGunCategory.content(), "Synthetic B", "CATEGORY").place()).isEqualTo(2);
+        assertThat(achievement(chipPrimaryGunCategory.content(), "Synthetic G", "CATEGORY").place()).isEqualTo(4);
+        assertThat(achievement(chipPrimaryGunCategory.content(), "Synthetic H", "CATEGORY").place()).isEqualTo(4);
+        assertThat(item(chipPrimaryGunCategory.content(), "Synthetic C").rankingAchievements())
+                .noneMatch(value -> value.type().name().equals("CATEGORY"));
+        assertAdminOfficialRankingMatchesPublic(event.getId(), race.getId());
+    }
+
+    @Test
+    void bulkCategoryBasisIsAtomicAuditedDraftOnlyAndRejectsNoneOverride() {
+        Event event = createPublishedEvent("Bulk category basis", "bulk-category-basis");
+        Race race = createDraftRace(event, "PART9-BULK", 0);
+        Category first = part9Category(race, "A", "Category A", 0, RankingBasis.GUN_TIME);
+        Category second = part9Category(race, "B", "Category B", 1, RankingBasis.CHIP_TIME);
+        ImportBatch batch = raceImportBatch(event, race, "part9-bulk.csv");
+        part9Result(race, batch, first, 1, "BULK", 1_000L, 900L);
+        long revisionBefore = eventRepository.findById(event.getId()).orElseThrow().getResultDataRevision();
+
+        categoryAdminService.bulkRankingBasis(
+                race.getId(), new BulkCategoryRankingBasisRequest(CategoryRankingBasisBulkAction.SET_ALL_CHIP_TIME),
+                ADMIN_USERNAME
+        );
+        assertThat(rawAwardPolicyService.get(race.getId()).categoryRankingBasis()).isEqualTo(RankingBasis.CHIP_TIME);
+        assertThat(categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(race.getId()))
+                .allSatisfy(category -> assertThat(category.getRankingBasisOverride()).isNull());
+        assertThat(eventRepository.findById(event.getId()).orElseThrow().getResultDataRevision())
+                .isEqualTo(revisionBefore + 1);
+        assertThat(raceRepository.findById(race.getId()).orElseThrow().isResultRecalculationRequired()).isTrue();
+        assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
+                AuditEntityType.CATEGORY, first.getId()
+        )).extracting(AdminChangeLog::getFieldName).contains("rankingBasisOverride");
+        categoryAdminService.update(race.getId(), second.getId(), new UpsertCategoryRequest(
+                second.getSourceName(), second.getDisplayName(), second.getMinAge(), second.getMaxAge(),
+                second.getGender(), second.getDisplayOrder(), true, RankingBasis.GUN_TIME
+        ), ADMIN_USERNAME);
+        categoryAdminService.bulkRankingBasis(
+                race.getId(), new BulkCategoryRankingBasisRequest(CategoryRankingBasisBulkAction.RESET_OVERRIDES),
+                ADMIN_USERNAME
+        );
+        assertThat(rawAwardPolicyService.get(race.getId()).categoryRankingBasis()).isEqualTo(RankingBasis.CHIP_TIME);
+        assertThat(categoryRepository.findById(second.getId()).orElseThrow().getRankingBasisOverride()).isNull();
+
+        categoryAdminService.bulkRankingBasis(
+                race.getId(), new BulkCategoryRankingBasisRequest(CategoryRankingBasisBulkAction.SET_ALL_GUN_TIME),
+                ADMIN_USERNAME
+        );
+        assertThat(rawAwardPolicyService.get(race.getId()).categoryRankingBasis()).isEqualTo(RankingBasis.GUN_TIME);
+        Long policyId = rawAwardPolicyService.get(race.getId()).id();
+        assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
+                AuditEntityType.AWARD_POLICY, policyId
+        )).extracting(AdminChangeLog::getFieldName).contains("categoryRankingBasis");
+        var created = categoryAdminService.create(race.getId(), new UpsertCategoryRequest(
+                "C", "Category C", null, null, null, 2, true, null
+        ), ADMIN_USERNAME);
+        assertThat(categoryRepository.findById(created.id()).orElseThrow().getRankingBasisOverride()).isNull();
+
+        assertThatThrownBy(() -> categoryAdminService.update(
+                race.getId(), second.getId(), new UpsertCategoryRequest(
+                        second.getSourceName(), second.getDisplayName(), second.getMinAge(), second.getMaxAge(),
+                        second.getGender(), second.getDisplayOrder(), true, RankingBasis.NONE
+                ), ADMIN_USERNAME
+        )).isInstanceOf(InvalidRequestException.class)
+                .hasMessageContaining("GUN_TIME, CHIP_TIME, or null");
+
+        Race publishedRace = raceRepository.findById(race.getId()).orElseThrow();
+        publishedRace.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        raceRepository.saveAndFlush(publishedRace);
+        assertThatThrownBy(() -> categoryAdminService.bulkRankingBasis(
+                race.getId(), new BulkCategoryRankingBasisRequest(CategoryRankingBasisBulkAction.SET_ALL_CHIP_TIME),
+                ADMIN_USERNAME
+        )).isInstanceOf(RequestConflictException.class);
+        assertThatThrownBy(() -> categoryAdminService.update(
+                race.getId(), second.getId(), new UpsertCategoryRequest(
+                        second.getSourceName(), second.getDisplayName(), second.getMinAge(), second.getMaxAge(),
+                        second.getGender(), second.getDisplayOrder(), true, RankingBasis.CHIP_TIME
+                ), ADMIN_USERNAME
+        )).isInstanceOf(RequestConflictException.class);
+    }
+
+    @Test
+    void officialRankingQueryCountStaysConstantForTenHundredAndThousandResults() {
+        Event event = createPublishedEvent("Ranking query scaling", "ranking-query-scaling");
+        Race race = createDraftRace(event, "PART9-PERF", 0);
+        Category first = part9Category(race, "PERF-A", "Performance A", 0, null);
+        Category second = part9Category(race, "PERF-B", "Performance B", 1, RankingBasis.GUN_TIME);
+        Category third = part9Category(race, "PERF-C", "Performance C", 2, null);
+        Category fourth = part9Category(race, "PERF-D", "Performance D", 3, RankingBasis.CHIP_TIME);
+        ImportBatch batch = raceImportBatch(event, race, "part9-performance.csv");
+        awardPolicyService.upsert(race.getId(), new UpdateAwardPolicyRequest(
+                RankingBasis.GUN_TIME, RankingBasis.CHIP_TIME, PrimaryStandingMode.ALL,
+                3, true, AgeCalculationMode.EVENT_DATE, 3, false
+        ), ADMIN_USERNAME);
+
+        jdbcTemplate.update("""
+                INSERT INTO registrations (
+                    race_id, category_id, import_batch_id, entry_kind, bib, display_name,
+                    gender, source_category, source_row_number, source_row_hash, created_at, updated_at
+                )
+                SELECT ?,
+                       CASE (row_number - 1) % 4
+                           WHEN 0 THEN ? WHEN 1 THEN ? WHEN 2 THEN ? ELSE ? END,
+                       ?, 'PERSON', 'PERF-' || row_number, 'Performance ' || row_number,
+                       CASE WHEN row_number % 2 = 0 THEN 'female' ELSE 'male' END,
+                       'PERF', row_number, lpad(to_hex(row_number), 64, '0'), now(), now()
+                FROM generate_series(1, 1000) row_number
+                """, race.getId(), first.getId(), second.getId(), third.getId(), fourth.getId(), batch.getId());
+        jdbcTemplate.update("""
+                INSERT INTO results (registration_id, status, gun_time_ms, chip_time_ms, created_at, updated_at)
+                SELECT registration.id, 'finished', 1000000 + registration.source_row_number,
+                       2000000 - registration.source_row_number, now(), now()
+                FROM registrations registration
+                WHERE registration.import_batch_id = ?
+                """, batch.getId());
+        List<Long> resultIds = jdbcTemplate.queryForList("""
+                SELECT result.id
+                FROM results result
+                JOIN registrations registration ON registration.id = result.registration_id
+                WHERE registration.import_batch_id = ?
+                ORDER BY result.id
+                """, Long.class, batch.getId());
+
+        CountingNamedParameterJdbcTemplate countingJdbc = new CountingNamedParameterJdbcTemplate(
+                context.getBean(DataSource.class)
+        );
+        OfficialRankingQueryRepositoryImpl repository = new OfficialRankingQueryRepositoryImpl(countingJdbc);
+        assertThat(queryCount(repository, countingJdbc, event.getId(), race.getId(), resultIds.subList(0, 10)))
+                .isEqualTo(1);
+        assertThat(queryCount(repository, countingJdbc, event.getId(), race.getId(), resultIds.subList(0, 100)))
+                .isEqualTo(1);
+        assertThat(queryCount(repository, countingJdbc, event.getId(), race.getId(), resultIds))
+                .isEqualTo(1);
+    }
+
+    private static int queryCount(
+            OfficialRankingQueryRepositoryImpl repository,
+            CountingNamedParameterJdbcTemplate jdbc,
+            Long eventId,
+            Long raceId,
+            List<Long> resultIds
+    ) {
+        jdbc.reset();
+        assertThat(repository.findAchievements(eventId, List.of(raceId), resultIds)).isNotEmpty();
+        return jdbc.count();
+    }
+
+    private static final class CountingNamedParameterJdbcTemplate extends NamedParameterJdbcTemplate {
+        private int count;
+
+        private CountingNamedParameterJdbcTemplate(DataSource dataSource) {
+            super(dataSource);
+        }
+
+        @Override
+        public <T> List<T> query(String sql, SqlParameterSource parameters, RowMapper<T> rowMapper) {
+            count++;
+            return super.query(sql, parameters, rowMapper);
+        }
+
+        private void reset() {
+            count = 0;
+        }
+
+        private int count() {
+            return count;
+        }
+    }
+
+    private Category part9Category(
+            Race race,
+            String sourceName,
+            String displayName,
+            int displayOrder,
+            RankingBasis override
+    ) {
+        Category category = new Category();
+        category.setRace(race);
+        category.setSourceName(sourceName);
+        category.setDisplayName(displayName);
+        category.setDisplayOrder(displayOrder);
+        category.setEnabled(true);
+        category.setRankingBasisOverride(override);
+        return categoryRepository.saveAndFlush(category);
+    }
+
+    private Result part9Result(
+            Race race,
+            ImportBatch batch,
+            Category category,
+            int row,
+            String bib,
+            Long gunTimeMs,
+            Long chipTimeMs
+    ) {
+        Registration registration = new Registration();
+        registration.setRace(race);
+        registration.setImportBatch(batch);
+        registration.setCategory(category);
+        registration.setEntryKind(RegistrationEntryKind.PERSON);
+        registration.setBib(bib);
+        registration.setDisplayName("Synthetic " + bib);
+        registration.setGender("male");
+        registration.setSourceCategory(category.getSourceName());
+        registration.setSourceRowNumber(row);
+        registration.setSourceRowHash(Integer.toHexString(row).repeat(64).substring(0, 64));
+        registration = registrationRepository.saveAndFlush(registration);
+        Result result = new Result();
+        result.setRegistration(registration);
+        result.setStatus("finished");
+        result.setGunTime(gunTimeMs == null ? null : Duration.ofMillis(gunTimeMs));
+        result.setChipTime(chipTimeMs == null ? null : Duration.ofMillis(chipTimeMs));
+        return resultRepository.saveAndFlush(result);
     }
 
     private static String oneRowResultCsv(String gunTime, String chipTime, String status) {

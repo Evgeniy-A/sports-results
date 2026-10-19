@@ -1,6 +1,7 @@
 package ru.sportsresults.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import ru.sportsresults.domain.Category;
@@ -46,4 +47,13 @@ public interface CategoryRepository extends JpaRepository<Category, Long> {
             order by race.displayOrder, category.displayOrder, category.displayName
             """)
     List<Category> findOptionsByEventId(@Param("eventId") Long eventId);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update Category category
+            set category.rankingBasisOverride = null
+            where category.race.id = :raceId
+              and category.rankingBasisOverride is not null
+            """)
+    int clearRankingBasisOverridesByRaceId(@Param("raceId") Long raceId);
 }

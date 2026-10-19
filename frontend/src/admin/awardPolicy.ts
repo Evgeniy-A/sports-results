@@ -4,10 +4,15 @@ export function withRankingBasis(
   policy: AwardPolicy,
   rankingBasis: AwardPolicy['rankingBasis'],
 ): AwardPolicy {
-  if (rankingBasis !== 'NONE') return { ...policy, rankingBasis }
+  if (rankingBasis !== 'NONE') return {
+    ...policy,
+    rankingBasis,
+    categoryRankingBasis: policy.categoryRankingBasis === 'NONE' ? rankingBasis : policy.categoryRankingBasis,
+  }
   return {
     ...policy,
     rankingBasis,
+    categoryRankingBasis: 'NONE',
     primaryStandingMode: 'NONE',
     absolutePrizePlaces: 0,
     categoryEnabled: false,
@@ -19,6 +24,7 @@ export function withRankingBasis(
 export function awardPolicyUpdate(policy: AwardPolicy): AwardPolicyUpdate {
   return {
     rankingBasis: policy.rankingBasis,
+    categoryRankingBasis: policy.categoryRankingBasis,
     primaryStandingMode: policy.primaryStandingMode,
     absolutePrizePlaces: policy.absolutePrizePlaces,
     categoryEnabled: policy.categoryEnabled,

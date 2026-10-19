@@ -52,6 +52,10 @@ public class Category extends BaseEntity {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "ranking_basis_override", length = 32)
+    private RankingBasis rankingBasisOverride;
+
     public Race getRace() {
         return race;
     }
@@ -114,5 +118,13 @@ public class Category extends BaseEntity {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
+    }
+
+    public RankingBasis getRankingBasisOverride() {
+        return rankingBasisOverride;
+    }
+
+    public void setRankingBasisOverride(RankingBasis rankingBasisOverride) {
+        this.rankingBasisOverride = rankingBasisOverride;
     }
 }

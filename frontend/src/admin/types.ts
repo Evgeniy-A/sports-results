@@ -89,6 +89,7 @@ export interface AdminCategory {
   displayOrder: number
   enabled: boolean
   inUse: boolean
+  rankingBasisOverride: 'GUN_TIME' | 'CHIP_TIME' | null
 }
 
 export interface StartCluster {
@@ -105,6 +106,7 @@ export interface AwardPolicy {
   id: number
   raceId: number
   rankingBasis: 'GUN_TIME' | 'CHIP_TIME' | 'NONE'
+  categoryRankingBasis: 'GUN_TIME' | 'CHIP_TIME' | 'NONE'
   primaryStandingMode: 'ALL' | 'BY_GENDER' | 'NONE'
   absolutePrizePlaces: number
   categoryEnabled: boolean
@@ -116,6 +118,7 @@ export interface AwardPolicy {
 export type AwardPolicyUpdate = Pick<
   AwardPolicy,
   | 'rankingBasis'
+  | 'categoryRankingBasis'
   | 'primaryStandingMode'
   | 'absolutePrizePlaces'
   | 'categoryEnabled'
@@ -138,6 +141,7 @@ export interface TemplateCategory {
   gender: 'MALE' | 'FEMALE' | null
   displayOrder: number
   enabled: boolean
+  rankingBasisOverride: 'GUN_TIME' | 'CHIP_TIME' | null
 }
 
 export interface TemplateStart {

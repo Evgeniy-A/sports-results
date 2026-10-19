@@ -4,7 +4,7 @@ import type { AdminApi } from '../api'
 import type { AdminCategory, AwardPolicy, EventSummary, Race, RecalculationPreview } from '../types'
 import { adminErrorMessage } from '../utils'
 import { awardPolicyUpdate } from '../awardPolicy'
-import { AdminNotice, Field, Loadable, StatusBadge } from '../components/AdminUi'
+import { AdminNotice, ConfirmDialog, Field, Loadable, StatusBadge } from '../components/AdminUi'
 import { AwardEditor } from '../components/EventStartComposer'
 import { CategorySettings } from '../components/CategorySettings'
 
@@ -18,6 +18,7 @@ export function EventAwardTab({ api, event, races, initialRaceId, onChanged }: {
   const [success, setSuccess] = useState<string | null>(null)
   const [recalcRaceIds, setRecalcRaceIds] = useState<number[]>(races.filter((race) => race.resultRecalculationRequired).map((race) => race.id))
   const [preview, setPreview] = useState<RecalculationPreview | null>(null)
+  const [bulkAction, setBulkAction] = useState<'SET_ALL_GUN_TIME' | 'SET_ALL_CHIP_TIME' | 'RESET_OVERRIDES' | null>(null)
   const race = races.find((candidate) => candidate.id === raceId)
 
   const loadPolicy = useCallback(async () => {
@@ -52,6 +53,21 @@ export function EventAwardTab({ api, event, races, initialRaceId, onChanged }: {
     catch (reason) { setError(adminErrorMessage(reason)) }
     finally { setBusy(null) }
   }
+  const applyBulkRankingBasis = async () => {
+    if (!bulkAction) return
+    setBusy('bulk'); setError(null); setSuccess(null)
+    try {
+      await api.bulkCategoryRankingBasis(raceId, bulkAction)
+      const [loadedPolicy, loadedCategories] = await Promise.all([
+        api.awardPolicy(raceId), api.categories(raceId),
+      ])
+      setPolicy(loadedPolicy); setCategories(loadedCategories)
+      setSuccess(bulkSuccessMessage(bulkAction))
+      setBulkAction(null)
+      await onChanged()
+    } catch (reason) { setError(adminErrorMessage(reason)) }
+    finally { setBusy(null) }
+  }
 
   if (!races.length) return <div className="admin-empty">Сначала создайте старт.</div>
   return <div className="admin-stack">
@@ -60,7 +76,7 @@ export function EventAwardTab({ api, event, races, initialRaceId, onChanged }: {
     <Loadable loading={loading} error={null} empty={!policy}>{policy && <section className="admin-card"><div className="admin-card-heading"><div><h3>Настройки награждения</h3><p>{rankingExplanation(policy.rankingBasis)}</p></div><StatusBadge value={race?.resultsPublicationStatus ?? 'DRAFT'} /></div>
       {race?.resultsPublicationStatus === 'PUBLISHED' && <AdminNotice tone="warning">Сначала верните старт в черновик. Сохранение настроек не меняет статус публикации автоматически.</AdminNotice>}
       <div className="admin-form">
-        <AwardEditor value={awardPolicyUpdate(policy)} expanded allowRemove={false} onChange={(next) => { if (next) setPolicy({ ...policy, ...next }) }} categorySettings={<CategorySettings categories={categories} disabled={race?.resultsPublicationStatus === 'PUBLISHED'} onCreate={(body) => api.createCategory(raceId, body)} onUpdate={(categoryId, body) => api.updateCategory(raceId, categoryId, body)} onDelete={(categoryId) => api.deleteCategory(raceId, categoryId)} onReload={async () => { setCategories(await api.categories(raceId)); await onChanged() }} />} />
+        <AwardEditor value={awardPolicyUpdate(policy)} expanded allowRemove={false} onChange={(next) => { if (next) setPolicy({ ...policy, ...next }) }} categorySettings={policy.categoryRankingBasis !== 'NONE' ? <><section className="admin-category-bulk-actions"><h4>Массовая настройка времени категорий</h4><p>Действие меняет общее время категорий и сбрасывает индивидуальные исключения одной транзакцией.</p><div className="admin-form-actions"><button className="admin-button-secondary" type="button" disabled={busy !== null || race?.resultsPublicationStatus === 'PUBLISHED'} onClick={() => setBulkAction('SET_ALL_GUN_TIME')}>Все по официальному времени</button><button className="admin-button-secondary" type="button" disabled={busy !== null || race?.resultsPublicationStatus === 'PUBLISHED'} onClick={() => setBulkAction('SET_ALL_CHIP_TIME')}>Все по чистому времени</button><button className="admin-button-secondary" type="button" disabled={busy !== null || race?.resultsPublicationStatus === 'PUBLISHED' || !categories.some((category) => category.rankingBasisOverride)} onClick={() => setBulkAction('RESET_OVERRIDES')}>Сбросить индивидуальные настройки</button></div></section><CategorySettings categories={categories} defaultRankingBasis={policy.categoryRankingBasis} disabled={race?.resultsPublicationStatus === 'PUBLISHED'} onCreate={(body) => api.createCategory(raceId, body)} onUpdate={(categoryId, body) => api.updateCategory(raceId, categoryId, body)} onDelete={(categoryId) => api.deleteCategory(raceId, categoryId)} onReload={async () => { setCategories(await api.categories(raceId)); await onChanged() }} /></> : undefined} />
         <AdminNotice tone="warning"><strong>Настройка влияет на итоговый протокол.</strong> Сохранение может создать обязательный recalculation pending; Apply никогда не выполняется автоматически.</AdminNotice>
         <button className="admin-button-primary" type="button" disabled={busy !== null || race?.resultsPublicationStatus === 'PUBLISHED'} onClick={() => void save()}>Сохранить настройки</button>
       </div>
@@ -71,13 +87,20 @@ export function EventAwardTab({ api, event, races, initialRaceId, onChanged }: {
       <button className="admin-button-secondary" type="button" disabled={!recalcRaceIds.length || busy !== null} onClick={() => void buildPreview()}>{busy === 'preview' ? 'Считаем Preview…' : 'Посмотреть изменения'}</button>
       {preview && <div className="admin-recalc-preview"><div className="admin-stat-grid"><Stat label="Registration" value={preview.currentRegistrationCount} /><Stat label="Несовершеннолетние" value={preview.minorCount} /><Stat label="Взрослые" value={preview.adultCount} /><Stat label="Без DOB" value={preview.noBirthDateCount} /><Stat label="Изменится" value={preview.changedCategoryCount} /><Stat label="Без изменений" value={preview.unchangedCategoryCount} /><Stat label="Blocker" value={preview.blockingCount} /></div><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Bib</th><th>Старая категория</th><th>Новая категория</th><th>Причина</th><th>Blocker</th></tr></thead><tbody>{preview.rows.map((row) => <tr key={row.registrationId}><td>{row.bib ?? '—'}</td><td>{row.oldEffectiveCategory ?? '—'}</td><td>{row.newEffectiveCategory ?? '—'}</td><td>{row.reason}</td><td>{row.blockingCode ?? '—'}</td></tr>)}</tbody></table></div>{preview.rowsTruncated && <p className="admin-muted">Показана часть diff.</p>}<button className="admin-button-primary" type="button" disabled={preview.blockingCount > 0 || busy !== null} onClick={() => void applyPreview()}>{busy === 'apply' ? 'Применяем…' : 'Применить пересчёт'}</button></div>}
     </section>
+    {bulkAction && <ConfirmDialog title="Применить время зачёта ко всем категориям?" description="Общее время категорий будет обновлено согласно выбранному действию. Все индивидуальные настройки категорий будут сброшены." confirmLabel="Применить" busy={busy === 'bulk'} onConfirm={() => void applyBulkRankingBasis()} onClose={() => setBulkAction(null)} />}
   </div>
 }
 
 function rankingExplanation(basis: AwardPolicy['rankingBasis']): string {
-  if (basis === 'GUN_TIME') return 'Официальные места рассчитываются по официальному времени.'
-  if (basis === 'CHIP_TIME') return 'Официальные места рассчитываются по чистому времени.'
+  if (basis === 'GUN_TIME') return 'Основной зачёт рассчитывается по официальному времени. Категории могут использовать отдельное время.'
+  if (basis === 'CHIP_TIME') return 'Основной зачёт рассчитывается по чистому времени. Категории могут использовать отдельное время.'
   return 'Официальный зачёт отключён.'
+}
+
+function bulkSuccessMessage(action: 'SET_ALL_GUN_TIME' | 'SET_ALL_CHIP_TIME' | 'RESET_OVERRIDES'): string {
+  if (action === 'SET_ALL_GUN_TIME') return 'Все категории переведены на официальное время. Индивидуальные настройки сброшены.'
+  if (action === 'SET_ALL_CHIP_TIME') return 'Все категории переведены на чистое время. Индивидуальные настройки сброшены.'
+  return 'Индивидуальные настройки категорий сброшены.'
 }
 
 function Stat({ label, value }: { label: string; value: number }) { return <div><span>{label}</span><strong>{value}</strong></div> }

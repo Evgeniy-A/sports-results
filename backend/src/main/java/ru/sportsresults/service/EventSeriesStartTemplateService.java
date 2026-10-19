@@ -289,6 +289,7 @@ public class EventSeriesStartTemplateService {
     }
 
     private static void apply(EventSeriesStartCategoryTemplate category, UpsertCategoryRequest request) {
+        validateCategoryRankingBasisOverride(request.rankingBasisOverride());
         category.setSourceName(request.sourceName().strip());
         category.setDisplayName(request.displayName().strip());
         category.setMinAge(request.minAge());
@@ -296,6 +297,7 @@ public class EventSeriesStartTemplateService {
         category.setGender(request.gender());
         category.setDisplayOrder(request.displayOrder());
         category.setEnabled(request.enabled());
+        category.setRankingBasisOverride(request.rankingBasisOverride());
     }
 
     private static RequestConflictException duplicateCategorySourceName() {
@@ -318,6 +320,7 @@ public class EventSeriesStartTemplateService {
 
     static void apply(EventSeriesStartAwardPolicyTemplate policy, UpdateAwardPolicyRequest request) {
         policy.setRankingBasis(request.rankingBasis());
+        policy.setCategoryRankingBasis(AwardPolicyService.effectiveCategoryBasis(request));
         policy.setPrimaryStandingMode(request.primaryStandingMode());
         policy.setAbsolutePrizePlaces(request.absolutePrizePlaces());
         policy.setCategoryEnabled(request.categoryEnabled());
@@ -344,7 +347,8 @@ public class EventSeriesStartTemplateService {
             EventSeriesStartAwardPolicyTemplate policy
     ) {
         return new EventSeriesStartAwardPolicyTemplateDto(
-                policy.getId(), policy.getRankingBasis(), policy.getPrimaryStandingMode(),
+                policy.getId(), policy.getRankingBasis(), policy.getCategoryRankingBasis(),
+                policy.getPrimaryStandingMode(),
                 policy.getAbsolutePrizePlaces(), policy.isCategoryEnabled(), policy.getAgeCalculationMode(),
                 policy.getCategoryPrizePlaces(), policy.isExcludeAbsoluteWinnersFromCategory()
         );
@@ -362,7 +366,17 @@ public class EventSeriesStartTemplateService {
                 category.getMaxAge(),
                 category.getGender(),
                 category.getDisplayOrder(),
-                category.isEnabled()
+                category.isEnabled(),
+                category.getRankingBasisOverride()
         );
+    }
+
+    private static void validateCategoryRankingBasisOverride(ru.sportsresults.domain.RankingBasis basis) {
+        if (basis == ru.sportsresults.domain.RankingBasis.NONE) {
+            throw new InvalidRequestException(
+                    "INVALID_CATEGORY_RANKING_BASIS_OVERRIDE",
+                    "Category ranking basis override must be GUN_TIME, CHIP_TIME, or null"
+            );
+        }
     }
 }

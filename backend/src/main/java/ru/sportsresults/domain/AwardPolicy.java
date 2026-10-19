@@ -27,6 +27,11 @@ public class AwardPolicy extends BaseEntity {
 
     @NotNull
     @Enumerated(EnumType.STRING)
+    @Column(name = "category_ranking_basis", nullable = false, length = 32)
+    private RankingBasis categoryRankingBasis;
+
+    @NotNull
+    @Enumerated(EnumType.STRING)
     @Column(name = "primary_standing_mode", nullable = false, length = 32)
     private PrimaryStandingMode primaryStandingMode;
 
@@ -53,6 +58,10 @@ public class AwardPolicy extends BaseEntity {
     public void setRace(Race race) { this.race = race; }
     public RankingBasis getRankingBasis() { return rankingBasis; }
     public void setRankingBasis(RankingBasis rankingBasis) { this.rankingBasis = rankingBasis; }
+    public RankingBasis getCategoryRankingBasis() { return categoryRankingBasis; }
+    public void setCategoryRankingBasis(RankingBasis categoryRankingBasis) {
+        this.categoryRankingBasis = categoryRankingBasis;
+    }
     public PrimaryStandingMode getPrimaryStandingMode() { return primaryStandingMode; }
     public void setPrimaryStandingMode(PrimaryStandingMode primaryStandingMode) { this.primaryStandingMode = primaryStandingMode; }
     public int getAbsolutePrizePlaces() { return absolutePrizePlaces; }

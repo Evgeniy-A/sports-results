@@ -12,7 +12,7 @@ import java.util.List;
 public class OfficialRankingQueryRepositoryImpl implements OfficialRankingQueryRepository {
 
     private static final String ACHIEVEMENT_SQL = """
-            WITH eligible AS (
+            WITH base AS (
                 SELECT res.id AS result_id,
                        race.id AS race_id,
                        reg.gender,
@@ -27,7 +27,11 @@ public class OfficialRankingQueryRepositoryImpl implements OfficialRankingQueryR
                        CASE policy.ranking_basis
                             WHEN 'CHIP_TIME' THEN res.chip_time_ms
                             WHEN 'GUN_TIME' THEN res.gun_time_ms
-                            ELSE NULL END AS ranking_time_ms
+                            ELSE NULL END AS primary_ranking_time_ms,
+                       CASE COALESCE(category.ranking_basis_override, policy.category_ranking_basis)
+                            WHEN 'CHIP_TIME' THEN res.chip_time_ms
+                            WHEN 'GUN_TIME' THEN res.gun_time_ms
+                            ELSE NULL END AS category_ranking_time_ms
                 FROM results res
                 JOIN registrations reg ON reg.id = res.registration_id
                 JOIN races race ON race.id = reg.race_id
@@ -36,40 +40,41 @@ public class OfficialRankingQueryRepositoryImpl implements OfficialRankingQueryR
                 WHERE race.event_id = :eventId
                   AND race.id IN (:raceIds)
                   AND reg.retired_at IS NULL
-                  AND policy.ranking_basis <> 'NONE'
                   AND lower(res.status) = 'finished'
-                  AND CASE policy.ranking_basis
-                           WHEN 'CHIP_TIME' THEN res.chip_time_ms
-                           WHEN 'GUN_TIME' THEN res.gun_time_ms
-                           ELSE NULL END IS NOT NULL
+            ), primary_eligible AS (
+                SELECT *
+                FROM base
+                WHERE primary_ranking_time_ms IS NOT NULL
             ), primary_ranked AS (
-                SELECT eligible.*,
+                SELECT primary_eligible.*,
                        CASE primary_standing_mode
                            WHEN 'ALL' THEN rank() OVER (
-                               PARTITION BY race_id ORDER BY ranking_time_ms
+                               PARTITION BY race_id ORDER BY primary_ranking_time_ms
                            )
                            WHEN 'BY_GENDER' THEN CASE WHEN gender IS NOT NULL THEN
                                rank() OVER (
-                                   PARTITION BY race_id, lower(gender) ORDER BY ranking_time_ms
+                                   PARTITION BY race_id, lower(gender) ORDER BY primary_ranking_time_ms
                                )
                            END
                            ELSE NULL
                        END AS primary_place
-                FROM eligible
+                FROM primary_eligible
             ), category_eligible AS (
-                SELECT *
-                FROM primary_ranked
-                WHERE category_enabled
-                  AND category_id IS NOT NULL
+                SELECT base.*
+                FROM base
+                LEFT JOIN primary_ranked ON primary_ranked.result_id = base.result_id
+                WHERE base.category_enabled
+                  AND base.category_id IS NOT NULL
+                  AND base.category_ranking_time_ms IS NOT NULL
                   AND NOT (
-                      exclude_absolute_winners_from_category
-                      AND primary_place IS NOT NULL
-                      AND primary_place <= absolute_prize_places
+                      base.exclude_absolute_winners_from_category
+                      AND primary_ranked.primary_place IS NOT NULL
+                      AND primary_ranked.primary_place <= base.absolute_prize_places
                   )
             ), category_ranked AS (
                 SELECT category_eligible.*,
                        rank() OVER (
-                           PARTITION BY race_id, category_id ORDER BY ranking_time_ms
+                           PARTITION BY race_id, category_id ORDER BY category_ranking_time_ms
                        ) AS category_place
                 FROM category_eligible
             ), achievements AS (

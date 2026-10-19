@@ -202,8 +202,8 @@ test('award editor separates absolute and category awards without NONE dropdown 
 })
 
 test('template and Race award flows reuse category editing without navigation', () => {
-  assert.match(templateDetail, /<AwardEditor[\s\S]*categorySettings=\{<CategorySettings/)
-  assert.match(policy, /<AwardEditor[\s\S]*categorySettings=\{<CategorySettings/)
+  assert.match(templateDetail, /<AwardEditor[\s\S]*categorySettings=\{[\s\S]*<CategorySettings[\s\S]*defaultRankingBasis=/)
+  assert.match(policy, /<AwardEditor[\s\S]*categorySettings=\{[\s\S]*<CategorySettings[\s\S]*defaultRankingBasis=/)
   for (const action of ['createTemplateCategory', 'updateTemplateCategory', 'deleteTemplateCategory', 'templateCategories']) {
     assert.match(`${api}\n${templateDetail}`, new RegExp(action))
   }
@@ -547,6 +547,7 @@ test('AwardPolicy update supports GUN_TIME, CHIP_TIME and a valid normalized NON
     id: 7,
     raceId: 3,
     rankingBasis: 'GUN_TIME',
+    categoryRankingBasis: 'CHIP_TIME',
     primaryStandingMode: 'BY_GENDER',
     absolutePrizePlaces: 3,
     categoryEnabled: true,
@@ -558,12 +559,30 @@ test('AwardPolicy update supports GUN_TIME, CHIP_TIME and a valid normalized NON
   assert.deepEqual(withRankingBasis(basePolicy, 'GUN_TIME'), basePolicy)
   const none = withRankingBasis(basePolicy, 'NONE')
   assert.deepEqual(awardPolicyUpdate(none), {
-    rankingBasis: 'NONE', primaryStandingMode: 'NONE', absolutePrizePlaces: 0,
+    rankingBasis: 'NONE', categoryRankingBasis: 'NONE', primaryStandingMode: 'NONE', absolutePrizePlaces: 0,
     categoryEnabled: false, ageCalculationMode: 'END_OF_EVENT_YEAR',
     categoryPrizePlaces: 0, excludeAbsoluteWinnersFromCategory: false,
   })
   assert.doesNotMatch(JSON.stringify(awardPolicyUpdate(basePolicy)), /"id"|"raceId"/)
   assert.match(policy, /awardPolicyUpdate\(policy\)/)
+})
+
+test('primary and category ranking bases have independent Russian controls and atomic bulk actions', () => {
+  assert.match(startComposer, /Field label="Основной зачёт"/)
+  assert.match(startComposer, /Field label="Возрастные категории" hint="Используется для категорий без индивидуальной настройки\."/)
+  assert.match(startComposer, /Официальное время \(Gun Time\)/)
+  assert.match(startComposer, /Чистое время \(Chip Time\)/)
+  assert.match(categorySettings, /Время зачёта:/)
+  assert.match(categorySettings, /По умолчанию ·/)
+  assert.match(categorySettings, /rankingBasisOverride/)
+  assert.match(policy, /Все по официальному времени/)
+  assert.match(policy, /Все по чистому времени/)
+  assert.match(policy, /Сбросить индивидуальные настройки/)
+  assert.match(policy, /api\.bulkCategoryRankingBasis\(raceId, bulkAction\)/)
+  assert.match(api, /bulkCategoryRankingBasis:[\s\S]*method: 'PUT'/)
+  assert.match(api, /categories\/ranking-basis/)
+  assert.doesNotMatch(policy, /Promise\.all\([^)]*updateCategory/)
+  assert.match(policy, /race\?\.resultsPublicationStatus === 'PUBLISHED'/)
 })
 
 test('shared JSON reader handles 204 and declared empty bodies without hiding malformed JSON', async () => {

@@ -33,7 +33,7 @@ export function startCommands(drafts: EventStartDraft[]): EventStartCommand[] {
 
 export function defaultPolicy(): AwardPolicyUpdate {
   return {
-    rankingBasis: 'CHIP_TIME', primaryStandingMode: 'ALL', absolutePrizePlaces: 0,
+    rankingBasis: 'CHIP_TIME', categoryRankingBasis: 'CHIP_TIME', primaryStandingMode: 'ALL', absolutePrizePlaces: 0,
     categoryEnabled: false, ageCalculationMode: 'EVENT_DATE', categoryPrizePlaces: 0,
     excludeAbsoluteWinnersFromCategory: false,
   }

@@ -7,6 +7,7 @@ import ru.sportsresults.domain.RankingBasis;
 public record EventSeriesStartAwardPolicyTemplateDto(
         Long id,
         RankingBasis rankingBasis,
+        RankingBasis categoryRankingBasis,
         PrimaryStandingMode primaryStandingMode,
         int absolutePrizePlaces,
         boolean categoryEnabled,
