@@ -630,6 +630,27 @@ test('saved AwardPolicy response becomes the clean baseline and race switch requ
   assert.match(policy, /onChange=\{\(change\) => selectRace\(Number\(change\.target\.value\)\)\}/)
 })
 
+test('dirty AwardPolicy protects admin navigation, browser history and reload without duplicating the Race guard', () => {
+  assert.match(policy, /const policyDirty = awardPolicyChanged\(policy, persistedPolicy\)/)
+  assert.match(policy, /if \(!policyDirty\) return\s+return setAdminNavigationBlocker\(\(\) => window\.confirm\(LEAVE_AWARD_POLICY_MESSAGE\)\)/)
+  assert.match(policy, /Есть несохранённые изменения настроек зачёта\. Покинуть страницу без сохранения\?/)
+  assert.match(policy, /if \(!policyDirty\) return\s+const warn = \(navigation: BeforeUnloadEvent\) => \{ navigation\.preventDefault\(\) \}/)
+  assert.match(policy, /window\.addEventListener\('beforeunload', warn\)/)
+  assert.match(policy, /window\.removeEventListener\('beforeunload', warn\)/)
+  assert.match(policy, /if \(policyDirty && !window\.confirm\(DISCARD_AWARD_POLICY_MESSAGE\)\) return/)
+  assert.match(router, /if \(!confirmAdminNavigation\(\)\) return false/)
+  assert.match(router, /window\.addEventListener\('popstate', handleHistoryNavigation\)/)
+  assert.match(router, /if \(!confirmAdminNavigation\(\)\)[\s\S]*restoring = true[\s\S]*window\.history\.go\(delta\)/)
+})
+
+test('AwardPolicy navigation guard clears only after successful save', () => {
+  const saveFlow = policy.match(/const save = async \(\) => \{[\s\S]*?\n  \}/)?.[0] ?? ''
+  assert.match(saveFlow, /const savedPolicy = await api\.updateAwardPolicy/)
+  assert.match(saveFlow, /setPolicy\(savedPolicy\); setPersistedPolicy\(savedPolicy\)/)
+  assert.match(saveFlow, /catch \(reason\) \{ setError\(adminErrorMessage\(reason\)\) \}/)
+  assert.doesNotMatch(saveFlow.match(/catch \(reason\)[\s\S]*$/)?.[0] ?? '', /setPersistedPolicy/)
+})
+
 test('shared JSON reader handles 204 and declared empty bodies without hiding malformed JSON', async () => {
   assert.equal(await readJsonBody(new Response(null, { status: 204 })), undefined)
   assert.equal(await readJsonBody(new Response(null, { status: 200 }), true), undefined)

@@ -7,9 +7,11 @@ import { awardPolicyChanged, awardPolicyUpdate } from '../awardPolicy'
 import { AdminNotice, ConfirmDialog, Field, Loadable, StatusBadge } from '../components/AdminUi'
 import { AwardEditor } from '../components/EventStartComposer'
 import { CategorySettings } from '../components/CategorySettings'
+import { setAdminNavigationBlocker } from '../navigationGuard'
 
 const UNSAVED_AWARD_POLICY_MESSAGE = 'Есть несохранённые изменения настроек зачёта. Сначала сохраните их.'
 const DISCARD_AWARD_POLICY_MESSAGE = 'Есть несохранённые изменения настроек зачёта. Отменить их и переключить старт?'
+const LEAVE_AWARD_POLICY_MESSAGE = 'Есть несохранённые изменения настроек зачёта. Покинуть страницу без сохранения?'
 
 export function EventAwardTab({ api, event, races, initialRaceId, onChanged }: { api: AdminApi; event: EventSummary; races: Race[]; initialRaceId?: number; onChanged: () => Promise<void> }) {
   const [raceId, setRaceId] = useState(initialRaceId && races.some((race) => race.id === initialRaceId) ? initialRaceId : races[0]?.id ?? 0)
@@ -26,6 +28,18 @@ export function EventAwardTab({ api, event, races, initialRaceId, onChanged }: {
   const policyLoadRequest = useRef(0)
   const race = races.find((candidate) => candidate.id === raceId)
   const policyDirty = awardPolicyChanged(policy, persistedPolicy)
+
+  useEffect(() => {
+    if (!policyDirty) return
+    return setAdminNavigationBlocker(() => window.confirm(LEAVE_AWARD_POLICY_MESSAGE))
+  }, [policyDirty])
+
+  useEffect(() => {
+    if (!policyDirty) return
+    const warn = (navigation: BeforeUnloadEvent) => { navigation.preventDefault() }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [policyDirty])
 
   const loadPolicy = useCallback(async () => {
     const requestId = ++policyLoadRequest.current
