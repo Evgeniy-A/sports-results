@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { localDateTimeToIso, toDateTimeLocal } from '../src/admin/time.ts'
 import { filterTimeZones, suggestTimeZone, timeZoneLabel } from '../src/admin/timeZones.ts'
-import { awardPolicyUpdate, withRankingBasis } from '../src/admin/awardPolicy.ts'
+import { awardPolicyChanged, awardPolicyUpdate, withRankingBasis } from '../src/admin/awardPolicy.ts'
 import { ApiError, readJsonBody } from '../src/api/client.ts'
 import { duplicateLocationIds, normalizedLocation } from '../src/admin/bulkEvents.ts'
 import { authorizeAndOpenAttachment } from '../src/admin/attachmentOpening.ts'
@@ -583,6 +583,51 @@ test('primary and category ranking bases have independent Russian controls and a
   assert.match(api, /categories\/ranking-basis/)
   assert.doesNotMatch(policy, /Promise\.all\([^)]*updateCategory/)
   assert.match(policy, /race\?\.resultsPublicationStatus === 'PUBLISHED'/)
+})
+
+test('unsaved AwardPolicy changes block category bulk actions without losing the draft', () => {
+  const persisted = {
+    id: 7,
+    raceId: 3,
+    rankingBasis: 'GUN_TIME',
+    categoryRankingBasis: 'CHIP_TIME',
+    primaryStandingMode: 'BY_GENDER',
+    absolutePrizePlaces: 3,
+    categoryEnabled: true,
+    ageCalculationMode: 'EVENT_DATE',
+    categoryPrizePlaces: 3,
+    excludeAbsoluteWinnersFromCategory: false,
+  }
+  assert.equal(awardPolicyChanged(persisted, { ...persisted, id: 8, raceId: 4 }), false)
+  for (const [field, value] of [
+    ['rankingBasis', 'CHIP_TIME'],
+    ['categoryRankingBasis', 'GUN_TIME'],
+    ['primaryStandingMode', 'ALL'],
+    ['absolutePrizePlaces', 5],
+    ['categoryEnabled', false],
+    ['ageCalculationMode', 'END_OF_EVENT_YEAR'],
+    ['categoryPrizePlaces', 5],
+    ['excludeAbsoluteWinnersFromCategory', true],
+  ]) {
+    assert.equal(awardPolicyChanged({ ...persisted, [field]: value }, persisted), true, field)
+  }
+  assert.match(policy, /policyDirty && <AdminNotice tone="warning">\{UNSAVED_AWARD_POLICY_MESSAGE\}<\/AdminNotice>/)
+  assert.match(policy, /disabled=\{busy !== null \|\| policyDirty \|\| race\?\.resultsPublicationStatus === 'PUBLISHED'\}/)
+  assert.match(policy, /if \(policyDirty\) \{ setBulkAction\(null\); setError\(UNSAVED_AWARD_POLICY_MESSAGE\); return \}[\s\S]*api\.bulkCategoryRankingBasis/)
+  assert.match(policy, /CategorySettings[\s\S]*disabled=\{policyDirty \|\| race\?\.resultsPublicationStatus === 'PUBLISHED'\}/)
+  assert.match(policy, /disabled=\{!recalcRaceIds\.length \|\| busy !== null \|\| policyDirty\}/)
+  assert.match(policy, /disabled=\{preview\.blockingCount > 0 \|\| busy !== null \|\| policyDirty\}/)
+  assert.match(policy, /onChange=\{\(next\) => \{ if \(next\) setPolicy\(\{ \.\.\.policy, \.\.\.next \}\) \}\}/)
+})
+
+test('saved AwardPolicy response becomes the clean baseline and race switch requires explicit discard', () => {
+  assert.match(policy, /const savedPolicy = await api\.updateAwardPolicy/)
+  assert.match(policy, /setPolicy\(savedPolicy\); setPersistedPolicy\(savedPolicy\)/)
+  assert.match(policy, /setPolicy\(loadedPolicy\); setPersistedPolicy\(loadedPolicy\); setCategories\(loadedCategories\)/)
+  assert.match(policy, /const requestId = \+\+policyLoadRequest\.current/)
+  assert.match(policy, /if \(requestId !== policyLoadRequest\.current\) return/)
+  assert.match(policy, /if \(policyDirty && !window\.confirm\(DISCARD_AWARD_POLICY_MESSAGE\)\) return/)
+  assert.match(policy, /onChange=\{\(change\) => selectRace\(Number\(change\.target\.value\)\)\}/)
 })
 
 test('shared JSON reader handles 204 and declared empty bodies without hiding malformed JSON', async () => {

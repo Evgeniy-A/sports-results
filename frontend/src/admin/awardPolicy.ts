@@ -33,3 +33,15 @@ export function awardPolicyUpdate(policy: AwardPolicy): AwardPolicyUpdate {
     excludeAbsoluteWinnersFromCategory: policy.excludeAbsoluteWinnersFromCategory,
   }
 }
+
+export function awardPolicyChanged(current: AwardPolicy | null, persisted: AwardPolicy | null): boolean {
+  if (current === null || persisted === null) return current !== persisted
+  return current.rankingBasis !== persisted.rankingBasis
+    || current.categoryRankingBasis !== persisted.categoryRankingBasis
+    || current.primaryStandingMode !== persisted.primaryStandingMode
+    || current.absolutePrizePlaces !== persisted.absolutePrizePlaces
+    || current.categoryEnabled !== persisted.categoryEnabled
+    || current.ageCalculationMode !== persisted.ageCalculationMode
+    || current.categoryPrizePlaces !== persisted.categoryPrizePlaces
+    || current.excludeAbsoluteWinnersFromCategory !== persisted.excludeAbsoluteWinnersFromCategory
+}
