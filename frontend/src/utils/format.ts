@@ -11,6 +11,14 @@ export function formatDuration(milliseconds: number | null): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(millis).padStart(3, '0')}`
 }
 
+export function formatLeaderGap(seconds: number | null): string | null {
+  if (seconds === null) return null
+  const normalizedSeconds = Math.max(0, Math.trunc(seconds))
+  const minutes = Math.floor(normalizedSeconds / 60)
+  const remainingSeconds = normalizedSeconds % 60
+  return `+${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`
+}
+
 export function formatGender(gender: string | null): string {
   if (gender?.toLowerCase() === 'female') return 'Ж'
   if (gender?.toLowerCase() === 'male') return 'М'

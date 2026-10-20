@@ -21,6 +21,8 @@ public record ResultListItemDto(
         String status,
         Long gunTimeMs,
         Long chipTimeMs,
+        Long gunLeaderGapSeconds,
+        Long chipLeaderGapSeconds,
         Integer overallPlace,
         Integer genderPlace,
         Integer categoryPlace,

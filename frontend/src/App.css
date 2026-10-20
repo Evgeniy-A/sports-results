@@ -151,6 +151,8 @@ tbody tr:hover, tbody tr:focus { background: #f4faf6; outline: 0; }
 .bib { display: inline-grid; min-width: 44px; place-items: center; padding: 4px 7px; border-radius: 6px; background: #edf2ee; color: #35453c; font-family: Consolas, "Roboto Mono", monospace; font-size: 11px; font-weight: 650; }
 .time { white-space: nowrap; font-family: Consolas, "Roboto Mono", monospace; font-size: 12px; }
 .time-primary { color: #0e6b3d; font-weight: 700; }
+.result-time { display: grid; gap: 2px; }
+.leader-gap { margin: 0; color: var(--muted); font-family: Consolas, "Roboto Mono", monospace; font-size: 10px; font-weight: 500; line-height: 1.15; }
 .status { display: inline-flex; padding: 4px 8px; border-radius: 99px; background: #eef1ef; color: #607068; font-size: 9px; font-weight: 900; white-space: nowrap; text-transform: uppercase; }
 .status-finished { background: #e1f2e7; color: #17663e; }
 .status-notstarted { background: #f2f0eb; color: #776e5e; }

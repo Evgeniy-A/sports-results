@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
 import type { EventDetails, PageResponse, ResultInquiryLookup, ResultListItem } from '../api/types'
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
-import { formatDuration, statusLabel } from '../utils/format'
+import { formatDuration, formatLeaderGap, statusLabel } from '../utils/format'
 import { defaultPublicResultSort, initialRaceSelection, publicResultRaces } from '../utils/publicEventView'
 import { scoringTimeHeading } from '../utils/rankingPresentation'
 import {
@@ -309,10 +309,10 @@ export function EventResults({ event }: { event: EventDetails }) {
     {selectedRace && !loading && !error && protocol.content.length > 0 && <>
       <div className="table-wrap desktop-results"><table><thead><tr><th>{hasOfficialStanding ? 'Официальный зачёт' : 'Место'}</th><th>Стартовый №</th><th>Участник</th><th>Старт / дистанция</th><th>Статус</th><th><span className="time-heading">{scoringTimeHeading(rankingBasis ?? 'NONE', 'GUN_TIME')}</span></th><th><span className="time-heading">{scoringTimeHeading(rankingBasis ?? 'NONE', 'CHIP_TIME')}</span></th>{showCategoryColumn && <th>Категория</th>}</tr></thead><tbody>{protocol.content.map((result) => (
         <tr key={result.resultId} tabIndex={0} onClick={() => setSelectedResultId(result.resultId)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === 'Enter') setSelectedResultId(result.resultId) }}>
-          <td className={hasOfficialStanding ? 'ranking-cell' : 'display-place-cell'}>{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /> : <span className="display-place">{result.displayPosition ?? '—'}</span>}</td><td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td>{selectedRace.name}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${result.rankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.gunTimeMs)}</td><td className={`time ${result.rankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.chipTimeMs)}</td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
+          <td className={hasOfficialStanding ? 'ranking-cell' : 'display-place-cell'}>{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /> : <span className="display-place">{result.displayPosition ?? '—'}</span>}</td><td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td>{selectedRace.name}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${result.rankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.gunTimeMs} gapSeconds={result.gunLeaderGapSeconds} /></td><td className={`time ${result.rankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.chipTimeMs} gapSeconds={result.chipLeaderGapSeconds} /></td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
         </tr>
       ))}</tbody></table></div>
-      <div className="mobile-results">{protocol.content.map((result) => <button className="result-card" type="button" key={result.resultId} onClick={() => setSelectedResultId(result.resultId)}><span><strong>{result.displayName}</strong><small>№ {result.bib ?? '—'} · {selectedRace.name}{showCategoryColumn && result.category ? ` · ${result.category.name}` : ''}</small></span><span className={`time ${hasOfficialStanding ? 'time-primary' : ''}`}>{formatDuration(result.rankingBasis === 'CHIP_TIME' || (result.rankingBasis === 'NONE' && sort === 'chipTime') ? result.chipTimeMs : result.gunTimeMs)}</span><span className="card-achievements">{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /> : <span className="display-place">Место {result.displayPosition ?? '—'}</span>}</span></button>)}</div>
+      <div className="mobile-results">{protocol.content.map((result) => { const useChipTime = result.rankingBasis === 'CHIP_TIME' || (result.rankingBasis === 'NONE' && sort === 'chipTime'); return <button className="result-card" type="button" key={result.resultId} onClick={() => setSelectedResultId(result.resultId)}><span><strong>{result.displayName}</strong><small>№ {result.bib ?? '—'} · {selectedRace.name}{showCategoryColumn && result.category ? ` · ${result.category.name}` : ''}</small></span><span className={`time ${hasOfficialStanding ? 'time-primary' : ''}`}><ResultTime value={useChipTime ? result.chipTimeMs : result.gunTimeMs} gapSeconds={useChipTime ? result.chipLeaderGapSeconds : result.gunLeaderGapSeconds} /></span><span className="card-achievements">{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /> : <span className="display-place">Место {result.displayPosition ?? '—'}</span>}</span></button> })}</div>
     </>}
 
     {selectedRace && <Pagination page={protocol.page} totalPages={protocol.totalPages} onChange={setPage} />}
@@ -326,4 +326,9 @@ export function EventResults({ event }: { event: EventDetails }) {
       onClose={() => setSelectedResultId(null)}
     />}
   </section>
+}
+
+function ResultTime({ value, gapSeconds }: { value: number | null; gapSeconds: number | null }) {
+  const gap = formatLeaderGap(gapSeconds)
+  return <span className="result-time"><span>{formatDuration(value)}</span>{gap !== null && <small className="leader-gap">{gap}</small>}</span>
 }

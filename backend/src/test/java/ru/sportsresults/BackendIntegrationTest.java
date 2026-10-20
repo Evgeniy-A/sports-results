@@ -1,6 +1,8 @@
 package ru.sportsresults;
 
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import jakarta.persistence.EntityManagerFactory;
+import org.hibernate.SessionFactory;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Row;
@@ -10405,6 +10407,163 @@ class BackendIntegrationTest {
                 .isEqualTo(1);
     }
 
+    @Test
+    void publicLeaderGapsUseWholeFilteredSetAndSeparateGenderAndTimeLeaders() {
+        Event event = createPublishedEvent("Leader gap protocol", "leader-gap-protocol");
+        Race race = createDraftRace(event, "PART10", 0);
+        Category firstCategory = part9Category(race, "A", "Category A", 0, null);
+        Category secondCategory = part9Category(race, "B", "Category B", 1, null);
+        StartCluster firstCluster = part10Cluster(race, "Wave 1", 0);
+        StartCluster secondCluster = part10Cluster(race, "Wave 2", 1);
+        ImportBatch batch = raceImportBatch(event, race, "part10.csv");
+
+        part10Result(race, batch, firstCategory, firstCluster, 1, "F-GUN", "female",
+                "Female Gun Leader", "finished", 100_500L, 92_000L);
+        part10Result(race, batch, firstCategory, firstCluster, 2, "F-CHIP", "female",
+                "Female Chip Leader", "finished", 106_999L, 90_000L);
+        part10Result(race, batch, firstCategory, firstCluster, 3, "M-GUN", "male",
+                "Male Gun Leader", "finished", 110_000L, 111_000L);
+        part10Result(race, batch, firstCategory, secondCluster, 4, "M-CHIP", "male",
+                "Male Chip Leader", "finished", 119_000L, 105_000L);
+        part10Result(race, batch, secondCategory, secondCluster, 5, "F-NULL", "female",
+                "Female Missing Chip", "finished", 120_000L, null);
+        part10Result(race, batch, secondCategory, secondCluster, 6, "F-DSQ", "female",
+                "Female Disqualified", "disqualified", 125_000L, 123_000L);
+        part10Result(race, batch, firstCategory, secondCluster, 7, "M-NULL", "male",
+                "Male Missing Gun", "finished", null, 120_000L);
+
+        Race publishedRace = raceRepository.findById(race.getId()).orElseThrow();
+        publishedRace.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        raceRepository.saveAndFlush(publishedRace);
+
+        PageResponse<ResultListItemDto> all = resultQueryService.search(
+                event.getId(), race.getId(), null, null, null, null, null, null,
+                0, 20, "displayName", "asc"
+        );
+        assertThat(item(all.content(), "Female Gun Leader"))
+                .extracting(ResultListItemDto::gunLeaderGapSeconds, ResultListItemDto::chipLeaderGapSeconds)
+                .containsExactly(0L, 2L);
+        assertThat(item(all.content(), "Female Chip Leader"))
+                .extracting(ResultListItemDto::gunLeaderGapSeconds, ResultListItemDto::chipLeaderGapSeconds)
+                .containsExactly(6L, 0L);
+        assertThat(item(all.content(), "Male Gun Leader"))
+                .extracting(ResultListItemDto::gunLeaderGapSeconds, ResultListItemDto::chipLeaderGapSeconds)
+                .containsExactly(0L, 6L);
+        assertThat(item(all.content(), "Male Chip Leader"))
+                .extracting(ResultListItemDto::gunLeaderGapSeconds, ResultListItemDto::chipLeaderGapSeconds)
+                .containsExactly(9L, 0L);
+        assertThat(item(all.content(), "Female Missing Chip"))
+                .extracting(ResultListItemDto::gunLeaderGapSeconds, ResultListItemDto::chipLeaderGapSeconds)
+                .containsExactly(19L, null);
+        assertThat(item(all.content(), "Male Missing Gun"))
+                .extracting(ResultListItemDto::gunLeaderGapSeconds, ResultListItemDto::chipLeaderGapSeconds)
+                .containsExactly(null, 15L);
+
+        PageResponse<ResultListItemDto> reordered = resultQueryService.search(
+                event.getId(), race.getId(), null, null, null, null, null, null,
+                0, 20, "chipTime", "desc"
+        );
+        assertThat(item(reordered.content(), "Female Gun Leader"))
+                .extracting(ResultListItemDto::gunLeaderGapSeconds, ResultListItemDto::chipLeaderGapSeconds)
+                .containsExactly(0L, 2L);
+
+        PageResponse<ResultListItemDto> category = resultQueryService.search(
+                event.getId(), race.getId(), null, null, null, secondCategory.getId(), null, null,
+                0, 20, "gunTime", "asc"
+        );
+        assertThat(item(category.content(), "Female Missing Chip"))
+                .extracting(ResultListItemDto::gunLeaderGapSeconds, ResultListItemDto::chipLeaderGapSeconds)
+                .containsExactly(0L, null);
+        assertThat(item(category.content(), "Female Disqualified"))
+                .extracting(ResultListItemDto::gunLeaderGapSeconds, ResultListItemDto::chipLeaderGapSeconds)
+                .containsExactly(5L, 0L);
+
+        PageResponse<ResultListItemDto> cluster = resultQueryService.search(
+                event.getId(), race.getId(), null, null, null, null, secondCluster.getId(), "finished",
+                0, 20, "gunTime", "asc"
+        );
+        assertThat(item(cluster.content(), "Male Chip Leader"))
+                .extracting(ResultListItemDto::gunLeaderGapSeconds, ResultListItemDto::chipLeaderGapSeconds)
+                .containsExactly(0L, 0L);
+        assertThat(item(cluster.content(), "Female Missing Chip"))
+                .extracting(ResultListItemDto::gunLeaderGapSeconds, ResultListItemDto::chipLeaderGapSeconds)
+                .containsExactly(0L, null);
+
+        PageResponse<ResultListItemDto> name = resultQueryService.search(
+                event.getId(), race.getId(), "Chip Leader", null, null, null, null, null,
+                0, 20, "displayName", "asc"
+        );
+        assertThat(name.content()).allSatisfy(value -> {
+            assertThat(value.gunLeaderGapSeconds()).isZero();
+            assertThat(value.chipLeaderGapSeconds()).isZero();
+        });
+        PageResponse<ResultListItemDto> bib = resultQueryService.search(
+                event.getId(), race.getId(), null, "F-GUN", null, null, null, null,
+                0, 20, "displayName", "asc"
+        );
+        assertThat(bib.content()).singleElement().satisfies(value -> {
+            assertThat(value.gunLeaderGapSeconds()).isZero();
+            assertThat(value.chipLeaderGapSeconds()).isZero();
+        });
+        PageResponse<ResultListItemDto> disqualified = resultQueryService.search(
+                event.getId(), race.getId(), null, null, null, null, null, "disqualified",
+                0, 20, "displayName", "asc"
+        );
+        assertThat(disqualified.content()).singleElement().satisfies(value -> {
+            assertThat(value.gunLeaderGapSeconds()).isZero();
+            assertThat(value.chipLeaderGapSeconds()).isZero();
+        });
+
+        PageResponse<ResultListItemDto> secondFemalePage = resultQueryService.search(
+                event.getId(), race.getId(), null, null, "female", null, null, "finished",
+                1, 1, "gunTime", "asc"
+        );
+        assertThat(secondFemalePage.content()).singleElement().satisfies(value -> {
+            assertThat(value.displayName()).isEqualTo("Female Chip Leader");
+            assertThat(value.gunLeaderGapSeconds()).isEqualTo(6L);
+            assertThat(value.chipLeaderGapSeconds()).isZero();
+        });
+
+        PageResponse<ResultListItemDto> admin = resultQueryService.searchAdmin(
+                event.getId(), race.getId(), null, null, null, null, null, null,
+                0, 20, "displayName", "asc", null
+        );
+        assertThat(admin.content()).allSatisfy(value -> {
+            assertThat(value.gunLeaderGapSeconds()).isNull();
+            assertThat(value.chipLeaderGapSeconds()).isNull();
+        });
+    }
+
+    @Test
+    void publicLeaderGapQueryCountDoesNotGrowWithPageSize() {
+        Event event = createPublishedEvent("Leader gap query count", "leader-gap-query-count");
+        Race race = createDraftRace(event, "PART10-PERF", 0);
+        Category category = part9Category(race, "OPEN", "Open", 0, null);
+        ImportBatch batch = raceImportBatch(event, race, "part10-performance.csv");
+        for (int row = 1; row <= 25; row++) {
+            part10Result(race, batch, category, null, row, "PERF-" + row,
+                    row % 2 == 0 ? "female" : "male", "Performance " + row,
+                    "finished", 100_000L + row, 90_000L + row);
+        }
+        Race publishedRace = raceRepository.findById(race.getId()).orElseThrow();
+        publishedRace.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        raceRepository.saveAndFlush(publishedRace);
+
+        SessionFactory sessionFactory = context.getBean(EntityManagerFactory.class).unwrap(SessionFactory.class);
+        sessionFactory.getStatistics().setStatisticsEnabled(true);
+        sessionFactory.getStatistics().clear();
+        resultQueryService.search(event.getId(), race.getId(), null, null, null, null, null, null,
+                0, 1, "gunTime", "asc");
+        long oneRowStatements = sessionFactory.getStatistics().getPrepareStatementCount();
+        sessionFactory.getStatistics().clear();
+        resultQueryService.search(event.getId(), race.getId(), null, null, null, null, null, null,
+                0, 20, "gunTime", "asc");
+        long twentyRowStatements = sessionFactory.getStatistics().getPrepareStatementCount();
+        sessionFactory.getStatistics().setStatisticsEnabled(false);
+
+        assertThat(twentyRowStatements).isEqualTo(oneRowStatements);
+    }
+
     private static int queryCount(
             OfficialRankingQueryRepositoryImpl repository,
             CountingNamedParameterJdbcTemplate jdbc,
@@ -10480,6 +10639,48 @@ class BackendIntegrationTest {
         Result result = new Result();
         result.setRegistration(registration);
         result.setStatus("finished");
+        result.setGunTime(gunTimeMs == null ? null : Duration.ofMillis(gunTimeMs));
+        result.setChipTime(chipTimeMs == null ? null : Duration.ofMillis(chipTimeMs));
+        return resultRepository.saveAndFlush(result);
+    }
+
+    private StartCluster part10Cluster(Race race, String displayName, int displayOrder) {
+        StartCluster cluster = new StartCluster();
+        cluster.setRace(race);
+        cluster.setDisplayName(displayName);
+        cluster.setDisplayOrder(displayOrder);
+        return startClusterRepository.saveAndFlush(cluster);
+    }
+
+    private Result part10Result(
+            Race race,
+            ImportBatch batch,
+            Category category,
+            StartCluster cluster,
+            int row,
+            String bib,
+            String gender,
+            String displayName,
+            String status,
+            Long gunTimeMs,
+            Long chipTimeMs
+    ) {
+        Registration registration = new Registration();
+        registration.setRace(race);
+        registration.setImportBatch(batch);
+        registration.setCategory(category);
+        registration.setCluster(cluster);
+        registration.setEntryKind(RegistrationEntryKind.PERSON);
+        registration.setBib(bib);
+        registration.setDisplayName(displayName);
+        registration.setGender(gender);
+        registration.setSourceCategory(category.getSourceName());
+        registration.setSourceRowNumber(row);
+        registration.setSourceRowHash(Integer.toHexString(row).repeat(64).substring(0, 64));
+        registration = registrationRepository.saveAndFlush(registration);
+        Result result = new Result();
+        result.setRegistration(registration);
+        result.setStatus(status);
         result.setGunTime(gunTimeMs == null ? null : Duration.ofMillis(gunTimeMs));
         result.setChipTime(chipTimeMs == null ? null : Duration.ofMillis(chipTimeMs));
         return resultRepository.saveAndFlush(result);

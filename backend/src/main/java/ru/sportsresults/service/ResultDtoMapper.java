@@ -55,6 +55,21 @@ public class ResultDtoMapper {
             List<RankingAchievementDto> rankingAchievements,
             Integer displayPosition
     ) {
+        return toListItem(
+                projection, publicPresentation, rankingBasisOverride, rankingAchievements,
+                displayPosition, null, null
+        );
+    }
+
+    public ResultListItemDto toListItem(
+            ResultListProjection projection,
+            boolean publicPresentation,
+            RankingBasis rankingBasisOverride,
+            List<RankingAchievementDto> rankingAchievements,
+            Integer displayPosition,
+            Long gunLeaderGapSeconds,
+            Long chipLeaderGapSeconds
+    ) {
         RankingBasis effectiveBasis = rankingBasisOverride == null ? projection.rankingBasis() : rankingBasisOverride;
         CategoryDto category = projection.categoryId() == null
                 ? null
@@ -82,6 +97,8 @@ public class ResultDtoMapper {
                 projection.status(),
                 milliseconds(projection.gunTime()),
                 milliseconds(projection.chipTime()),
+                gunLeaderGapSeconds,
+                chipLeaderGapSeconds,
                 projection.overallPlace(),
                 projection.genderPlace(),
                 projection.categoryPlace(),

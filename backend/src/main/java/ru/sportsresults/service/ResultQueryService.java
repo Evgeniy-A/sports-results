@@ -19,6 +19,7 @@ import ru.sportsresults.repository.EventRepository;
 import ru.sportsresults.repository.AwardPolicyRepository;
 import ru.sportsresults.repository.RaceRepository;
 import ru.sportsresults.repository.ResultListProjection;
+import ru.sportsresults.repository.ResultLeaderTimesProjection;
 import ru.sportsresults.repository.ResultRepository;
 import ru.sportsresults.repository.ResultSearchCriteria;
 import ru.sportsresults.repository.ResultSortField;
@@ -26,6 +27,8 @@ import ru.sportsresults.repository.PublicCategoryProtocolRepository;
 import ru.sportsresults.repository.SplitRepository;
 import ru.sportsresults.repository.StartClusterRepository;
 
+import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -103,11 +106,12 @@ public class ResultQueryService {
                 ? List.of()
                 : publicCategoryProtocolRepository.findExcludedPrimaryPrizeWinnerIds(eventId, raceId, categoryId);
 
+        ResultSearchCriteria criteria = new ResultSearchCriteria(
+                eventId, raceId, name, bib, gender, categoryId, clusterId, publicStatus,
+                officialBasis, true, excludedResultIds
+        );
         Page<ResultListProjection> resultPage = resultRepository.search(
-                new ResultSearchCriteria(
-                        eventId, raceId, name, bib, gender, categoryId, clusterId, publicStatus,
-                        officialBasis, true, excludedResultIds
-                ),
+                criteria,
                 page,
                 size,
                 sortField,
@@ -116,18 +120,22 @@ public class ResultQueryService {
         Map<Long, List<RankingAchievementDto>> achievements =
                 officialRankingService.findForPage(eventId, resultPage.getContent());
         List<ResultListProjection> projections = resultPage.getContent();
+        Map<String, ResultLeaderTimesProjection> leaderTimes = leaderTimesByGender(criteria, projections);
         List<ResultListItemDto> items = new java.util.ArrayList<>(projections.size());
         for (int index = 0; index < projections.size(); index++) {
             ResultListProjection item = projections.get(index);
             Integer displayPosition = officialBasis == RankingBasis.NONE && isFinished(item.status())
                     ? Math.toIntExact(Math.addExact(Math.multiplyExact((long) page, size), index + 1L))
                     : null;
+            ResultLeaderTimesProjection leaders = leaderTimes.get(genderKey(item.gender()));
             items.add(mapper.toListItem(
                     item,
                     true,
                     officialBasis,
                     achievements.getOrDefault(item.resultId(), List.of()),
-                    displayPosition
+                    displayPosition,
+                    gapSeconds(item.gunTime(), leaders == null ? null : leaders.gunLeaderTime()),
+                    gapSeconds(item.chipTime(), leaders == null ? null : leaders.chipLeaderTime())
             ));
         }
         return new PageResponse<>(
@@ -139,6 +147,27 @@ public class ResultQueryService {
                 apiSortName(sortField),
                 sortDirection.name().toLowerCase(Locale.ROOT)
         );
+    }
+
+    private Map<String, ResultLeaderTimesProjection> leaderTimesByGender(
+            ResultSearchCriteria criteria,
+            List<ResultListProjection> page
+    ) {
+        if (page.isEmpty()) return Map.of();
+        Map<String, ResultLeaderTimesProjection> leaders = new HashMap<>();
+        for (ResultLeaderTimesProjection projection : resultRepository.findLeaderTimes(criteria)) {
+            leaders.put(genderKey(projection.gender()), projection);
+        }
+        return leaders;
+    }
+
+    private static String genderKey(String gender) {
+        return gender == null ? "" : gender.toLowerCase(Locale.ROOT);
+    }
+
+    private static Long gapSeconds(Duration current, Duration leader) {
+        if (current == null || leader == null) return null;
+        return Math.max(0L, current.minus(leader).toSeconds());
     }
 
     public PageResponse<ResultListItemDto> search(

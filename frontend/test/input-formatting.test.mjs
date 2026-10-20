@@ -9,7 +9,7 @@ import {
 } from '../src/utils/inputFormatting.ts'
 import { parseRussianBirthDate } from '../src/utils/resultInquiry.ts'
 import { parseClaimedTime } from '../src/utils/resultIssue.ts'
-import { formatDuration } from '../src/utils/format.ts'
+import { formatDuration, formatLeaderGap } from '../src/utils/format.ts'
 
 const autoformatSource = await readFile(
   new URL('../src/components/DigitAutoformatInput.tsx', import.meta.url),
@@ -81,6 +81,13 @@ test('sporting duration display always uses millisecond precision', () => {
   assert.equal(formatDuration(1_001), '00:00:01.001')
   assert.equal(formatDuration(2_029_340), '00:33:49.340')
   assert.equal(formatDuration(90_765_120), '25:12:45.120')
+})
+
+test('leader gap uses whole seconds without milliseconds or an hours segment', () => {
+  assert.equal(formatLeaderGap(0), '+00:00')
+  assert.equal(formatLeaderGap(65), '+01:05')
+  assert.equal(formatLeaderGap(3_665), '+61:05')
+  assert.equal(formatLeaderGap(null), null)
 })
 
 test('duration validation rejects invalid minutes and seconds and preserves milliseconds', () => {

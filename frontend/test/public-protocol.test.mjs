@@ -21,6 +21,16 @@ test('public protocol has no gender column or ranking selector', () => {
   assert.match(page, /Чистое время/)
 })
 
+test('both public time columns render backend leader gaps without client-side ranking math', () => {
+  assert.match(types, /gunLeaderGapSeconds: number \| null/)
+  assert.match(types, /chipLeaderGapSeconds: number \| null/)
+  assert.match(page, /gapSeconds=\{result\.gunLeaderGapSeconds\}/)
+  assert.match(page, /gapSeconds=\{result\.chipLeaderGapSeconds\}/)
+  assert.match(page, /formatLeaderGap\(gapSeconds\)/)
+  assert.doesNotMatch(page, /Math\.min\(|reduce\([^)]*Time/)
+  assert.match(css, /\.leader-gap[^}]*color:\s*var\(--muted\)/)
+})
+
 test('public status filter contains only supported statuses', () => {
   assert.match(page, /value="finished"/)
   assert.match(page, /value="disqualified"/)

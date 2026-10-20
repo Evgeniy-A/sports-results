@@ -181,6 +181,8 @@ export interface ResultListItem {
   status: string
   gunTimeMs: number | null
   chipTimeMs: number | null
+  gunLeaderGapSeconds: number | null
+  chipLeaderGapSeconds: number | null
   overallPlace: number | null
   genderPlace: number | null
   categoryPlace: number | null
@@ -200,7 +202,7 @@ export interface Split {
   recordedAt: string | null
 }
 
-export interface ResultDetails extends Omit<ResultListItem, 'place' | 'displayPosition' | 'entryKind'> {
+export interface ResultDetails extends Omit<ResultListItem, 'place' | 'displayPosition' | 'entryKind' | 'gunLeaderGapSeconds' | 'chipLeaderGapSeconds'> {
   eventId: number
   entryKind: 'PERSON' | 'TEAM' | 'OTHER' | 'UNKNOWN'
   splits: Split[]

@@ -196,7 +196,7 @@ export interface ParticipantInfo {
   additionalInfo: string | null
 }
 
-export interface AdminResultDetails extends Omit<ResultListItem, 'category' | 'entryKind'> {
+export interface AdminResultDetails extends Omit<ResultListItem, 'category' | 'entryKind' | 'gunLeaderGapSeconds' | 'chipLeaderGapSeconds'> {
   eventId: number
   birthDate: string | null
   sourceCategory: string | null

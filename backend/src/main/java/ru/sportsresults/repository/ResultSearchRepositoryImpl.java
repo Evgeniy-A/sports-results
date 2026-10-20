@@ -92,6 +92,27 @@ public class ResultSearchRepositoryImpl implements ResultSearchRepository {
         return new PageImpl<>(typedQuery.getResultList(), PageRequest.of(page, size), total);
     }
 
+    @Override
+    public List<ResultLeaderTimesProjection> findLeaderTimes(ResultSearchCriteria criteria) {
+        CriteriaBuilder builder = entityManager.getCriteriaBuilder();
+        CriteriaQuery<ResultLeaderTimesProjection> query = builder.createQuery(ResultLeaderTimesProjection.class);
+        Root<Result> result = query.from(Result.class);
+        Join<Result, Registration> registration = result.join("registration");
+        Join<Registration, Race> race = registration.join("race");
+        Join<Registration, Category> category = registration.join("category", JoinType.LEFT);
+        Expression<String> gender = builder.lower(registration.get("gender"));
+
+        query.select(builder.construct(
+                ResultLeaderTimesProjection.class,
+                gender,
+                builder.least(result.<Duration>get("gunTime")),
+                builder.least(result.<Duration>get("chipTime"))
+        ));
+        query.where(predicates(builder, criteria, registration, race, category, result));
+        query.groupBy(gender);
+        return entityManager.createQuery(query).getResultList();
+    }
+
     private long count(CriteriaBuilder builder, ResultSearchCriteria criteria) {
         CriteriaQuery<Long> countQuery = builder.createQuery(Long.class);
         Root<Result> result = countQuery.from(Result.class);
