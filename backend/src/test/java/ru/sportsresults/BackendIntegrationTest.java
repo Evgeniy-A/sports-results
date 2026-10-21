@@ -47,6 +47,7 @@ import ru.sportsresults.domain.Category;
 import ru.sportsresults.domain.CategoryRankingBasisBulkAction;
 import ru.sportsresults.domain.Event;
 import ru.sportsresults.domain.EventPublicationStatus;
+import ru.sportsresults.domain.EventDocumentStorageProvider;
 import ru.sportsresults.domain.EventSeries;
 import ru.sportsresults.domain.CategoryGender;
 import ru.sportsresults.domain.PrimaryStandingMode;
@@ -83,6 +84,7 @@ import ru.sportsresults.importing.ImportPreviewAction;
 import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.CategoryRepository;
 import ru.sportsresults.repository.EventRepository;
+import ru.sportsresults.repository.EventDocumentRepository;
 import ru.sportsresults.repository.EventSeriesRepository;
 import ru.sportsresults.repository.ImportBatchRepository;
 import ru.sportsresults.repository.ImportOperationRepository;
@@ -188,6 +190,7 @@ class BackendIntegrationTest {
     private JdbcTemplate jdbcTemplate;
     private ObjectMapper objectMapper;
     private EventRepository eventRepository;
+    private EventDocumentRepository eventDocumentRepository;
     private EventSeriesRepository eventSeriesRepository;
     private RaceRepository raceRepository;
     private RaceResultPublicationHistoryRepository raceResultPublicationHistoryRepository;
@@ -266,6 +269,7 @@ class BackendIntegrationTest {
         jdbcTemplate = context.getBean(JdbcTemplate.class);
         objectMapper = context.getBean(ObjectMapper.class);
         eventRepository = context.getBean(EventRepository.class);
+        eventDocumentRepository = context.getBean(EventDocumentRepository.class);
         eventSeriesRepository = context.getBean(EventSeriesRepository.class);
         raceRepository = context.getBean(RaceRepository.class);
         raceResultPublicationHistoryRepository = context.getBean(RaceResultPublicationHistoryRepository.class);
@@ -7361,16 +7365,41 @@ class BackendIntegrationTest {
         byte[] pdf = "%PDF-1.4\n1 0 obj\n%%EOF".getBytes(StandardCharsets.US_ASCII);
         var document = eventDocumentService.upload(event.getId(), ru.sportsresults.domain.EventDocumentType.PARTICIPANT_GUIDE,
                 "Гайд участника", 0, true, "guide.pdf", MediaType.APPLICATION_PDF_VALUE, pdf, ADMIN_USERNAME);
+        var storedDocument = eventDocumentRepository.findById(document.id()).orElseThrow();
+        assertThat(storedDocument.getStorageProvider()).isEqualTo(EventDocumentStorageProvider.LOCAL);
+        assertThat(storedDocument.getStorageKey()).endsWith(".pdf");
+        assertThat(fileStorageService.exists(storedDocument.getStorageProvider(), storedDocument.getStorageKey())).isTrue();
         assertThat(document.contentUrl()).isEqualTo("/api/events/" + event.getId() + "/documents/" + document.id() + "/content");
         assertThat(eventDocumentService.listPublic(event.getId())).singleElement()
                 .extracting(ru.sportsresults.api.dto.EventDocumentDto::sha256).isEqualTo(document.sha256());
         assertThat(eventDocumentService.openPublic(event.getId(), document.id()).resource().getInputStream().readAllBytes())
                 .isEqualTo(pdf);
 
+        var privateDocument = eventDocumentService.update(event.getId(), document.id(),
+                new ru.sportsresults.api.dto.UpdateEventDocumentRequest(
+                        ru.sportsresults.domain.EventDocumentType.REGULATIONS,
+                        "Положение", 2, false
+                ), ADMIN_USERNAME);
+        assertThat(privateDocument.displayName()).isEqualTo("Положение");
+        assertThat(eventDocumentService.listAdmin(event.getId())).singleElement()
+                .extracting(ru.sportsresults.api.dto.EventDocumentDto::publicDocument).isEqualTo(false);
+        assertThat(eventDocumentService.listPublic(event.getId())).isEmpty();
+        assertThatThrownBy(() -> eventDocumentService.openPublic(event.getId(), document.id()))
+                .isInstanceOf(ResourceNotFoundException.class);
+        assertThat(eventDocumentService.openAdmin(event.getId(), document.id()).resource().getInputStream().readAllBytes())
+                .isEqualTo(pdf);
+
+        eventDocumentService.update(event.getId(), document.id(),
+                new ru.sportsresults.api.dto.UpdateEventDocumentRequest(
+                        ru.sportsresults.domain.EventDocumentType.REGULATIONS,
+                        "Положение", 2, true
+                ), ADMIN_USERNAME);
+        assertThat(eventDocumentService.listPublic(event.getId())).hasSize(1);
+
         Event other = createPublishedEvent("Other Documents", "other-documents");
         assertThatThrownBy(() -> eventDocumentService.openPublic(other.getId(), document.id()))
                 .isInstanceOf(ResourceNotFoundException.class);
-        assertThatThrownBy(() -> fileStorageService.open("../guide.pdf"))
+        assertThatThrownBy(() -> fileStorageService.open(EventDocumentStorageProvider.LOCAL, "../guide.pdf"))
                 .isInstanceOf(InvalidRequestException.class);
         assertThatThrownBy(() -> eventDocumentService.upload(event.getId(),
                 ru.sportsresults.domain.EventDocumentType.OTHER, "Текст", 0, true, "text.pdf",
@@ -7382,6 +7411,13 @@ class BackendIntegrationTest {
         assertThatThrownBy(() -> eventDocumentService.listPublic(event.getId()))
                 .isInstanceOf(ResourceNotFoundException.class);
         eventDocumentService.delete(event.getId(), document.id(), ADMIN_USERNAME);
+        assertThat(eventDocumentRepository.findById(document.id())).isEmpty();
+        assertThat(fileStorageService.exists(storedDocument.getStorageProvider(), storedDocument.getStorageKey())).isFalse();
+        assertThat(changeLogRepository.findAll().stream()
+                .filter(log -> log.getEntityType() == AuditEntityType.EVENT_DOCUMENT)
+                .filter(log -> log.getEntityId().equals(document.id())))
+                .extracting(AdminChangeLog::getFieldName)
+                .containsExactly("uploaded", "updated", "updated", "deleted");
     }
 
     private static ru.sportsresults.api.dto.UpdateRegistrationRequest registrationRequest(

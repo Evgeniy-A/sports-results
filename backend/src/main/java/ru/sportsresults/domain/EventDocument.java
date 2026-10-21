@@ -45,6 +45,11 @@ public class EventDocument extends BaseEntity {
     @Column(name = "storage_key", nullable = false, length = 500, unique = true)
     private String storageKey;
 
+    @NotNull
+    @Enumerated(EnumType.STRING)
+    @Column(name = "storage_provider", nullable = false, length = 32)
+    private EventDocumentStorageProvider storageProvider;
+
     @NotBlank
     @Size(max = 100)
     @Column(name = "content_type", nullable = false, length = 100)
@@ -84,6 +89,8 @@ public class EventDocument extends BaseEntity {
     public void setOriginalFilename(String originalFilename) { this.originalFilename = originalFilename; }
     public String getStorageKey() { return storageKey; }
     public void setStorageKey(String storageKey) { this.storageKey = storageKey; }
+    public EventDocumentStorageProvider getStorageProvider() { return storageProvider; }
+    public void setStorageProvider(EventDocumentStorageProvider storageProvider) { this.storageProvider = storageProvider; }
     public String getContentType() { return contentType; }
     public void setContentType(String contentType) { this.contentType = contentType; }
     public long getSizeBytes() { return sizeBytes; }

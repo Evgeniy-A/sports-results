@@ -19,7 +19,7 @@ Defaults from `compose.yaml` can be overridden with `DB_URL`, `DB_USERNAME`, and
 
 Browser CORS is restricted to the comma-separated exact origins in `CORS_ALLOWED_ORIGINS`; the local default is `http://127.0.0.1:5173,http://localhost:5173`, and wildcard origins are rejected. A deployed frontend must add its stable Cloudflare Pages/custom-domain origin. This API policy is separate from the object-storage bucket CORS required for direct attachment uploads.
 
-Flyway applies V1–V27 automatically. V4 enables PostgreSQL `pg_trgm`, so the migration user needs permission to create that extension. Hibernate validates rather than creates the schema.
+Flyway applies V1–V30 automatically. V4 enables PostgreSQL `pg_trgm`, so the migration user needs permission to create that extension. Hibernate validates rather than creates the schema.
 
 - API documentation: <http://localhost:8080/swagger-ui.html>
 - OpenAPI JSON: <http://localhost:8080/v3/api-docs>
@@ -44,7 +44,12 @@ Age-category resolution keeps three concepts separate: `birthDate` and `sourceCa
 
 An Event exists before Results and drives both the future calendar and past archive—there is no separate calendar entity. Event page publication and Results publication are independent. Results can move `PUBLISHED → DRAFT → PUBLISHED` without hiding participant information or rules. Race is the Event-scoped start/distance and the only public protocol scope. Race visibility changes do not recalculate results or rankings. `EventScheduleItem` and `EventInfoBlock` are optional. `StartCluster` belongs to a Race and may be assigned to a Registration, but never creates a standing or changes existing achievements.
 
-PDF metadata is stored in PostgreSQL while binary content goes through `FileStorageService`. Development uses `LocalFileStorageService`; configure `DOCUMENT_STORAGE_ROOT` and `DOCUMENT_MAX_SIZE_BYTES`. Storage keys are generated, paths stay private, and a future S3-compatible implementation can replace local storage without changing Event domain or API.
+PDF metadata is stored in PostgreSQL while binary content goes through provider-aware `FileStorageService`. Development defaults to local storage; configure `DOCUMENT_STORAGE_ROOT` and `DOCUMENT_MAX_SIZE_BYTES`. Select new-upload storage with `DOCUMENT_STORAGE_PROVIDER=local|yandex-disk`. Existing rows retain their persisted provider, so legacy local documents keep working when the default changes.
+
+For persistent Yandex Disk document storage, configure `DOCUMENT_STORAGE_PROVIDER=yandex-disk`, `YANDEX_DISK_TOKEN`, optional `YANDEX_DISK_API_BASE_URL`, and `DOCUMENT_YANDEX_DISK_ROOT_PATH` (must remain `app:/`). Startup fails closed when Yandex storage is selected without a token. Documents remain private and are proxied through the application; no Yandex URL or credential is exposed to clients. The application-folder layout keeps the two business pipelines separate:
+
+- `app:/events/{eventId}/documents/{uuid}.pdf` — Event PDF documents;
+- `app:/result-issues/...` — Result Issue attachments, unchanged.
 
 ## Result issue attachment storage
 

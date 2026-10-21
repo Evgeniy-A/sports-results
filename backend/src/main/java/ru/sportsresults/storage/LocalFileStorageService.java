@@ -2,6 +2,7 @@ package ru.sportsresults.storage;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import ru.sportsresults.domain.EventDocumentStorageProvider;
 import ru.sportsresults.service.InvalidRequestException;
 import ru.sportsresults.service.ResourceNotFoundException;
 
@@ -13,7 +14,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.UUID;
 
 @Service
-public class LocalFileStorageService implements FileStorageService {
+public class LocalFileStorageService implements DocumentStorage {
     private final Path root;
 
     public LocalFileStorageService(@Value("${app.documents.storage-root:./data/uploads/events}") String root) {
@@ -26,7 +27,12 @@ public class LocalFileStorageService implements FileStorageService {
     }
 
     @Override
-    public String store(byte[] content) {
+    public EventDocumentStorageProvider provider() {
+        return EventDocumentStorageProvider.LOCAL;
+    }
+
+    @Override
+    public String store(Long eventId, byte[] content) {
         String key = UUID.randomUUID() + ".pdf";
         Path target = resolve(key);
         try {
@@ -63,10 +69,8 @@ public class LocalFileStorageService implements FileStorageService {
     }
 
     private Path resolve(String storageKey) {
-        if (storageKey == null || storageKey.isBlank() || Path.of(storageKey).isAbsolute()) {
-            throw new InvalidRequestException("INVALID_STORAGE_KEY", "Invalid document storage key");
-        }
-        Path resolved = root.resolve(storageKey).normalize();
+        String safeKey = DocumentStorageKey.requireSafeRelative(storageKey);
+        Path resolved = root.resolve(safeKey).normalize();
         if (!resolved.startsWith(root) || resolved.equals(root)) {
             throw new InvalidRequestException("INVALID_STORAGE_KEY", "Invalid document storage key");
         }

@@ -59,14 +59,15 @@ public class EventDocumentService {
                                    byte[] content, String actor) {
         Event event = eventService.requireEvent(eventId);
         validate(displayName, originalFilename, contentType, content);
-        String storageKey = storage.store(content);
+        FileStorageService.StoredDocument storedDocument = storage.store(eventId, content);
         try {
             EventDocument document = new EventDocument();
             document.setEvent(event);
             document.setType(type);
             document.setDisplayName(displayName.strip());
             document.setOriginalFilename(safeFilename(originalFilename));
-            document.setStorageKey(storageKey);
+            document.setStorageProvider(storedDocument.provider());
+            document.setStorageKey(storedDocument.storageKey());
             document.setContentType(PDF_CONTENT_TYPE);
             document.setSizeBytes(content.length);
             document.setSha256(sha256(content));
@@ -78,7 +79,7 @@ public class EventDocumentService {
             audit(actor, saved.getId(), "uploaded", null, summary(saved));
             return toDto(saved);
         } catch (RuntimeException exception) {
-            storage.delete(storageKey);
+            storage.delete(storedDocument.provider(), storedDocument.storageKey());
             throw exception;
         }
     }
@@ -101,7 +102,7 @@ public class EventDocumentService {
         EventDocument document = requireOwned(eventId, documentId);
         repository.delete(document);
         repository.flush();
-        storage.delete(document.getStorageKey());
+        storage.delete(document.getStorageProvider(), document.getStorageKey());
         audit(actor, documentId, "deleted", summary(document), null);
     }
 
@@ -120,7 +121,7 @@ public class EventDocumentService {
     }
 
     private DocumentContent content(EventDocument document) {
-        InputStream stream = storage.open(document.getStorageKey());
+        InputStream stream = storage.open(document.getStorageProvider(), document.getStorageKey());
         Resource resource = new InputStreamResource(stream);
         return new DocumentContent(resource, document.getOriginalFilename(), document.getSizeBytes());
     }
