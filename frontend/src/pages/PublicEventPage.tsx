@@ -35,7 +35,7 @@ export function PublicEventPage({ slug }: { slug: string }) {
   return <main>
     <SiteHeader />
     <section className={`event-hero ${resultsActive ? 'event-results-hero' : 'event-detail-hero'}`}>
-      <a className="back-link" href="/">← Все мероприятия</a>
+      <a className="back-link" href="/">← На главную</a>
       <p className="eyebrow">{event.eventSeriesName}</p>
       <h1>{event.name}</h1>
       <div className="event-meta"><span>{formatDateRange(event.startsAt, event.endsAt, event.timeZone)}</span><span>{event.location ?? 'Место уточняется'}</span></div>
