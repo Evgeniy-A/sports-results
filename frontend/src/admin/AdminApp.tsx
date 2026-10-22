@@ -8,6 +8,7 @@ import { AdminEventPage } from './pages/AdminEventPage'
 import { AdminJournalPage } from './pages/AdminJournalPage'
 import { AdminTemplatesPage } from './pages/AdminTemplatesPage'
 import { AdminBulkEventsPage } from './pages/AdminBulkEventsPage'
+import { AdminCreateEventPage } from './pages/AdminCreateEventPage'
 import { AdminTemplatePage } from './pages/AdminTemplatePage'
 import { AdminEventIssuePage } from './pages/AdminEventIssuePage'
 import { AdminLink, navigateAdmin, useAdminLocation } from './router'
@@ -67,6 +68,8 @@ function AuthenticatedAdmin({ credentials, onLogout }: { credentials: AdminCrede
   let content: React.ReactNode
   if (location.pathname === '/admin' || location.pathname === '/admin/' || location.pathname === '/admin/events' || location.pathname === '/admin/events/') {
     content = <AdminEventsPage api={api} />
+  } else if (location.pathname === '/admin/events/new' || location.pathname === '/admin/events/new/') {
+    content = <AdminCreateEventPage api={api} />
   } else if (location.pathname === '/admin/events/bulk' || location.pathname === '/admin/events/bulk/') {
     content = <AdminBulkEventsPage api={api} />
   } else if (location.pathname === '/admin/templates' || location.pathname === '/admin/templates/') {

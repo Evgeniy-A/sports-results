@@ -9,11 +9,19 @@ import { AdminLink, navigateAdmin } from '../router'
 import { LOCATION_SUGGESTIONS, suggestTimeZone, timeZoneLabel } from '../timeZones'
 import { adminErrorMessage } from '../utils'
 import { AdminNotice, Field, Loadable } from '../components/AdminUi'
+import { AdminCreationHeader, AdminCreationSection } from '../components/AdminCreationLayout'
 import { InlineTemplateCreator } from '../components/InlineTemplateCreator'
 import { TimeZoneCombobox } from '../components/TimeZoneCombobox'
 import { EventStartComposer } from '../components/EventStartComposer'
 import { draftsFromTemplate, startCommands } from '../eventStartDrafts'
 import type { EventStartDraft } from '../eventStartDrafts'
+
+const CREATION_STEPS = [
+  { number: '01', label: 'Шаблон и дата' },
+  { number: '02', label: 'Места' },
+  { number: '03', label: 'Старты' },
+  { number: '04', label: 'Проверка' },
+]
 
 export function AdminBulkEventsPage({ api }: { api: AdminApi }) {
   const nextId = useRef(2)
@@ -81,22 +89,31 @@ export function AdminBulkEventsPage({ api }: { api: AdminApi }) {
   }
 
   return <>
-    <div className="admin-page-heading"><div><AdminLink href="/admin/events">← Мероприятия</AdminLink><h1>Создать несколько мероприятий</h1><p>Подготовьте города, проверьте данные и подтвердите создание одним действием.</p></div></div>
+    <AdminCreationHeader
+      title="Создать несколько мероприятий"
+      description="Подготовьте города, настройте общие старты и проверьте мероприятия перед созданием."
+      steps={CREATION_STEPS}
+      activeStep={preview ? '04' : '01'}
+    />
     <Loadable loading={loading} error={null}>
-      {!preview ? <form className="admin-card admin-form" onSubmit={buildPreview}>
+      {!preview ? <form className="admin-creation-form" onSubmit={buildPreview}>
         {error && <AdminNotice tone="danger">{error}</AdminNotice>}
-        <Field label="Шаблон *"><select required value={templateId} onChange={(event) => setTemplateId(event.target.value)}><option value="">Выберите шаблон</option>{templates.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></Field>
-        <InlineTemplateCreator api={api} initiallyOpen={!templates.length} onCreated={addTemplate} />
-        <Field label="Дата"><input required type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
-        <div className="admin-section-toolbar"><div><h2>Города / места проведения</h2><p>Название мероприятия будет совпадать с указанным городом или местом.</p></div><button className="admin-button-secondary" type="button" onClick={addRow}>+ Добавить город</button></div>
-        <datalist id="bulk-location-options">{LOCATION_SUGGESTIONS.map((city) => <option value={city} key={city} />)}</datalist>
-        <div className="admin-bulk-rows">{rows.map((row, index) => <section className="admin-bulk-row" key={row.id}>
-          <Field label={`Город ${index + 1}`}><input required list="bulk-location-options" maxLength={255} value={row.location} onChange={(event) => updateLocation(row.id, event.target.value)} placeholder="Например, Казань" />{duplicates.has(row.id) && <small className="admin-field-error">Такой город уже добавлен.</small>}</Field>
-          <Field label="Часовой пояс"><TimeZoneCombobox value={row.timeZone} location={row.location} onChange={(value) => updateTimeZone(row.id, value)} />{row.location.trim() && !row.timeZone && <small className="admin-field-error">Выберите часовой пояс для этого места.</small>}</Field>
-          <button className="admin-link-button danger" type="button" disabled={rows.length === 1} onClick={() => removeRow(row.id)}>Удалить</button>
-        </section>)}</div>
-        {startsLoading ? <p>Загружаем старты шаблона…</p> : <EventStartComposer value={starts} onChange={setStarts} />}
-        <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy || !ready}>{busy ? 'Проверяем…' : 'Продолжить'}</button><AdminLink className="admin-button-secondary" href="/admin/events">Отмена</AdminLink></div>
+        <AdminCreationSection number="01" title="Шаблон и дата" description="Выберите основу и общую дату для всех мероприятий.">
+          <div className="admin-creation-fields"><Field label="Шаблон *"><select required value={templateId} onChange={(event) => setTemplateId(event.target.value)}><option value="">Выберите шаблон</option>{templates.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></Field><InlineTemplateCreator api={api} initiallyOpen={!templates.length} onCreated={addTemplate} /><Field label="Дата"><input required type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field></div>
+        </AdminCreationSection>
+        <AdminCreationSection number="02" title="Города / места проведения" description="Название каждого мероприятия будет совпадать с указанным городом или местом.">
+          <div className="admin-section-toolbar is-compact"><div><p>Добавьте все места, которые нужно создать одним действием.</p></div><button className="admin-button-secondary" type="button" onClick={addRow}>+ Добавить город</button></div>
+          <datalist id="bulk-location-options">{LOCATION_SUGGESTIONS.map((city) => <option value={city} key={city} />)}</datalist>
+          <div className="admin-bulk-rows">{rows.map((row, index) => <section className="admin-bulk-row" key={row.id}>
+            <Field label={`Город ${index + 1}`}><input required list="bulk-location-options" maxLength={255} value={row.location} onChange={(event) => updateLocation(row.id, event.target.value)} placeholder="Например, Казань" />{duplicates.has(row.id) && <small className="admin-field-error">Такой город уже добавлен.</small>}</Field>
+            <Field label="Часовой пояс"><TimeZoneCombobox value={row.timeZone} location={row.location} onChange={(value) => updateTimeZone(row.id, value)} />{row.location.trim() && !row.timeZone && <small className="admin-field-error">Выберите часовой пояс для этого места.</small>}</Field>
+            <button className="admin-link-button danger" type="button" disabled={rows.length === 1} onClick={() => removeRow(row.id)}>Удалить</button>
+          </section>)}</div>
+        </AdminCreationSection>
+        <AdminCreationSection number="03" title="Старты мероприятия" description="Один набор стартов будет создан для каждого указанного места.">
+          {startsLoading ? <p className="admin-creation-loading">Загружаем старты шаблона…</p> : <EventStartComposer value={starts} onChange={setStarts} compactHeader />}
+        </AdminCreationSection>
+        <div className="admin-creation-actions"><div><strong>Следующий шаг — проверка</strong><span>Проверьте города, часовые пояса и старты.</span></div><div><AdminLink className="admin-button-secondary" href="/admin/events">Отмена</AdminLink><button className="admin-button-primary" disabled={busy || !ready}>{busy ? 'Проверяем…' : 'Продолжить'}</button></div></div>
       </form> : <BulkPreview preview={preview} busy={busy} onBack={() => setPreview(null)} onCreate={() => void create()} />}
     </Loadable>
   </>
@@ -106,13 +123,14 @@ function BulkPreview({ preview, busy, onBack, onCreate }: {
   preview: BulkEventPreview; busy: boolean; onBack: () => void; onCreate: () => void
 }) {
   const allCreatable = preview.creatableCount === preview.requestedCount
-  return <section className="admin-card admin-form">
-    <div><p className="admin-eyebrow">Проверка перед созданием</p><h2>Создать {preview.requestedCount} мероприятий</h2><p><strong>Шаблон:</strong> {preview.templateName}<br /><strong>Дата:</strong> {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(`${preview.date}T00:00:00Z`))}<br /><strong>Будет создано стартов:</strong> {preview.totalStartCount}</p></div>
+  return <AdminCreationSection number="04" title="Проверка" description="Проверьте список перед созданием мероприятий.">
+    <div className="admin-bulk-preview"><div className="admin-preview-summary"><p className="admin-eyebrow">Готово к созданию</p><h2>Создать {preview.requestedCount} мероприятий</h2><p><strong>Шаблон:</strong> {preview.templateName}<br /><strong>Дата:</strong> {new Intl.DateTimeFormat('ru-RU', { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(`${preview.date}T00:00:00Z`))}<br /><strong>Будет создано стартов:</strong> {preview.totalStartCount}</p></div>
     {!allCreatable && <AdminNotice tone="warning">Исправьте отмеченные дубли перед созданием.</AdminNotice>}
     <div className="admin-preview-list">{preview.events.map((item, index) => <article key={`${item.location}-${index}`}>
       <div><h3>{item.name}</h3><p>Часовой пояс: {item.timeZone} · {timeZoneLabel(item.timeZone)}</p>{preview.starts.length ? <ul>{preview.starts.map((start) => <li key={`${start.sourceCode}-${start.name}`}>{start.name}{start.awardConfigured ? ' · Награждение: из шаблона или настроено' : ''}</li>)}</ul> : <small>Без стартов</small>}</div>
       <strong className={item.creatable ? 'admin-preview-ok' : 'admin-preview-warning'}>{item.creatable ? '✓ можно создать' : '⚠ Такое мероприятие уже существует'}</strong>
     </article>)}</div>
-    <div className="admin-form-actions"><button className="admin-button-secondary" type="button" disabled={busy} onClick={onBack}>Назад</button><button className="admin-button-primary" type="button" disabled={busy || !allCreatable} onClick={onCreate}>{busy ? 'Создаём…' : `Создать ${preview.requestedCount} мероприятий`}</button></div>
-  </section>
+    <div className="admin-creation-actions"><div><strong>Все мероприятия готовы</strong><span>После создания вы вернётесь к списку мероприятий.</span></div><div><button className="admin-button-secondary" type="button" disabled={busy} onClick={onBack}>Назад</button><button className="admin-button-primary" type="button" disabled={busy || !allCreatable} onClick={onCreate}>{busy ? 'Создаём…' : `Создать ${preview.requestedCount} мероприятий`}</button></div></div>
+    </div>
+  </AdminCreationSection>
 }

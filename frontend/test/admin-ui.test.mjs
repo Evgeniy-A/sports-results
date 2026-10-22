@@ -17,7 +17,7 @@ import {
 } from '../src/admin/adminAuthSession.ts'
 
 const source = async (path) => readFile(new URL(path, import.meta.url), 'utf8')
-const [app, adminApp, api, adminTypes, utils, router, events, templates, templateDetail, startComposer, categorySettings, awardPresentation, startDrafts, bulkEvents, inlineTemplate, eventPage, core, content, categories, results, resultEditor, imports, publication, policy, issues, issuePage, journal, timeZoneCombobox, css] = await Promise.all([
+const [app, adminApp, api, adminTypes, utils, router, events, createEvent, creationLayout, templates, templateDetail, startComposer, categorySettings, awardPresentation, startDrafts, bulkEvents, inlineTemplate, eventPage, core, content, categories, results, resultEditor, imports, publication, policy, issues, issuePage, journal, timeZoneCombobox, css] = await Promise.all([
   source('../src/App.tsx'),
   source('../src/admin/AdminApp.tsx'),
   source('../src/admin/api.ts'),
@@ -25,6 +25,8 @@ const [app, adminApp, api, adminTypes, utils, router, events, templates, templat
   source('../src/admin/utils.ts'),
   source('../src/admin/router.tsx'),
   source('../src/admin/pages/AdminEventsPage.tsx'),
+  source('../src/admin/pages/AdminCreateEventPage.tsx'),
+  source('../src/admin/components/AdminCreationLayout.tsx'),
   source('../src/admin/pages/AdminTemplatesPage.tsx'),
   source('../src/admin/pages/AdminTemplatePage.tsx'),
   source('../src/admin/components/EventStartComposer.tsx'),
@@ -92,23 +94,66 @@ test('event list, create and edit use protected typed APIs', () => {
   assert.match(api, /events:.*\/admin\/events/s)
   assert.match(api, /createEvent:/)
   assert.match(api, /updateEvent:/)
-  for (const action of ['Создать мероприятие', 'Создать несколько мероприятий', 'Шаблоны']) assert.match(events, new RegExp(action))
+  for (const action of ['Создать мероприятие', 'Создать несколько']) assert.match(events, new RegExp(action))
+  assert.doesNotMatch(events, /href="\/admin\/templates"|>Шаблоны<\/AdminLink>/)
   assert.match(core, /Настройка влияет на итоговый протокол/)
 })
 
+test('Events workspace groups creation routes and leaves Templates in the canonical sidebar only', () => {
+  assert.match(events, /href="\/admin\/events\/new">\+ Создать мероприятие/)
+  assert.match(events, /href="\/admin\/events\/bulk">Создать несколько/)
+  assert.doesNotMatch(events, /href="\/admin\/templates"/)
+  assert.match(adminApp, /href="\/admin\/templates"/)
+  assert.match(adminApp, />Шаблоны<\/AdminLink>/)
+  assert.match(events, /admin-events-create-actions/)
+  assert.match(events, /admin-events-filter/)
+})
+
+test('single Event creation has a direct full-page route and does not use a Drawer', () => {
+  assert.match(adminApp, /location\.pathname === '\/admin\/events\/new'/)
+  assert.match(adminApp, /<AdminCreateEventPage api=\{api\}/)
+  assert.match(createEvent, /export function AdminCreateEventPage/)
+  assert.match(createEvent, /<AdminCreationHeader/)
+  assert.match(createEvent, /<AdminCreationSection number="01"/)
+  assert.match(createEvent, /<AdminCreationSection number="04"/)
+  assert.doesNotMatch(createEvent, /<Drawer|CreateEventDrawer/)
+  assert.match(creationLayout, /<AdminLink href="\/admin\/events">Мероприятия<\/AdminLink>/)
+})
+
+test('single and bulk creation share guided sections and preserve their destinations', () => {
+  assert.match(createEvent, /navigateAdmin\(`\/admin\/events\/\$\{created\.event\.id\}`\)/)
+  assert.match(bulkEvents, /navigateAdmin\('\/admin\/events'\)/)
+  for (const sourceText of [createEvent, bulkEvents]) {
+    assert.match(sourceText, /<AdminCreationHeader/)
+    assert.match(sourceText, /<AdminCreationSection number="01"/)
+    assert.match(sourceText, /<AdminCreationSection number="04"/)
+  }
+  assert.match(createEvent, /resultInquiry: inquiry/)
+  assert.match(createEvent, /starts: startCommands\(starts\)/)
+  assert.match(bulkEvents, /api\.previewBulkEvents\(command\(\)\)/)
+  assert.match(bulkEvents, /api\.createBulkEvents\(command\(\)\)/)
+})
+
+test('single creation protects meaningful drafts on router navigation and reload', () => {
+  assert.match(createEvent, /setAdminNavigationBlocker\(\(\) => allowNavigation\.current \|\| window\.confirm\(LEAVE_EVENT_CREATION_MESSAGE\)\)/)
+  assert.match(createEvent, /window\.addEventListener\('beforeunload', warn\)/)
+  assert.match(createEvent, /window\.removeEventListener\('beforeunload', warn\)/)
+  assert.match(createEvent, /allowNavigation\.current = true[\s\S]*navigateAdmin/)
+})
+
 test('event creation keeps template selection and inline creation in one business flow', () => {
-  assert.match(events, /label="Шаблон"/)
+  assert.match(createEvent, /label="Шаблон"/)
   assert.match(inlineTemplate, /\+ Создать новый шаблон/)
   assert.match(inlineTemplate, /label="Название шаблона"/)
   assert.match(inlineTemplate, /api\.createEventSeries/)
-  assert.match(events, /onTemplateCreated\(created\)/)
-  assert.match(events, /setTemplateId\(String\(created\.id\)\)/)
-  assert.doesNotMatch(`${events}\n${core}\n${templates}\n${bulkEvents}\n${inlineTemplate}`, /Серия|серия/)
+  assert.match(createEvent, /setTemplates\(\(current\) => \[\.\.\.current, created\]/)
+  assert.match(createEvent, /setTemplateId\(String\(created\.id\)\)/)
+  assert.doesNotMatch(`${events}\n${createEvent}\n${core}\n${templates}\n${bulkEvents}\n${inlineTemplate}`, /Серия|серия/)
 })
 
 test('ordinary Event and series forms do not ask for a URL or submit a slug', () => {
-  assert.doesNotMatch(events, /Адрес в URL|name, slug|setSlug/)
-  assert.match(events, /eventSeriesId: Number\(templateId\), name,/)
+  assert.doesNotMatch(createEvent, /Адрес в URL|name, slug|setSlug/)
+  assert.match(createEvent, /eventSeriesId: Number\(templateId\), name,/)
   assert.doesNotMatch(eventGeneralTab, /Адрес в URL|slug: form\.slug|set\('slug'/)
   assert.match(eventGeneralTab, /label="Шаблон"/)
 })
@@ -223,15 +268,15 @@ test('template and Race award flows reuse category editing without navigation', 
 })
 
 test('single Event creation copies selected starts and keeps the preview editable on back', () => {
-  assert.match(events, /api\.templateStarts/)
-  assert.match(events, /draftsFromTemplate/)
+  assert.match(createEvent, /api\.templateStarts/)
+  assert.match(createEvent, /draftsFromTemplate/)
   assert.match(startDrafts, /included: true/)
   assert.match(startComposer, /checked=\{draft\.included\}/)
-  assert.match(events, /<EventStartComposer/)
-  assert.match(events, /Продолжить/)
-  assert.match(events, /Проверка перед созданием/)
-  assert.match(events, /setPreview\(false\)/)
-  assert.match(events, /createEventWithStarts/)
+  assert.match(createEvent, /<EventStartComposer/)
+  assert.match(createEvent, /Продолжить/)
+  assert.match(createEvent, /title="Проверка"/)
+  assert.match(createEvent, /setPreview\(false\)/)
+  assert.match(createEvent, /createEventWithStarts/)
   assert.match(api, /\/admin\/events\/with-starts/)
 })
 
@@ -241,7 +286,7 @@ test('event composer allows event-only edits, extra starts and visual reordering
   assert.match(startComposer, /Удалить дополнительный старт/)
   assert.match(startComposer, /Изменения применятся только к создаваемому мероприятию/)
   assert.match(startComposer, /onDrop=\{\(\) => dropBefore/)
-  assert.doesNotMatch(`${startComposer}\n${events}`, /Код импорта|· Код:/)
+  assert.doesNotMatch(`${startComposer}\n${createEvent}`, /Код импорта|· Код:/)
   assert.match(startComposer, /Дистанция, м/)
 })
 
@@ -255,14 +300,14 @@ test('bulk creation uses one common start set and previews total materialization
 })
 
 test('template UX exposes user terminology rather than persistence entity names', () => {
-  const visibleCopy = `${templates}\n${templateDetail}\n${events}\n${bulkEvents}`
+  const visibleCopy = `${templates}\n${templateDetail}\n${events}\n${createEvent}\n${bulkEvents}`
   for (const term of ['EventSeries', 'TemplateStart', 'AwardPolicy', 'Race']) {
     assert.doesNotMatch(visibleCopy, new RegExp(`>${term}<`))
   }
 })
 
 test('bulk screen manages cities, explicit timezones and two-step Preview without losing draft state', () => {
-  assert.match(bulkEvents, /<h1>Создать несколько мероприятий<\/h1>/)
+  assert.match(bulkEvents, /title="Создать несколько мероприятий"/)
   assert.match(bulkEvents, /\+ Добавить город/)
   assert.match(bulkEvents, /LOCATION_SUGGESTIONS/)
   assert.match(bulkEvents, /suggestTimeZone\(location\) \?\? ''/)
@@ -270,7 +315,7 @@ test('bulk screen manages cities, explicit timezones and two-step Preview withou
   assert.match(bulkEvents, /api\.previewBulkEvents/)
   assert.match(bulkEvents, /api\.createBulkEvents/)
   assert.match(bulkEvents, /onBack=\{\(\) => setPreview\(null\)\}/)
-  assert.match(bulkEvents, /Проверка перед созданием/)
+  assert.match(bulkEvents, /title="Проверка"/)
   assert.match(bulkEvents, /Часовой пояс:/)
   assert.doesNotMatch(bulkEvents, /Показать Preview|>Preview<|Timezone:|проверьте Preview/)
 })
@@ -334,9 +379,9 @@ test('Event date inputs round-trip through the configured IANA time zone', () =>
 })
 
 test('Event timezone uses a fixed-value searchable combobox instead of an IANA text field', () => {
-  assert.match(events, /<TimeZoneCombobox value={timeZone} location={location}/)
+  assert.match(createEvent, /<TimeZoneCombobox value={timeZone} location={location}/)
   assert.match(core, /<TimeZoneCombobox value={form\.timeZone} location={form\.location}/)
-  assert.doesNotMatch(events, /IANA, например/)
+  assert.doesNotMatch(createEvent, /IANA, например/)
   assert.doesNotMatch(core, /<input required value={form\.timeZone}/)
   assert.match(timeZoneCombobox, /role="combobox"/)
   assert.match(timeZoneCombobox, /role="listbox"/)

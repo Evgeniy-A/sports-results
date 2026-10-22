@@ -15,7 +15,7 @@ import {
 
 const source = async (path) => readFile(new URL(path, import.meta.url), 'utf8')
 const [createPage, coreTabs, issuesTab, settingsCard, settingsFields, templatePage, adminStyles] = await Promise.all([
-  source('../src/admin/pages/AdminEventsPage.tsx'),
+  source('../src/admin/pages/AdminCreateEventPage.tsx'),
   source('../src/admin/pages/EventCoreTabs.tsx'),
   source('../src/admin/pages/EventIssuesTab.tsx'),
   source('../src/admin/components/ResultInquirySettingsCard.tsx'),

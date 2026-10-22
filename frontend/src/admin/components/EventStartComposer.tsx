@@ -8,9 +8,10 @@ import { awardStatusLabel } from '../awardPolicyPresentation'
 
 let nextExtraId = 1
 
-export function EventStartComposer({ value, onChange }: {
+export function EventStartComposer({ value, onChange, compactHeader = false }: {
   value: EventStartDraft[]
   onChange: (next: EventStartDraft[]) => void
+  compactHeader?: boolean
 }) {
   const dragged = useRef<string | null>(null)
   const update = (clientId: string, patch: Partial<EventStartDraft>) => onChange(value.map((item) => (
@@ -51,7 +52,7 @@ export function EventStartComposer({ value, onChange }: {
   const removeExtra = (clientId: string) => onChange(value.filter((item) => item.clientId !== clientId))
 
   return <section className="admin-start-composer">
-    <div className="admin-section-toolbar"><div><h2>Старты мероприятия</h2><p>Изменения применятся только к создаваемому мероприятию.</p></div><button className="admin-button-secondary" type="button" onClick={add}>+ Добавить старт</button></div>
+    <div className={`admin-section-toolbar${compactHeader ? ' is-compact' : ''}`}><div>{!compactHeader && <h2>Старты мероприятия</h2>}<p>Изменения применятся только к создаваемому мероприятию.</p></div><button className="admin-button-secondary" type="button" onClick={add}>+ Добавить старт</button></div>
     {value.length ? <div className="admin-start-drafts">{value.map((draft, index) => <article
       className={`admin-start-draft${draft.included ? '' : ' is-excluded'}`}
       draggable
