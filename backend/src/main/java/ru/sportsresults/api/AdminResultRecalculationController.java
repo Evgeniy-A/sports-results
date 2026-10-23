@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import ru.sportsresults.api.dto.ResultRecalculationApplyDto;
 import ru.sportsresults.api.dto.ResultRecalculationPreviewDto;
 import ru.sportsresults.api.dto.ResultRecalculationPreviewRequest;
@@ -18,6 +19,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/admin/events/{eventId}/result-recalculations")
 @SecurityRequirement(name = "basicAuth")
+@PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
 public class AdminResultRecalculationController {
 
     private final ResultRecalculationService service;

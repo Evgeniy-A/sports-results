@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -34,6 +35,7 @@ public class AdminResultController {
     }
 
     @GetMapping("/events/{eventId}/results")
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public PageResponse<ResultListItemDto> searchResults(
             @PathVariable Long eventId,
             @RequestParam(required = false) Long raceId,
@@ -56,11 +58,13 @@ public class AdminResultController {
     }
 
     @GetMapping("/results/{resultId}")
+    @PreAuthorize("@eventAccessService.canAccessResult(authentication, #resultId)")
     public AdminResultDetailsDto getResult(@PathVariable Long resultId) {
         return resultQueryService.getAdminResult(resultId);
     }
 
     @PutMapping("/registrations/{registrationId}")
+    @PreAuthorize("@eventAccessService.canAccessRegistration(authentication, #registrationId)")
     public ResponseEntity<Void> updateRegistration(
             @PathVariable Long registrationId,
             @Valid @RequestBody UpdateRegistrationRequest request,
@@ -71,6 +75,7 @@ public class AdminResultController {
     }
 
     @PutMapping("/results/{resultId}")
+    @PreAuthorize("@eventAccessService.canAccessResult(authentication, #resultId)")
     public ResponseEntity<Void> updateResult(
             @PathVariable Long resultId,
             @Valid @RequestBody UpdateResultRequest request,

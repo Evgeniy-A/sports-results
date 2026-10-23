@@ -8,13 +8,11 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -23,6 +21,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.List;
 
 @Configuration
+@EnableMethodSecurity
 @EnableConfigurationProperties({AdminSecurityProperties.class, CorsProperties.class})
 public class SecurityConfiguration {
 
@@ -45,7 +44,20 @@ public class SecurityConfiguration {
                                 "/api/result-issues/*/attachments/*/confirm",
                                 "/api/result-issues/*/attachments/*/authorize").permitAll()
                         .requestMatchers(HttpMethod.GET, "/share/attachments/**").permitAll()
-                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/admin/me").hasAnyRole("ORGANIZER", "TIMEKEEPER")
+                        .requestMatchers(HttpMethod.POST,
+                                "/api/admin/events",
+                                "/api/admin/events/with-starts",
+                                "/api/admin/events/bulk/preview",
+                                "/api/admin/events/bulk"
+                        ).hasRole("ORGANIZER")
+                        .requestMatchers(
+                                "/api/admin/events/**",
+                                "/api/admin/races/**",
+                                "/api/admin/results/**",
+                                "/api/admin/registrations/**"
+                        ).hasAnyRole("ORGANIZER", "TIMEKEEPER")
+                        .requestMatchers("/api/admin/**").hasRole("ORGANIZER")
                         .anyRequest().denyAll()
                 )
                 .httpBasic(Customizer.withDefaults())
@@ -85,14 +97,6 @@ public class SecurityConfiguration {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/api/**", configuration);
         return source;
-    }
-
-    @Bean
-    UserDetailsService userDetailsService(AdminSecurityProperties properties, PasswordEncoder passwordEncoder) {
-        return new InMemoryUserDetailsManager(User.withUsername(properties.username())
-                .password(passwordEncoder.encode(properties.password()))
-                .roles("ADMIN")
-                .build());
     }
 
     @Bean

@@ -14,6 +14,7 @@ public interface EventCatalogRepository {
             String location,
             EventPublicationStatus publicationStatus,
             ResultsPublicationStatus resultsPublicationStatus,
+            String accessUsername,
             Pageable pageable
     );
 }

@@ -53,6 +53,7 @@ import ru.sportsresults.repository.EventSeriesStartCategoryTemplateRepository;
 import ru.sportsresults.repository.EventSeriesStartTemplateRepository;
 import ru.sportsresults.repository.EventParticipantInfoRepository;
 import ru.sportsresults.repository.RaceRepository;
+import ru.sportsresults.security.EventAccessService;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -94,6 +95,7 @@ public class EventService {
     private final SlugGenerator slugGenerator;
     private final ResultInquiryAvailabilityService resultInquiryAvailabilityService;
     private final EventResultsPublicationStateResolver resultsPublicationStateResolver;
+    private final EventAccessService eventAccessService;
 
     public EventService(
             EventRepository eventRepository,
@@ -111,7 +113,8 @@ public class EventService {
             EventResultDataMutationGuard mutationGuard,
             SlugGenerator slugGenerator,
             ResultInquiryAvailabilityService resultInquiryAvailabilityService,
-            EventResultsPublicationStateResolver resultsPublicationStateResolver
+            EventResultsPublicationStateResolver resultsPublicationStateResolver,
+            EventAccessService eventAccessService
     ) {
         this.eventRepository = eventRepository;
         this.eventSeriesRepository = eventSeriesRepository;
@@ -129,6 +132,7 @@ public class EventService {
         this.slugGenerator = slugGenerator;
         this.resultInquiryAvailabilityService = resultInquiryAvailabilityService;
         this.resultsPublicationStateResolver = resultsPublicationStateResolver;
+        this.eventAccessService = eventAccessService;
     }
 
     @Transactional(readOnly = true)
@@ -174,12 +178,27 @@ public class EventService {
             int page,
             int size
     ) {
+        return searchAdminEvents(name, location, publicationStatus, resultsPublicationStatus, page, size, null);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<EventDto> searchAdminEvents(
+            String name,
+            String location,
+            EventPublicationStatus publicationStatus,
+            ResultsPublicationStatus resultsPublicationStatus,
+            int page,
+            int size,
+            String username
+    ) {
         validatePage(page, size);
+        String accessUsername = username == null ? null : eventAccessService.eventScopeUsername(username);
         Page<Event> result = eventRepository.searchAdmin(
                 normalizeNullable(name),
                 normalizeNullable(location),
                 publicationStatus,
                 resultsPublicationStatus,
+                accessUsername,
                 PageRequest.of(page, size, Sort.by(Sort.Order.desc("startsAt"), Sort.Order.desc("id")))
         );
         Map<Long, EventParticipantInfo> infoByEvent = participantInfoRepository.findAllByEventIdIn(

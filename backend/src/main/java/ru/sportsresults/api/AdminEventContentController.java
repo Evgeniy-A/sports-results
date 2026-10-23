@@ -3,6 +3,7 @@ package ru.sportsresults.api;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.*;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import ru.sportsresults.api.dto.*;
@@ -17,6 +18,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/admin/events/{eventId}")
 @SecurityRequirement(name = "basicAuth")
+@PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
 public class AdminEventContentController {
     private final EventContentService contentService;
     private final RaceAdminService raceService;

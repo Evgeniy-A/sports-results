@@ -4,6 +4,9 @@ import { notifyUnauthorized } from './adminAuthSession'
 import type {
   AdminCategory,
   AdminCredentials,
+  AdminUser,
+  AdminUserEventAccess,
+  CurrentAdminUser,
   AdminResultDetails,
   AwardPolicyUpdate,
   AwardPolicy,
@@ -68,6 +71,7 @@ async function adminRequest<T>(
   init: RequestInit = {},
   allowEmpty = false,
   onUnauthorized?: () => void,
+  onForbidden?: () => void,
 ): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('Accept', 'application/json')
@@ -75,6 +79,7 @@ async function adminRequest<T>(
   const response = await fetch(apiUrl(path), { ...init, headers })
   if (!response.ok) {
     notifyUnauthorized(response.status, onUnauthorized)
+    if (response.status === 403) onForbidden?.()
     const payload = await response.json().catch(() => null) as {
       code?: unknown
       message?: unknown
@@ -120,9 +125,23 @@ export interface AdminExportArtifact {
   shareExpiresAt: string | null
 }
 
-export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: () => void) {
-  const request = <T>(path: string, init?: RequestInit, allowEmpty = false) => adminRequest<T>(credentials, path, init, allowEmpty, onUnauthorized)
+export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: () => void, onForbidden?: () => void) {
+  const request = <T>(path: string, init?: RequestInit, allowEmpty = false) => adminRequest<T>(credentials, path, init, allowEmpty, onUnauthorized, onForbidden)
   return {
+    me: () => request<CurrentAdminUser>('/admin/me'),
+    users: () => request<AdminUser[]>('/admin/users'),
+    user: (userId: number) => request<AdminUser>(`/admin/users/${userId}`),
+    createUser: (body: object) => request<AdminUser>('/admin/users', { method: 'POST', ...json(body) }),
+    updateUser: (userId: number, body: object) => request<AdminUser>(
+      `/admin/users/${userId}`, { method: 'PUT', ...json(body) },
+    ),
+    updateUserPassword: (userId: number, password: string) => request<void>(
+      `/admin/users/${userId}/password`, { method: 'PUT', ...json({ password }) }, true,
+    ),
+    userEvents: (userId: number) => request<AdminUserEventAccess>(`/admin/users/${userId}/events`),
+    replaceUserEvents: (userId: number, eventIds: number[]) => request<AdminUserEventAccess>(
+      `/admin/users/${userId}/events`, { method: 'PUT', ...json({ eventIds }) },
+    ),
     events: (query: {
       name?: string
       location?: string

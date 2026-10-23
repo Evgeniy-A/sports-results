@@ -69,7 +69,7 @@ class FlywayV30UpgradeTest {
     @Test
     void migratesAndValidatesAFreshDatabase() throws Exception {
         try (EmbeddedPostgres postgres = EmbeddedPostgres.start()) {
-            Flyway flyway = Flyway.configure().dataSource(postgres.getPostgresDatabase()).load();
+            Flyway flyway = Flyway.configure().dataSource(postgres.getPostgresDatabase()).target("30").load();
             flyway.migrate();
             flyway.validate();
 

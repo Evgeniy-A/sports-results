@@ -14,6 +14,7 @@ import org.springframework.data.domain.Pageable;
 import ru.sportsresults.domain.Event;
 import ru.sportsresults.domain.EventPublicationStatus;
 import ru.sportsresults.domain.EventSeries;
+import ru.sportsresults.domain.EventUserAccess;
 import ru.sportsresults.domain.Race;
 import ru.sportsresults.domain.ResultsPublicationStatus;
 
@@ -59,6 +60,7 @@ public class EventCatalogRepositoryImpl implements EventCatalogRepository {
             String location,
             EventPublicationStatus publicationStatus,
             ResultsPublicationStatus resultsPublicationStatus,
+            String accessUsername,
             Pageable pageable
     ) {
         CriteriaBuilder builder = entityManager.getCriteriaBuilder();
@@ -66,7 +68,7 @@ public class EventCatalogRepositoryImpl implements EventCatalogRepository {
         Root<Event> event = query.from(Event.class);
         event.fetch("eventSeries");
         query.select(event).where(adminPredicates(
-                builder, query, event, name, location, publicationStatus, resultsPublicationStatus
+                builder, query, event, name, location, publicationStatus, resultsPublicationStatus, accessUsername
         ));
         query.orderBy(builder.asc(builder.isNull(event.get("startsAt"))),
                 builder.desc(event.get("startsAt")), builder.desc(event.get("id")));
@@ -78,7 +80,8 @@ public class EventCatalogRepositoryImpl implements EventCatalogRepository {
         CriteriaQuery<Long> countQuery = builder.createQuery(Long.class);
         Root<Event> countEvent = countQuery.from(Event.class);
         countQuery.select(builder.count(countEvent)).where(adminPredicates(
-                builder, countQuery, countEvent, name, location, publicationStatus, resultsPublicationStatus
+                builder, countQuery, countEvent, name, location, publicationStatus, resultsPublicationStatus,
+                accessUsername
         ));
         long total = entityManager.createQuery(countQuery).getSingleResult();
         return new PageImpl<>(content, pageable, total);
@@ -91,7 +94,8 @@ public class EventCatalogRepositoryImpl implements EventCatalogRepository {
             String name,
             String location,
             EventPublicationStatus publicationStatus,
-            ResultsPublicationStatus resultsPublicationStatus
+            ResultsPublicationStatus resultsPublicationStatus,
+            String accessUsername
     ) {
         List<Predicate> predicates = new ArrayList<>();
         if (name != null && !name.isBlank()) {
@@ -121,6 +125,16 @@ public class EventCatalogRepositoryImpl implements EventCatalogRepository {
             predicates.add(resultsPublicationStatus == ResultsPublicationStatus.PUBLISHED
                     ? hasPublishedRace
                     : builder.not(hasPublishedRace));
+        }
+        if (accessUsername != null) {
+            Subquery<Long> assignedEvent = query.subquery(Long.class);
+            Root<EventUserAccess> access = assignedEvent.from(EventUserAccess.class);
+            assignedEvent.select(builder.literal(1L)).where(
+                    builder.equal(access.get("event").get("id"), event.get("id")),
+                    builder.equal(builder.lower(access.get("user").get("username")), accessUsername.toLowerCase(Locale.ROOT)),
+                    builder.isTrue(access.get("user").get("active"))
+            );
+            predicates.add(builder.exists(assignedEvent));
         }
         return predicates.toArray(Predicate[]::new);
     }

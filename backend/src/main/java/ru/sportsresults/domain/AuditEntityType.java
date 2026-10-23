@@ -13,5 +13,6 @@ public enum AuditEntityType {
     EVENT_INFO_BLOCK,
     EVENT_SCHEDULE_ITEM,
     EVENT_DOCUMENT,
-    START_CLUSTER
+    START_CLUSTER,
+    ADMIN_USER
 }

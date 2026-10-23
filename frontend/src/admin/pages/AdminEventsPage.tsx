@@ -2,18 +2,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { AdminApi } from '../api'
-import type { EventSummary, PageResponse } from '../types'
+import type { CurrentAdminUser, EventSummary, PageResponse } from '../types'
 import { AdminLink, navigateAdmin } from '../router'
 import { adminErrorMessage } from '../utils'
 import { AdminPagination, Field, Loadable, StatusBadge } from '../components/AdminUi'
 
-interface Props { api: AdminApi }
+interface Props { api: AdminApi; currentUser: CurrentAdminUser }
 
 const EMPTY_PAGE: PageResponse<EventSummary> = {
   content: [], page: 0, size: 25, totalElements: 0, totalPages: 0, sort: 'startsAt', direction: 'desc',
 }
 
-export function AdminEventsPage({ api }: Props) {
+export function AdminEventsPage({ api, currentUser }: Props) {
+  const organizer = currentUser.role === 'ORGANIZER'
   const [events, setEvents] = useState(EMPTY_PAGE)
   const [name, setName] = useState('')
   const [location, setLocation] = useState('')
@@ -34,16 +35,16 @@ export function AdminEventsPage({ api }: Props) {
 
   return <>
     <div className="admin-page-heading admin-events-heading">
-      <div><p className="admin-eyebrow">Управление</p><h1>Мероприятия</h1><p>Управление мероприятиями, публикацией и стартами.</p></div>
+      <div><p className="admin-eyebrow">Управление</p><h1>{organizer ? 'Мероприятия' : 'Мои мероприятия'}</h1><p>Управление мероприятиями, публикацией и стартами.</p></div>
     </div>
 
-    <section className="admin-events-create-actions" aria-label="Создание мероприятий">
+    {organizer && <section className="admin-events-create-actions" aria-label="Создание мероприятий">
       <div><strong>Новое мероприятие</strong><span>Создайте один старт или подготовьте серию мероприятий сразу.</span></div>
       <div>
         <AdminLink className="admin-button-primary" href="/admin/events/new">+ Создать мероприятие</AdminLink>
         <AdminLink className="admin-button-secondary" href="/admin/events/bulk">Создать несколько</AdminLink>
       </div>
-    </section>
+    </section>}
 
     <form className="admin-filter-bar admin-events-filter" onSubmit={applyFilters}>
       <div className="admin-filter-heading"><strong>Поиск и фильтры</strong><span>Найдите мероприятие по названию, месту или статусу.</span></div>
@@ -70,8 +71,8 @@ export function AdminEventsPage({ api }: Props) {
         </table></div>
         <AdminPagination page={events.page} totalPages={events.totalPages} onChange={setPage} />
       </> : <section className="admin-empty">
-        <h2>Мероприятий пока нет</h2><p>Создайте одно мероприятие или несколько городов сразу из шаблона.</p>
-        <div className="admin-empty-actions"><AdminLink className="admin-button-primary" href="/admin/events/new">+ Создать мероприятие</AdminLink><AdminLink className="admin-button-secondary" href="/admin/events/bulk">Создать несколько</AdminLink></div>
+        <h2>{organizer ? 'Мероприятий пока нет' : 'Нет назначенных мероприятий'}</h2><p>{organizer ? 'Создайте одно мероприятие или несколько городов сразу из шаблона.' : 'Обратитесь к организатору, чтобы получить доступ к мероприятию.'}</p>
+        {organizer && <div className="admin-empty-actions"><AdminLink className="admin-button-primary" href="/admin/events/new">+ Создать мероприятие</AdminLink><AdminLink className="admin-button-secondary" href="/admin/events/bulk">Создать несколько</AdminLink></div>}
       </section>}
     </Loadable>
   </>

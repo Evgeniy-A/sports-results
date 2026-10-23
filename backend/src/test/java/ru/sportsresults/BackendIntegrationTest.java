@@ -23,6 +23,7 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.web.servlet.MockMvc;
@@ -41,6 +42,8 @@ import ru.sportsresults.api.dto.ResultIssueJournalExportRequest;
 import ru.sportsresults.domain.AuditEntityType;
 import ru.sportsresults.domain.AgeCalculationMode;
 import ru.sportsresults.domain.AdminChangeLog;
+import ru.sportsresults.domain.AdminUser;
+import ru.sportsresults.domain.AdminUserRole;
 import ru.sportsresults.domain.AttachmentScanStatus;
 import ru.sportsresults.domain.AttachmentUploadStatus;
 import ru.sportsresults.domain.Category;
@@ -82,8 +85,10 @@ import ru.sportsresults.domain.StartCluster;
 import ru.sportsresults.importing.TabularImportFileReader;
 import ru.sportsresults.importing.ImportPreviewAction;
 import ru.sportsresults.repository.AdminChangeLogRepository;
+import ru.sportsresults.repository.AdminUserRepository;
 import ru.sportsresults.repository.CategoryRepository;
 import ru.sportsresults.repository.EventRepository;
+import ru.sportsresults.repository.EventUserAccessRepository;
 import ru.sportsresults.repository.EventDocumentRepository;
 import ru.sportsresults.repository.EventSeriesRepository;
 import ru.sportsresults.repository.ImportBatchRepository;
@@ -207,6 +212,9 @@ class BackendIntegrationTest {
     private ResultIssueHistoryRepository resultIssueHistoryRepository;
     private StartClusterRepository startClusterRepository;
     private AdminChangeLogRepository changeLogRepository;
+    private AdminUserRepository adminUserRepository;
+    private EventUserAccessRepository eventUserAccessRepository;
+    private PasswordEncoder passwordEncoder;
     private ImportService importService;
     private ImportPreviewService importPreviewService;
     private ImportApplyService importApplyService;
@@ -286,6 +294,9 @@ class BackendIntegrationTest {
         resultIssueHistoryRepository = context.getBean(ResultIssueHistoryRepository.class);
         startClusterRepository = context.getBean(StartClusterRepository.class);
         changeLogRepository = context.getBean(AdminChangeLogRepository.class);
+        adminUserRepository = context.getBean(AdminUserRepository.class);
+        eventUserAccessRepository = context.getBean(EventUserAccessRepository.class);
+        passwordEncoder = context.getBean(PasswordEncoder.class);
         importService = context.getBean(ImportService.class);
         importPreviewService = context.getBean(ImportPreviewService.class);
         importApplyService = context.getBean(ImportApplyService.class);
@@ -337,6 +348,16 @@ class BackendIntegrationTest {
                     award_policies, checkpoints, categories, races, events, event_series
                 RESTART IDENTITY CASCADE
                 """);
+        jdbcTemplate.update("DELETE FROM event_user_access");
+        jdbcTemplate.update("DELETE FROM admin_users WHERE lower(username) <> ?", ADMIN_USERNAME);
+        int reset = jdbcTemplate.update("""
+                UPDATE admin_users
+                SET username=?, display_name=?, role='ORGANIZER', active=true, updated_at=now()
+                WHERE lower(username)=?
+                """, ADMIN_USERNAME, "Integration Admin", ADMIN_USERNAME);
+        if (reset != 1) {
+            throw new IllegalStateException("Integration organizer bootstrap account is missing");
+        }
         attachmentObjectStorage.clear();
     }
 
@@ -365,6 +386,220 @@ class BackendIntegrationTest {
                         .header("Access-Control-Request-Method", "GET"))
                 .andExpect(status().isForbidden())
                 .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+    }
+
+    @Test
+    void databaseBackedAdminUsersEnforceRolesLifecycleAndLastOrganizerInvariant() throws Exception {
+        AdminUser bootstrap = adminUserRepository.findByUsernameIgnoreCase(ADMIN_USERNAME).orElseThrow();
+        assertThat(bootstrap.getRole()).isEqualTo(AdminUserRole.ORGANIZER);
+        assertThat(bootstrap.isActive()).isTrue();
+        assertThat(bootstrap.getPasswordHash()).isNotEqualTo(ADMIN_PASSWORD);
+        assertThat(passwordEncoder.matches(ADMIN_PASSWORD, bootstrap.getPasswordHash())).isTrue();
+
+        context.getBean(ru.sportsresults.security.AdminUserBootstrap.class).run(null);
+        assertThat(adminUserRepository.count()).isEqualTo(1);
+
+        mockMvc.perform(get("/api/admin/me").with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.username").value(ADMIN_USERNAME))
+                .andExpect(jsonPath("$.role").value("ORGANIZER"))
+                .andExpect(jsonPath("$.active").value(true))
+                .andExpect(jsonPath("$.password").doesNotExist())
+                .andExpect(jsonPath("$.passwordHash").doesNotExist());
+
+        String timekeeperBody = """
+                {"username":"Timer-UAT","displayName":"Timer UAT","role":"TIMEKEEPER",
+                 "password":"timer-secret","active":true}
+                """;
+        MvcResult created = mockMvc.perform(post("/api/admin/users")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content(timekeeperBody))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.username").value("timer-uat"))
+                .andExpect(jsonPath("$.role").value("TIMEKEEPER"))
+                .andExpect(jsonPath("$.password").doesNotExist())
+                .andExpect(jsonPath("$.passwordHash").doesNotExist())
+                .andReturn();
+        long userId = objectMapper.readTree(created.getResponse().getContentAsByteArray()).get("id").asLong();
+
+        mockMvc.perform(get("/api/admin/me").with(httpBasic("timer-uat", "timer-secret")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("TIMEKEEPER"));
+        mockMvc.perform(get("/api/admin/users").with(httpBasic("timer-uat", "timer-secret")))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/admin/users/{userId}", userId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"timer-uat","displayName":"Timer Disabled",
+                                 "role":"TIMEKEEPER","active":false}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.active").value(false));
+        mockMvc.perform(get("/api/admin/me").with(httpBasic("timer-uat", "timer-secret")))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(put("/api/admin/users/{userId}", userId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"timer-uat","displayName":"Timer Active",
+                                 "role":"TIMEKEEPER","active":true}
+                                """))
+                .andExpect(status().isOk());
+        mockMvc.perform(put("/api/admin/users/{userId}/password", userId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"password\":\"changed-secret\"}"))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/admin/me").with(httpBasic("timer-uat", "timer-secret")))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/admin/me").with(httpBasic("timer-uat", "changed-secret")))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(put("/api/admin/users/{userId}", bootstrap.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"integration-admin","displayName":"Integration Admin",
+                                 "role":"ORGANIZER","active":false}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("LAST_ACTIVE_ORGANIZER"));
+        mockMvc.perform(put("/api/admin/users/{userId}", bootstrap.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"integration-admin","displayName":"Integration Admin",
+                                 "role":"TIMEKEEPER","active":true}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("LAST_ACTIVE_ORGANIZER"));
+    }
+
+    @Test
+    void timekeeperAccessIsFilteredBeforePaginationAndRejectsForeignOrGlobalResources() throws Exception {
+        EventSeries series = createSeries("Access UAT", "access-uat");
+        Event eventA = createEvent(series, "Event A", "access-event-a", "Alpha City", "2027-06-15T06:00:00Z");
+        Event eventB = createEvent(series, "Event B", "access-event-b", "Alpha City", "2027-06-16T06:00:00Z");
+        Event eventC = createEvent(series, "Event C", "access-event-c", "Other City", "2027-06-17T06:00:00Z");
+        Race raceA = createDraftRace(eventA, "A-10K", 0);
+        Race raceC = createDraftRace(eventC, "C-10K", 0);
+        Category categoryC = part9Category(raceC, "C-OPEN", "C Open", 0, null);
+        ImportBatch batchC = raceImportBatch(eventC, raceC, "access-c.csv");
+        Result resultC = part10Result(
+                raceC, batchC, categoryC, null, 1, "C-101", "male", "Foreign Runner",
+                "finished", 3_600_000L, 3_590_000L
+        );
+        long registrationCId = resultC.getRegistration().getId();
+
+        MvcResult created = mockMvc.perform(post("/api/admin/users")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"scope-timer","displayName":"Scope Timer","role":"TIMEKEEPER",
+                                 "password":"scope-secret","active":true}
+                                """))
+                .andExpect(status().isCreated()).andReturn();
+        long userId = objectMapper.readTree(created.getResponse().getContentAsByteArray()).get("id").asLong();
+
+        mockMvc.perform(put("/api/admin/users/{userId}/events", userId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"eventIds\":[%d,%d]}".formatted(eventA.getId(), eventB.getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.eventIds.length()").value(2));
+
+        mockMvc.perform(get("/api/admin/events?page=0&size=1&location=Alpha")
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.totalElements").value(2))
+                .andExpect(jsonPath("$.totalPages").value(2));
+        mockMvc.perform(get("/api/admin/events?page=1&size=1&location=Alpha")
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.totalElements").value(2));
+        mockMvc.perform(get("/api/admin/events?name=Event C&page=0&size=25")
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0))
+                .andExpect(jsonPath("$.totalElements").value(0));
+
+        mockMvc.perform(get("/api/admin/events/{eventId}", eventA.getId())
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/admin/races/{raceId}/categories", raceA.getId())
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/admin/events/{eventId}", eventC.getId())
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/races/{raceId}/award-policy", raceC.getId())
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/races/{raceId}/categories", raceC.getId())
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/results/{resultId}", resultC.getId())
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/admin/registrations/{registrationId}", registrationCId)
+                        .with(httpBasic("scope-timer", "scope-secret"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"displayName":"Foreign Runner","firstName":"Foreign","lastName":"Runner",
+                                 "birthDate":null,"gender":"male","bib":"C-101","sourceCategory":"C-OPEN",
+                                 "clusterId":null,"entryKind":"PERSON","categoryId":null}
+                                """))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/events/{eventId}/result-issue-requests/{issueId}", eventC.getId(), 999)
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/admin/event-series").with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/users").with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/admin/events").with(httpBasic("scope-timer", "scope-secret"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/admin/events/with-starts").with(httpBasic("scope-timer", "scope-secret"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/admin/events/bulk/preview").with(httpBasic("scope-timer", "scope-secret"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/admin/events/bulk").with(httpBasic("scope-timer", "scope-secret"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/admin/users/{userId}/events", userId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"eventIds\":[%d,%d]}".formatted(eventA.getId(), eventA.getId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("DUPLICATE_EVENT_ASSIGNMENT"));
+        mockMvc.perform(put("/api/admin/users/{userId}/events", userId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"eventIds\":[999999]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("EVENT_ASSIGNMENT_NOT_FOUND"));
+        long organizerId = adminUserRepository.findByUsernameIgnoreCase(ADMIN_USERNAME).orElseThrow().getId();
+        mockMvc.perform(put("/api/admin/users/{userId}/events", organizerId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"eventIds\":[]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("ORGANIZER_ASSIGNMENTS_NOT_ALLOWED"));
+
+        mockMvc.perform(get("/api/admin/events/{eventId}", eventC.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/admin/event-series").with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk());
     }
 
     @Test

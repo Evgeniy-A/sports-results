@@ -13,11 +13,12 @@ import { setAdminNavigationBlocker } from '../navigationGuard'
 
 const UNSAVED_CHANGES_MESSAGE = 'Есть несохранённые изменения. Уйти со страницы без сохранения?'
 
-export function EventGeneralTab({ api, event, series, races, onChanged }: {
+export function EventGeneralTab({ api, event, series, races, canChangeSeries, onChanged }: {
   api: AdminApi
   event: EventSummary
   series: EventSeries[]
   races: Race[]
+  canChangeSeries: boolean
   onChanged: () => Promise<void>
 }) {
   const [form, setForm] = useState(() => eventForm(event))
@@ -79,7 +80,9 @@ export function EventGeneralTab({ api, event, series, races, onChanged }: {
         <Field label="Название"><input required value={form.name} onChange={(change) => set('name', change.target.value)} /></Field>
         <div className="admin-form-grid"><Field label="Начало"><input type="datetime-local" value={form.startsAt} onChange={(change) => set('startsAt', change.target.value)} /></Field><Field label="Окончание"><input type="datetime-local" value={form.endsAt} onChange={(change) => set('endsAt', change.target.value)} /></Field></div>
         <div className="admin-form-grid"><Field label="Место"><input value={form.location} onChange={(change) => set('location', change.target.value)} /></Field><Field label="Часовой пояс" hint="Выберите город с подходящим местным временем"><TimeZoneCombobox value={form.timeZone} location={form.location} onChange={(value) => set('timeZone', value)} /></Field></div>
-        <Field label="Шаблон"><select value={form.eventSeriesId} onChange={(change) => set('eventSeriesId', change.target.value)}>{series.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+        <Field label="Шаблон">{canChangeSeries
+          ? <select value={form.eventSeriesId} onChange={(change) => set('eventSeriesId', change.target.value)}>{series.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+          : <input value={event.eventSeriesName} readOnly />}</Field>
         {resultAffecting && <AdminNotice tone="warning"><strong>Настройка влияет на итоговый протокол.</strong>{publishedRace && <> Чтобы изменить дату или часовой пояс, сначала верните опубликованные старты в черновик.</>}</AdminNotice>}
         <div className="admin-form-actions"><button className="admin-button-primary" disabled={busy === 'event' || !dirty}>Сохранить</button></div>
       </form>

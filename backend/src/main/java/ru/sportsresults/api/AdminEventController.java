@@ -6,6 +6,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.ContentDisposition;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -89,30 +90,35 @@ public class AdminEventController {
             @RequestParam(required = false) EventPublicationStatus publicationStatus,
             @RequestParam(required = false) ResultsPublicationStatus resultsPublicationStatus,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "25") int size
+            @RequestParam(defaultValue = "25") int size,
+            Principal principal
     ) {
         return eventService.searchAdminEvents(
-                name, location, publicationStatus, resultsPublicationStatus, page, size
+                name, location, publicationStatus, resultsPublicationStatus, page, size, principal.getName()
         );
     }
 
     @GetMapping("/{eventId}")
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public EventDto getEvent(@PathVariable Long eventId) {
         return eventService.getAdminEvent(eventId);
     }
 
     @GetMapping("/{eventId}/races")
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public List<RaceDto> listRaces(@PathVariable Long eventId) {
         return eventService.listAdminEventRaces(eventId);
     }
 
     @PostMapping
+    @PreAuthorize("hasRole('ORGANIZER')")
     @ResponseStatus(HttpStatus.CREATED)
     public EventDto createEvent(@Valid @RequestBody CreateEventRequest request) {
         return eventService.createEvent(request);
     }
 
     @PostMapping("/with-starts")
+    @PreAuthorize("hasRole('ORGANIZER')")
     @ResponseStatus(HttpStatus.CREATED)
     public EventWithStartsDto createEventWithStarts(
             @Valid @RequestBody CreateEventWithStartsRequest request
@@ -121,17 +127,20 @@ public class AdminEventController {
     }
 
     @PostMapping("/bulk/preview")
+    @PreAuthorize("hasRole('ORGANIZER')")
     public BulkEventPreviewDto previewBulkEvents(@Valid @RequestBody BulkCreateEventsRequest request) {
         return eventService.previewBulkEvents(request);
     }
 
     @PostMapping("/bulk")
+    @PreAuthorize("hasRole('ORGANIZER')")
     @ResponseStatus(HttpStatus.CREATED)
     public BulkCreateEventsResponseDto createBulkEvents(@Valid @RequestBody BulkCreateEventsRequest request) {
         return eventService.createBulkEvents(request);
     }
 
     @PutMapping("/{eventId}/publication")
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public EventDto updatePublication(@PathVariable Long eventId,
                                       @Valid @RequestBody UpdateEventPublicationRequest request,
                                       Principal principal) {
@@ -139,6 +148,7 @@ public class AdminEventController {
     }
 
     @PutMapping("/{eventId}")
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public EventDto updateEvent(
             @PathVariable Long eventId,
             @Valid @RequestBody UpdateEventRequest request,
@@ -148,11 +158,13 @@ public class AdminEventController {
     }
 
     @GetMapping("/{eventId}/result-inquiry")
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public ResultInquirySettingsDto getResultInquirySettings(@PathVariable Long eventId) {
         return eventService.getResultInquirySettings(eventId);
     }
 
     @PutMapping("/{eventId}/result-inquiry")
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public ResultInquirySettingsDto updateResultInquirySettings(
             @PathVariable Long eventId,
             @Valid @RequestBody UpdateResultInquirySettingsRequest request,
@@ -162,6 +174,7 @@ public class AdminEventController {
     }
 
     @PostMapping(path = "/{eventId}/imports", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public ImportReportDto importCsv(
             @PathVariable Long eventId,
             @RequestPart("file") MultipartFile file,
@@ -175,6 +188,7 @@ public class AdminEventController {
     }
 
     @GetMapping("/{eventId}/imports/template.xlsx")
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public ResponseEntity<byte[]> downloadImportTemplate(@PathVariable Long eventId) {
         GeneratedImportTemplate template = timingXlsxTemplateService.generate(eventId);
         return ResponseEntity.ok()
@@ -187,6 +201,7 @@ public class AdminEventController {
     }
 
     @PostMapping(path = "/{eventId}/imports/analyze", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public ImportFileAnalysisDto analyzeImport(
             @PathVariable Long eventId,
             @RequestPart("file") MultipartFile file,
@@ -204,6 +219,7 @@ public class AdminEventController {
     }
 
     @PostMapping(path = "/{eventId}/imports/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public ImportPreviewResponseDto previewImport(
             @PathVariable Long eventId,
             @RequestPart("file") MultipartFile file,
@@ -230,6 +246,7 @@ public class AdminEventController {
     }
 
     @PostMapping(path = "/{eventId}/imports/{operationId}/apply", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
     public ImportApplyResponseDto applyImport(
             @PathVariable Long eventId,
             @PathVariable UUID operationId,

@@ -5,6 +5,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import ru.sportsresults.domain.AdminUser;
+import ru.sportsresults.domain.AdminUserRole;
 import ru.sportsresults.domain.Event;
 import ru.sportsresults.domain.AgeCalculationMode;
 import ru.sportsresults.domain.EventPublicationStatus;
@@ -16,6 +19,7 @@ import ru.sportsresults.domain.PrimaryStandingMode;
 import ru.sportsresults.domain.RankingBasis;
 import ru.sportsresults.api.dto.UpdateAwardPolicyRequest;
 import ru.sportsresults.repository.EventRepository;
+import ru.sportsresults.repository.AdminUserRepository;
 import ru.sportsresults.repository.EventSeriesRepository;
 import ru.sportsresults.repository.RaceRepository;
 import ru.sportsresults.repository.RegistrationRepository;
@@ -27,6 +31,7 @@ import ru.sportsresults.service.EventDocumentService;
 import ru.sportsresults.service.EventService;
 import ru.sportsresults.service.RaceAdminService;
 import ru.sportsresults.service.RaceResultsPublicationService;
+import ru.sportsresults.service.ResultRecalculationService;
 import ru.sportsresults.service.StartClusterService;
 import ru.sportsresults.api.dto.*;
 
@@ -77,7 +82,7 @@ class BrowserE2eServer {
                     )) {
                 seed(context);
                 System.out.println("BROWSER_E2E_READY http://127.0.0.1:8082");
-                long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(15);
+                long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(60);
                 while (!Files.exists(stopMarker) && System.nanoTime() < deadline) {
                     Thread.sleep(250);
                 }
@@ -89,6 +94,17 @@ class BrowserE2eServer {
     }
 
     static void seed(ConfigurableApplicationContext context) {
+        AdminUserRepository adminUserRepository = context.getBean(AdminUserRepository.class);
+        PasswordEncoder passwordEncoder = context.getBean(PasswordEncoder.class);
+        AdminUser fixtureAdmin = adminUserRepository.findByUsernameIgnoreCase("e2e-admin")
+                .orElseGet(AdminUser::new);
+        fixtureAdmin.setUsername("e2e-admin");
+        fixtureAdmin.setDisplayName("E2E Admin");
+        fixtureAdmin.setRole(AdminUserRole.ORGANIZER);
+        fixtureAdmin.setActive(true);
+        fixtureAdmin.setPasswordHash(passwordEncoder.encode("e2e-secret"));
+        adminUserRepository.saveAndFlush(fixtureAdmin);
+
         EventSeriesRepository seriesRepository = context.getBean(EventSeriesRepository.class);
         EventRepository eventRepository = context.getBean(EventRepository.class);
         RaceRepository raceRepository = context.getBean(RaceRepository.class);
@@ -99,6 +115,7 @@ class BrowserE2eServer {
         RaceAdminService raceAdminService = context.getBean(RaceAdminService.class);
         RaceResultsPublicationService raceResultsPublicationService =
                 context.getBean(RaceResultsPublicationService.class);
+        ResultRecalculationService resultRecalculationService = context.getBean(ResultRecalculationService.class);
         StartClusterService clusterService = context.getBean(StartClusterService.class);
         RegistrationRepository registrationRepository = context.getBean(RegistrationRepository.class);
         ResultRepository resultRepository = context.getBean(ResultRepository.class);
@@ -128,12 +145,15 @@ class BrowserE2eServer {
         resultRepository.flush();
 
         Event inquiryClosed = event(series, "Уточнение результатов — закрыто", "result-inquiry-closed", "Екатеринбург");
-        inquiryClosed.setStartsAt(Instant.now().minusSeconds(61L * 86400));
-        inquiryClosed.setEndsAt(Instant.now().minusSeconds(60L * 86400));
+        inquiryClosed.setStartsAt(Instant.now().minusSeconds(172800));
+        inquiryClosed.setEndsAt(Instant.now().minusSeconds(86400));
         inquiryClosed = eventRepository.saveAndFlush(inquiryClosed);
         eventService.updateResultInquirySettings(inquiryClosed.getId(), new UpdateResultInquirySettingsRequest(
                 true, 30, "timing@example.test"
         ), "e2e-admin");
+        inquiryClosed.setStartsAt(Instant.now().minusSeconds(61L * 86400));
+        inquiryClosed.setEndsAt(Instant.now().minusSeconds(60L * 86400));
+        inquiryClosed = eventRepository.saveAndFlush(inquiryClosed);
         assertThat(importService.importEvent(
                 inquiryClosed.getId(), "browser-result-inquiry-closed.csv",
                 resultInquiryClosedCsv().getBytes(StandardCharsets.UTF_8)
@@ -287,7 +307,17 @@ class BrowserE2eServer {
         for (Event fixture : java.util.List.of(
                 inquiryOpen, inquiryClosed, noCategories, m52, hero, freeTable, meaningful, separated
         )) {
-            for (var fixtureRace : raceRepository.findAllByEventIdOrderByDisplayOrderAsc(fixture.getId())) {
+            var fixtureRaces = raceRepository.findAllByEventIdOrderByDisplayOrderAsc(fixture.getId());
+            var pendingRaceIds = fixtureRaces.stream()
+                    .filter(ru.sportsresults.domain.Race::isResultRecalculationRequired)
+                    .map(ru.sportsresults.domain.Race::getId)
+                    .toList();
+            if (!pendingRaceIds.isEmpty()) {
+                var preview = resultRecalculationService.preview(fixture.getId(), pendingRaceIds, 500, "e2e-admin");
+                assertThat(preview.blockingCount()).isZero();
+                resultRecalculationService.apply(fixture.getId(), preview.operationId(), "e2e-admin");
+            }
+            for (var fixtureRace : fixtureRaces) {
                 raceResultsPublicationService.publish(fixture.getId(), fixtureRace.getId(), "e2e-admin");
             }
         }

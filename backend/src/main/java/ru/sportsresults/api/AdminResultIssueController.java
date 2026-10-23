@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.access.prepost.PreAuthorize;
 import ru.sportsresults.api.dto.AdminResultIssueAttachmentDownloadDto;
 import ru.sportsresults.api.dto.AdminResultIssueArchiveDto;
 import ru.sportsresults.api.dto.AdminResultIssueDetailDto;
@@ -30,6 +31,7 @@ import java.security.Principal;
 @RestController
 @RequestMapping("/api/admin/events/{eventId}/result-issue-requests")
 @SecurityRequirement(name = "basicAuth")
+@PreAuthorize("@eventAccessService.canAccessEvent(authentication, #eventId)")
 public class AdminResultIssueController {
 
     private final AdminResultIssueService service;

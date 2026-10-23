@@ -144,6 +144,27 @@ export interface TemplateCategory {
   rankingBasisOverride: 'GUN_TIME' | 'CHIP_TIME' | null
 }
 
+export type AdminUserRole = 'ORGANIZER' | 'TIMEKEEPER'
+
+export interface CurrentAdminUser {
+  id: number
+  username: string
+  displayName: string
+  role: AdminUserRole
+  active: boolean
+}
+
+export interface AdminUser extends CurrentAdminUser {
+  eventCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AdminUserEventAccess {
+  userId: number
+  eventIds: number[]
+}
+
 export interface TemplateStart {
   id: number
   eventSeriesId: number

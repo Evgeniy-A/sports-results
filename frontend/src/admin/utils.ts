@@ -1,4 +1,5 @@
 import { ApiError } from '../api/client'
+import type { AdminUserRole } from './types'
 
 const ERROR_MESSAGES: Record<string, string> = {
   UNAUTHORIZED: 'Неверное имя пользователя или пароль.',
@@ -48,6 +49,10 @@ export function adminErrorMessage(error: unknown): string {
     return [primary ?? 'Не удалось выполнить операцию.', violations].filter(Boolean).join(' ')
   }
   return error instanceof Error ? error.message : 'Не удалось выполнить операцию.'
+}
+
+export function adminUserRoleLabel(role: AdminUserRole): string {
+  return role === 'ORGANIZER' ? 'Организатор' : 'Хронометражист'
 }
 
 export function slugify(value: string): string {

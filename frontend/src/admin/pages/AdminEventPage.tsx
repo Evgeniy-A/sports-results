@@ -1,7 +1,7 @@
 /* oxlint-disable react/set-state-in-effect -- remote server state is loaded from effects */
 import { useCallback, useEffect, useState } from 'react'
 import type { AdminApi } from '../api'
-import type { EventSeries, EventSummary, Race } from '../types'
+import type { CurrentAdminUser, EventSeries, EventSummary, Race } from '../types'
 import { AdminLink, navigateAdmin } from '../router'
 import { adminErrorMessage } from '../utils'
 import { Loadable, StatusBadge } from '../components/AdminUi'
@@ -29,11 +29,12 @@ const RESULT_TABS = [
 
 const TABS = [...EVENT_TABS, ...RESULT_TABS] as const
 
-export function AdminEventPage({ api, eventId, requestedTab, requestedRaceId }: {
+export function AdminEventPage({ api, eventId, requestedTab, requestedRaceId, currentUser }: {
   api: AdminApi
   eventId: number
   requestedTab: string | null
   requestedRaceId: string | null
+  currentUser: CurrentAdminUser
 }) {
   const [event, setEvent] = useState<EventSummary | null>(null)
   const [races, setRaces] = useState<Race[]>([])
@@ -53,13 +54,14 @@ export function AdminEventPage({ api, eventId, requestedTab, requestedRaceId }: 
     setLoading(true); setError(null)
     try {
       const [eventValue, raceValues, seriesValues] = await Promise.all([
-        api.event(eventId), api.races(eventId), api.eventSeries(),
+        api.event(eventId), api.races(eventId),
+        currentUser.role === 'ORGANIZER' ? api.eventSeries() : Promise.resolve([]),
       ])
       setEvent(eventValue); setRaces(raceValues); setSeries(seriesValues)
     } catch (reason) {
       setError(adminErrorMessage(reason))
     } finally { setLoading(false) }
-  }, [api, eventId])
+  }, [api, currentUser.role, eventId])
 
   useEffect(() => { void reload() }, [reload])
 
@@ -82,7 +84,7 @@ export function AdminEventPage({ api, eventId, requestedTab, requestedRaceId }: 
         {(section === 'event' ? EVENT_TABS : RESULT_TABS).map(([key, label]) => <button key={key} type="button" aria-current={tab === key ? 'page' : undefined} onClick={() => selectTab(key)}>{label}</button>)}
       </nav>
       <section className="admin-tab-content">
-        {tab === 'main' && <EventGeneralTab api={api} event={event} series={series} races={races} onChanged={reload} />}
+        {tab === 'main' && <EventGeneralTab api={api} event={event} series={series} races={races} canChangeSeries={currentUser.role === 'ORGANIZER'} onChanged={reload} />}
         {tab === 'starts' && <StartsTab api={api} event={event} races={races} onChanged={reload} onOpen={(raceId) => navigateAdmin(`/admin/events/${eventId}?tab=award&raceId=${raceId}`)} />}
         {tab === 'info' && <EventInformationTab api={api} event={event} />}
         {tab === 'participants' && <EventResultsAdminTab api={api} event={event} races={races} mode="participants" />}
