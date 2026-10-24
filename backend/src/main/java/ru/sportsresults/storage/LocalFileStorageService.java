@@ -44,6 +44,19 @@ public class LocalFileStorageService implements DocumentStorage {
     }
 
     @Override
+    public String storeCertificateTemplate(Long eventId, byte[] content) {
+        String key = "events/" + eventId + "/certificates/" + UUID.randomUUID() + ".pdf";
+        Path target = resolve(key);
+        try {
+            Files.createDirectories(target.getParent());
+            Files.write(target, content, StandardOpenOption.CREATE_NEW);
+            return key;
+        } catch (IOException exception) {
+            throw new IllegalStateException("Cannot store certificate template", exception);
+        }
+    }
+
+    @Override
     public InputStream open(String storageKey) {
         try {
             return Files.newInputStream(resolve(storageKey), StandardOpenOption.READ);

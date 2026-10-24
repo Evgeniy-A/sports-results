@@ -87,6 +87,32 @@ class YandexDiskDocumentStorageTest {
     }
 
     @Test
+    void storesCertificateTemplateInItsOwnEventNamespace() {
+        expectDirectory("app:/events");
+        expectDirectory("app:/events/123");
+        expectDirectory("app:/events/123/certificates");
+        apiServer.expect(requestTo(matchesPattern(".*\\/resources\\/upload\\?.*")))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(queryParam("path", matchesPattern(
+                        "app:/events/123/certificates/[0-9a-f-]{36}\\.pdf"
+                )))
+                .andExpect(queryParam("overwrite", "false"))
+                .andRespond(withSuccess(
+                        "{\"href\":\"https://uploader.example.test/certificate\",\"method\":\"PUT\"}",
+                        MediaType.APPLICATION_JSON
+                ));
+        transferServer.expect(requestTo("https://uploader.example.test/certificate"))
+                .andExpect(method(HttpMethod.PUT))
+                .andExpect(headerDoesNotExist(HttpHeaders.AUTHORIZATION))
+                .andExpect(content().bytes(PDF))
+                .andRespond(withStatus(HttpStatus.CREATED));
+
+        assertThat(storage.storeCertificateTemplate(123L, PDF))
+                .matches("events/123/certificates/[0-9a-f-]{36}\\.pdf");
+        apiServer.verify(); transferServer.verify();
+    }
+
+    @Test
     void downloadsChecksAndDeletesOnlyTheExactPrivateObject() throws Exception {
         apiServer.expect(requestTo(matchesPattern(".*\\/resources\\/download\\?.*")))
                 .andExpect(method(HttpMethod.GET))

@@ -8,6 +8,8 @@ import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +19,7 @@ import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -147,6 +150,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import javax.sql.DataSource;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -531,11 +535,29 @@ class BackendIntegrationTest {
         mockMvc.perform(get("/api/admin/events/{eventId}", eventA.getId())
                         .with(httpBasic("scope-timer", "scope-secret")))
                 .andExpect(status().isOk());
+        mockMvc.perform(get("/api/admin/events/{eventId}/certificates/settings", eventA.getId())
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(false));
+        mockMvc.perform(put("/api/admin/events/{eventId}/certificates/settings", eventA.getId())
+                        .with(httpBasic("scope-timer", "scope-secret"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"allowedFields\":[\"BIB\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(true));
         mockMvc.perform(get("/api/admin/races/{raceId}/categories", raceA.getId())
                         .with(httpBasic("scope-timer", "scope-secret")))
                 .andExpect(status().isOk());
         mockMvc.perform(get("/api/admin/events/{eventId}", eventC.getId())
                         .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/events/{eventId}/certificates/settings", eventC.getId())
+                        .with(httpBasic("scope-timer", "scope-secret")))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/admin/events/{eventId}/certificates/settings", eventC.getId())
+                        .with(httpBasic("scope-timer", "scope-secret"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"allowedFields\":[\"BIB\"]}"))
                 .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/admin/races/{raceId}/award-policy", raceC.getId())
                         .with(httpBasic("scope-timer", "scope-secret")))
@@ -10295,6 +10317,124 @@ class BackendIntegrationTest {
                 true, 5, "timing@example.org"
         ), ADMIN_USERNAME);
         return event;
+    }
+
+    @Test
+    void certificateTemplatesStayEventAndRaceScopedAndGenerateOnlyFromPublicBackendData() throws Exception {
+        Event event = createPublishedEvent("Certificate UAT Event", "certificate-uat-event");
+        event.setLocation("Москва");
+        event = eventRepository.saveAndFlush(event);
+        Race fiveKm = createDraftRace(event, "5 км", 0);
+        fiveKm.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        fiveKm = raceRepository.saveAndFlush(fiveKm);
+        Race tenKm = createDraftRace(event, "10 км", 1);
+        tenKm.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        tenKm = raceRepository.saveAndFlush(tenKm);
+        Category open = part9Category(fiveKm, "OPEN", "Открытая категория", 0, null);
+        ImportBatch batch = raceImportBatch(event, fiveKm, "certificate.csv");
+        Result result = part10Result(fiveKm, batch, open, null, 1, "CERT-101", "male",
+                "Иван Петров", "finished", 2_535_000L, 2_518_000L);
+
+        mockMvc.perform(put("/api/admin/events/{eventId}/certificates/settings", event.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"enabled":true,"allowedFields":["GUN_TIME","CHIP_TIME","BIB"]}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(true));
+
+        MockMultipartFile validPdf = new MockMultipartFile(
+                "file", "joyful.pdf", MediaType.APPLICATION_PDF_VALUE, certificateTemplatePdf());
+        MvcResult upload = mockMvc.perform(multipart("/api/admin/events/{eventId}/certificates/templates", event.getId())
+                        .file(validPdf)
+                        .param("displayName", "Радостный")
+                        .param("displayOrder", "1")
+                        .param("active", "true")
+                        .param("raceIds", fiveKm.getId().toString())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.displayName").value("Радостный"))
+                .andExpect(jsonPath("$.raceIds[0]").value(fiveKm.getId()))
+                .andReturn();
+        long templateId = objectMapper.readTree(upload.getResponse().getContentAsByteArray()).get("id").asLong();
+
+        MockMultipartFile otherRacePdf = new MockMultipartFile(
+                "file", "classic.pdf", MediaType.APPLICATION_PDF_VALUE, certificateTemplatePdf());
+        mockMvc.perform(multipart("/api/admin/events/{eventId}/certificates/templates", event.getId())
+                        .file(otherRacePdf)
+                        .param("displayName", "Классический")
+                        .param("displayOrder", "2")
+                        .param("active", "true")
+                        .param("raceIds", tenKm.getId().toString())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/results/{resultId}/certificates", result.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.templates.length()").value(1))
+                .andExpect(jsonPath("$.templates[0].id").value(templateId))
+                .andExpect(jsonPath("$.fields[?(@.field == 'BIB')].available").value(true));
+
+        MvcResult generated = mockMvc.perform(post(
+                                "/api/results/{resultId}/certificates/{templateId}/generate", result.getId(), templateId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fields\":[\"CHIP_TIME\",\"BIB\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_PDF))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION,
+                        org.hamcrest.Matchers.containsString("attachment")))
+                .andReturn();
+        byte[] generatedPdf = generated.getResponse().getContentAsByteArray();
+        assertThat(new String(generatedPdf, 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
+        try (PDDocument document = org.apache.pdfbox.Loader.loadPDF(generatedPdf)) {
+            String text = new org.apache.pdfbox.text.PDFTextStripper().getText(document);
+            assertThat(text).contains("Иван Петров", "Certificate UAT Event", "Москва", "5 км",
+                    "Чистое время: 00:41:58", "Стартовый номер: CERT-101");
+            assertThat(text).doesNotContain("Время от выстрела");
+        }
+
+        mockMvc.perform(post("/api/results/{resultId}/certificates/{templateId}/generate", result.getId(), templateId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fields\":[\"CATEGORY_PLACE\"]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("CERTIFICATE_FIELD_NOT_ALLOWED"));
+
+        Result disqualified = part10Result(fiveKm, batch, open, null, 2, "CERT-DSQ", "female",
+                "Анна Снятая", "disqualified", null, null);
+        mockMvc.perform(get("/api/results/{resultId}/certificates", disqualified.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(false));
+
+        MockMultipartFile invalidPdf = new MockMultipartFile(
+                "file", "fake.pdf", MediaType.APPLICATION_PDF_VALUE, "not a pdf".getBytes(StandardCharsets.UTF_8));
+        mockMvc.perform(multipart("/api/admin/events/{eventId}/certificates/templates", event.getId())
+                        .file(invalidPdf).param("displayName", "Broken")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isBadRequest());
+
+        fiveKm.setPublicVisible(false);
+        raceRepository.saveAndFlush(fiveKm);
+        mockMvc.perform(get("/api/results/{resultId}/certificates", result.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(false));
+        mockMvc.perform(post("/api/results/{resultId}/certificates/{templateId}/generate", result.getId(), templateId)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"fields\":[]}"))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(delete("/api/admin/events/{eventId}/certificates/templates/{templateId}", event.getId(), templateId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isNoContent());
+    }
+
+    private static byte[] certificateTemplatePdf() throws Exception {
+        try (PDDocument document = new PDDocument()) {
+            document.addPage(new PDPage());
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            document.save(output);
+            return output.toByteArray();
+        }
     }
 
     private EventSeries createSeries(String name, String slug) {

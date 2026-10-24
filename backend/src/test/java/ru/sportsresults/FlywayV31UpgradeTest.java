@@ -118,7 +118,7 @@ class FlywayV31UpgradeTest {
             flyway.migrate();
             flyway.validate();
 
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("31");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("32");
         }
     }
 }

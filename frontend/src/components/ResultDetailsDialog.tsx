@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
-import type { ResultDetails, ResultInquiryLookup } from '../api/types'
+import type { CertificateAvailability, ResultDetails, ResultInquiryLookup } from '../api/types'
 import { formatDuration, formatGender, statusLabel } from '../utils/format'
 import { publicCategoryName } from '../utils/publicEventView'
 import { resultIssueAvailabilityMessage } from '../utils/resultIssue'
 import { RankingAchievements } from './RankingAchievements'
 import { ResultIssueDialog } from './ResultIssueDialog'
 import type { RankingPresentationMode } from '../utils/rankingPresentation'
+import { CertificateDialogContent } from './CertificateDialogContent'
 
 interface Props {
   resultId: number
@@ -25,12 +26,19 @@ export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startN
   const [inquiry, setInquiry] = useState<ResultInquiryLookup | null>(null)
   const [error, setError] = useState(false)
   const [issueOpen, setIssueOpen] = useState(false)
+  const [certificates, setCertificates] = useState<CertificateAvailability | null>(null)
+  const [certificateOpen, setCertificateOpen] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
     api.result(resultId, controller.signal).then(async (loadedResult) => {
       if (controller.signal.aborted) return
       setResult(loadedResult)
+      void api.certificates(resultId, controller.signal).then((value) => {
+        if (!controller.signal.aborted) setCertificates(value)
+      }).catch((reason: unknown) => {
+        if (!controller.signal.aborted) console.error('Certificate availability request failed', reason)
+      })
       if (!loadedResult.bib) return
       try {
         const lookup = await api.resultInquiry(loadedResult.eventId, loadedResult.bib, controller.signal)
@@ -55,7 +63,8 @@ export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startN
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        onClose()
+        if (certificateOpen) setCertificateOpen(false)
+        else onClose()
         return
       }
       if (event.key !== 'Tab' || !dialogRef.current) return
@@ -76,7 +85,7 @@ export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startN
       document.removeEventListener('keydown', handleKeyDown)
       previouslyFocused?.focus()
     }
-  }, [onClose])
+  }, [certificateOpen, onClose])
 
   if (issueOpen && result && inquiry) {
     return <ResultIssueDialog
@@ -101,7 +110,9 @@ export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startN
         <button ref={closeRef} className="dialog-close" type="button" aria-label="Закрыть" onClick={onClose}>×</button>
         {!result && !error && <div className="state-message compact">Загружаем карточку…</div>}
         {error && <div className="state-message compact error">Не удалось загрузить карточку результата.</div>}
-        {result && <>
+        {result && certificateOpen && certificates && <CertificateDialogContent
+          resultId={result.resultId} availability={certificates} onBack={() => setCertificateOpen(false)} />}
+        {result && !certificateOpen && <>
           <p className="eyebrow">Карточка участника</p>
           <h2 id="result-title">{result.displayName}</h2>
           <div className="detail-badges"><span className="bib">№ {result.bib ?? '—'}</span><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></div>
@@ -118,6 +129,9 @@ export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startN
             <button type="button" onClick={() => setIssueOpen(true)}>Сообщить об ошибке</button>
           </div>}
           {availabilityMessage && <p className="result-issue-availability" role="status">{availabilityMessage}</p>}
+          {certificates?.enabled && certificates.templates.length > 0 && <div className="result-secondary-action">
+            <button type="button" onClick={() => setCertificateOpen(true)}>Скачать сертификат</button>
+          </div>}
         </>}
       </section>
     </div>

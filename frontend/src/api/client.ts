@@ -18,6 +18,8 @@ import type {
   ResultListItem,
   ResultQuery,
   VerifyResultInquiryRequest,
+  CertificateAvailability,
+  CertificateField,
 } from './types'
 import { apiUrl } from './baseUrl.ts'
 
@@ -106,6 +108,21 @@ export const api = {
     ),
   result: (resultId: number, signal?: AbortSignal) =>
     request<ResultDetails>(`/results/${resultId}`, signal),
+  certificates: (resultId: number, signal?: AbortSignal) =>
+    request<CertificateAvailability>(`/results/${resultId}/certificates`, signal),
+  generateCertificate: async (resultId: number, templateId: number, fields: CertificateField[]) => {
+    const response = await fetch(apiUrl(`/results/${resultId}/certificates/${templateId}/generate`), {
+      method: 'POST',
+      headers: { Accept: 'application/pdf', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields }),
+    })
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as ApiErrorPayload | null
+      throw new ApiError(response.status, `Сервер вернул ошибку ${response.status}`,
+        typeof payload?.code === 'string' ? payload.code : null)
+    }
+    return response.blob()
+  },
   resultInquiry: (eventId: number, bib: string, signal?: AbortSignal) =>
     request<ResultInquiryLookup>(
       `/events/${eventId}/result-inquiry?${queryString({ bib })}`,

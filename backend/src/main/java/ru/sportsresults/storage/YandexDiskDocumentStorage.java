@@ -63,6 +63,17 @@ public class YandexDiskDocumentStorage implements DocumentStorage {
     public String store(Long eventId, byte[] content) {
         validateConfiguration();
         String storageKey = "events/" + eventId + "/documents/" + UUID.randomUUID() + ".pdf";
+        return storeAtKey(storageKey, content);
+    }
+
+    @Override
+    public String storeCertificateTemplate(Long eventId, byte[] content) {
+        validateConfiguration();
+        String storageKey = "events/" + eventId + "/certificates/" + UUID.randomUUID() + ".pdf";
+        return storeAtKey(storageKey, content);
+    }
+
+    private String storeAtKey(String storageKey, byte[] content) {
         String safeKey = DocumentStorageKey.requireSafeRelative(storageKey);
         ensureParentDirectories(safeKey);
         JsonNode upload = getJson(apiUri("/resources/upload", Map.of(

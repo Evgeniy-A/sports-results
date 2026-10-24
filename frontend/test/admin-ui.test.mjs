@@ -87,7 +87,7 @@ test('a real backend 401 clears the admin session through the common API client'
   assert.equal(unauthorized, 0)
   notifyUnauthorized(401, () => { unauthorized += 1 })
   assert.equal(unauthorized, 1)
-  assert.equal((api.match(/notifyUnauthorized\(response\.status, onUnauthorized\)/g) ?? []).length, 3)
+  assert.equal((api.match(/notifyUnauthorized\(response\.status, onUnauthorized\)/g) ?? []).length, 4)
 })
 
 test('event list, create and edit use protected typed APIs', () => {

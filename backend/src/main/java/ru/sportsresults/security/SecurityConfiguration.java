@@ -34,6 +34,7 @@ public class SecurityConfiguration {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/events/**", "/api/results/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/results/*/certificates/*/generate").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/result-issue-attachments/capabilities").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/events/*/result-inquiry/verify").permitAll()
                         .requestMatchers(HttpMethod.POST,

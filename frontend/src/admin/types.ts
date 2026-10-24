@@ -13,6 +13,25 @@ import type {
 
 export type { EventDocument, EventInfoBlock, EventScheduleItem, EventSummary, PageResponse, Race, ResultListItem }
 
+export type CertificateField = import('../api/types').CertificateField
+export type CertificateAlignment = 'LEFT' | 'CENTER' | 'RIGHT'
+
+export interface CertificateLayout {
+  participantX: number; participantY: number; participantWidth: number
+  participantFontSize: number; participantMinFontSize: number; participantAlignment: CertificateAlignment
+  eventX: number; eventY: number; eventWidth: number; eventFontSize: number
+  eventMinFontSize: number; eventLineSpacing: number; eventAlignment: CertificateAlignment
+  dynamicX: number; dynamicY: number; dynamicWidth: number; dynamicMaxHeight: number
+  dynamicFontSize: number; dynamicMinFontSize: number; dynamicLineSpacing: number; dynamicAlignment: CertificateAlignment
+}
+
+export interface CertificateSettings { enabled: boolean; allowedFields: CertificateField[] }
+export interface CertificateTemplate {
+  id: number; displayName: string; active: boolean; displayOrder: number
+  originalFilename: string; contentType: string; sizeBytes: number; sha256: string
+  uploadedAt: string; uploadedBy: string; raceIds: number[]; layout: CertificateLayout
+}
+
 export type ResultInquiryDeadlineMode = 'AFTER_EVENT_DAYS' | 'FIXED_DATE'
 
 export interface ResultInquiryConfiguration {

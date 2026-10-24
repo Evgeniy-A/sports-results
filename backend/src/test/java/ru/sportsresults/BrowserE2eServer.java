@@ -1,6 +1,8 @@
 package ru.sportsresults;
 
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -8,12 +10,14 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import ru.sportsresults.domain.AdminUser;
 import ru.sportsresults.domain.AdminUserRole;
+import ru.sportsresults.domain.CertificateField;
 import ru.sportsresults.domain.Event;
 import ru.sportsresults.domain.AgeCalculationMode;
 import ru.sportsresults.domain.EventPublicationStatus;
 import ru.sportsresults.domain.ResultsPublicationStatus;
 import ru.sportsresults.domain.EventDocumentType;
 import ru.sportsresults.domain.EventSeries;
+import ru.sportsresults.domain.EventUserAccess;
 import ru.sportsresults.domain.ImportBatchStatus;
 import ru.sportsresults.domain.PrimaryStandingMode;
 import ru.sportsresults.domain.RankingBasis;
@@ -21,10 +25,12 @@ import ru.sportsresults.api.dto.UpdateAwardPolicyRequest;
 import ru.sportsresults.repository.EventRepository;
 import ru.sportsresults.repository.AdminUserRepository;
 import ru.sportsresults.repository.EventSeriesRepository;
+import ru.sportsresults.repository.EventUserAccessRepository;
 import ru.sportsresults.repository.RaceRepository;
 import ru.sportsresults.repository.RegistrationRepository;
 import ru.sportsresults.repository.ResultRepository;
 import ru.sportsresults.service.AwardPolicyService;
+import ru.sportsresults.service.CertificateService;
 import ru.sportsresults.service.ImportService;
 import ru.sportsresults.service.EventContentService;
 import ru.sportsresults.service.EventDocumentService;
@@ -37,6 +43,7 @@ import ru.sportsresults.api.dto.*;
 
 import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -44,6 +51,8 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.math.BigDecimal;
 import java.util.concurrent.TimeUnit;
+import java.util.EnumSet;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -106,6 +115,7 @@ class BrowserE2eServer {
         adminUserRepository.saveAndFlush(fixtureAdmin);
 
         EventSeriesRepository seriesRepository = context.getBean(EventSeriesRepository.class);
+        EventUserAccessRepository eventUserAccessRepository = context.getBean(EventUserAccessRepository.class);
         EventRepository eventRepository = context.getBean(EventRepository.class);
         RaceRepository raceRepository = context.getBean(RaceRepository.class);
         ImportService importService = context.getBean(ImportService.class);
@@ -120,6 +130,7 @@ class BrowserE2eServer {
         RegistrationRepository registrationRepository = context.getBean(RegistrationRepository.class);
         ResultRepository resultRepository = context.getBean(ResultRepository.class);
         EventService eventService = context.getBean(EventService.class);
+        CertificateService certificateService = context.getBean(CertificateService.class);
 
         EventSeries series = new EventSeries();
         series.setName("Контрольный забег");
@@ -289,6 +300,48 @@ class BrowserE2eServer {
         }
         updateRaceVisibility(raceAdminService, separated.getId(), raceB, false);
 
+        Event certificateUat = event(series, "Certificate UAT Event", "certificate-uat-event", "Москва");
+        certificateUat = eventRepository.saveAndFlush(certificateUat);
+        assertThat(importService.importEvent(
+                certificateUat.getId(), "browser-certificates.csv", certificateCsv().getBytes(StandardCharsets.UTF_8)
+        ).status()).isEqualTo(ImportBatchStatus.SUCCEEDED);
+        var certificate5Km = raceRepository.findByEventIdAndSourceCode(certificateUat.getId(), "5 км").orElseThrow();
+        var certificate10Km = raceRepository.findByEventIdAndSourceCode(certificateUat.getId(), "10 км").orElseThrow();
+        for (var certificateRace : java.util.List.of(certificate5Km, certificate10Km)) {
+            awardPolicyService.upsert(certificateRace.getId(), new UpdateAwardPolicyRequest(
+                    RankingBasis.GUN_TIME, PrimaryStandingMode.BY_GENDER, 3, true,
+                    AgeCalculationMode.EVENT_DATE, 3, false), "e2e-admin");
+        }
+        certificateService.updateSettings(certificateUat.getId(),
+                new UpdateCertificateSettingsRequest(true, EnumSet.allOf(CertificateField.class)), "e2e-admin");
+        byte[] certificateBackground = certificatePdf();
+        certificateService.upload(certificateUat.getId(), "Радостный", 1, true, Set.of(),
+                "joyful.pdf", "application/pdf", certificateBackground, "e2e-admin");
+        certificateService.upload(certificateUat.getId(), "Бодрящий", 2, true, Set.of(certificate5Km.getId()),
+                "energetic.pdf", "application/pdf", certificateBackground, "e2e-admin");
+        certificateService.upload(certificateUat.getId(), "Классический", 3, true, Set.of(certificate10Km.getId()),
+                "classic.pdf", "application/pdf", certificateBackground, "e2e-admin");
+
+        AdminUser assignedTimer = new AdminUser();
+        assignedTimer.setUsername("certificate-timer");
+        assignedTimer.setDisplayName("Certificate Timer");
+        assignedTimer.setRole(AdminUserRole.TIMEKEEPER);
+        assignedTimer.setActive(true);
+        assignedTimer.setPasswordHash(passwordEncoder.encode("timer-secret"));
+        assignedTimer = adminUserRepository.saveAndFlush(assignedTimer);
+        EventUserAccess assignedAccess = new EventUserAccess();
+        assignedAccess.setUser(assignedTimer);
+        assignedAccess.setEvent(certificateUat);
+        eventUserAccessRepository.saveAndFlush(assignedAccess);
+
+        AdminUser foreignTimer = new AdminUser();
+        foreignTimer.setUsername("foreign-timer");
+        foreignTimer.setDisplayName("Foreign Timer");
+        foreignTimer.setRole(AdminUserRole.TIMEKEEPER);
+        foreignTimer.setActive(true);
+        foreignTimer.setPasswordHash(passwordEncoder.encode("foreign-secret"));
+        adminUserRepository.saveAndFlush(foreignTimer);
+
         Event mixedPublication = event(
                 series, "Частично опубликованные протоколы", "mixed-race-publication", "Пермь");
         mixedPublication = eventRepository.saveAndFlush(mixedPublication);
@@ -305,7 +358,7 @@ class BrowserE2eServer {
         // Keep the future Event in Draft and publish every imported Race explicitly via the
         // same service used by the administrative API.
         for (Event fixture : java.util.List.of(
-                inquiryOpen, inquiryClosed, noCategories, m52, hero, freeTable, meaningful, separated
+                inquiryOpen, inquiryClosed, noCategories, m52, hero, freeTable, meaningful, separated, certificateUat
         )) {
             var fixtureRaces = raceRepository.findAllByEventIdOrderByDisplayOrderAsc(fixture.getId());
             var pendingRaceIds = fixtureRaces.stream()
@@ -437,6 +490,24 @@ class BrowserE2eServer {
                 Борис,Только Б,male,1990-01-01,Race B,B-1,Open,finished,2000.0,1900.0,1.0,1.0,1.0,1.0,1.0,1.0
                 Команда,Только В,,,Race C,C-1,Open,finished,3000.0,2900.0,1.0,1.0,1.0,1.0,1.0,1.0
                 """;
+    }
+
+    private static String certificateCsv() {
+        return header() + """
+                Иван,Петров,male,1990-01-01,5 км,CERT-5-1,М35–39,finished,2535000.0,2518000.0,1.0,1.0,1.0,1.0,1.0,1.0
+                Анна,Соколова,female,1993-02-02,5 км,CERT-5-2,Ж30–34,finished,2655000.0,2600000.0,2.0,1.0,1.0,2.0,1.0,1.0
+                Сергей,Иванов,male,1987-03-03,10 км,CERT-10-1,М35–39,finished,5100000.0,5000000.0,1.0,1.0,1.0,1.0,1.0,1.0
+                """;
+    }
+
+    private static byte[] certificatePdf() {
+        try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            document.addPage(new PDPage());
+            document.save(output);
+            return output.toByteArray();
+        } catch (Exception exception) {
+            throw new IllegalStateException("Cannot build browser certificate template", exception);
+        }
     }
 
     private static String header() {

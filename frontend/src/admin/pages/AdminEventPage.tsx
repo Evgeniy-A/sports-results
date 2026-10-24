@@ -11,12 +11,14 @@ import { EventImportTab } from './EventImportTab'
 import { EventAwardTab } from './EventPolicyTabs'
 import { EventIssuesTab } from './EventIssuesTab'
 import { EventResultsPublicationTab } from './EventResultsPublicationTab'
+import { EventCertificatesTab } from './EventCertificatesTab'
 
 const EVENT_TABS = [
   ['main', 'Основное'],
   ['starts', 'Старты'],
   ['award', 'Награждение и категории'],
   ['info', 'Информация участникам'],
+  ['certificates', 'Сертификаты'],
 ] as const
 
 const RESULT_TABS = [
@@ -87,6 +89,7 @@ export function AdminEventPage({ api, eventId, requestedTab, requestedRaceId, cu
         {tab === 'main' && <EventGeneralTab api={api} event={event} series={series} races={races} canChangeSeries={currentUser.role === 'ORGANIZER'} onChanged={reload} />}
         {tab === 'starts' && <StartsTab api={api} event={event} races={races} onChanged={reload} onOpen={(raceId) => navigateAdmin(`/admin/events/${eventId}?tab=award&raceId=${raceId}`)} />}
         {tab === 'info' && <EventInformationTab api={api} event={event} />}
+        {tab === 'certificates' && <EventCertificatesTab api={api} event={event} races={races} />}
         {tab === 'participants' && <EventResultsAdminTab api={api} event={event} races={races} mode="participants" />}
         {tab === 'results' && <EventResultsAdminTab api={api} event={event} races={races} mode="results" />}
         {tab === 'publication' && <EventResultsPublicationTab api={api} event={event} races={races} onChanged={reload} />}

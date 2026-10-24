@@ -20,6 +20,7 @@ import ru.sportsresults.service.InvalidRequestException;
 import ru.sportsresults.service.RequestConflictException;
 import ru.sportsresults.service.ResourceNotFoundException;
 import ru.sportsresults.service.ResultIssueShareStorageUnavailableException;
+import ru.sportsresults.service.CertificateCapacityException;
 
 import java.time.Instant;
 import java.util.List;
@@ -89,6 +90,14 @@ public class ApiExceptionHandler {
                 "Shared attachment storage is temporarily unavailable",
                 List.of()
         );
+    }
+
+    @ExceptionHandler(CertificateCapacityException.class)
+    ResponseEntity<ApiErrorResponse> certificateCapacity(CertificateCapacityException exception) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "1")
+                .body(new ApiErrorResponse(Instant.now(), 429, "CERTIFICATE_CAPACITY_EXCEEDED",
+                        "Certificate generation is busy; retry shortly", List.of()));
     }
 
     @ExceptionHandler(AccessDeniedException.class)

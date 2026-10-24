@@ -379,3 +379,13 @@ tbody tr:hover, tbody tr:focus { background: #f4faf6; outline: 0; }
   .issue-submit, .issue-outcome button { width: 100%; justify-self: stretch; }
   .result-secondary-action button { min-height: 44px; }
 }
+
+.certificate-dialog-content { display: grid; gap: 1rem; }
+.certificate-section { border: 1px solid #dbe3ea; border-radius: 14px; padding: 1rem; }
+.certificate-section h3 { margin: 0 0 .65rem; }
+.certificate-section p { color: #526170; margin: 0 0 .75rem; }
+.certificate-template-options, .certificate-field-options { display: grid; gap: .55rem; }
+.certificate-template-options label, .certificate-field-options label { display: flex; gap: .55rem; align-items: flex-start; }
+.certificate-field-options label:has(input:disabled) { opacity: .58; }
+.certificate-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .65rem; }
+@media (max-width: 390px) { .certificate-section { padding: .8rem; }.certificate-actions button { flex: 1 1 100%; } }

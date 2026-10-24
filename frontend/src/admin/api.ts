@@ -13,6 +13,9 @@ import type {
   BulkCreateEventsResponse,
   BulkEventCommand,
   BulkEventPreview,
+  CertificateField,
+  CertificateSettings,
+  CertificateTemplate,
   CreateEventWithStartsCommand,
   EventIssueDetail,
   EventIssueItem,
@@ -105,6 +108,21 @@ async function adminBlob(credentials: AdminCredentials, path: string, onUnauthor
   })
   if (!response.ok) {
     notifyUnauthorized(response.status, onUnauthorized)
+    const payload = await response.json().catch(() => null) as { code?: string; message?: string } | null
+    throw new ApiError(response.status, payload?.message ?? `HTTP ${response.status}`, payload?.code ?? null)
+  }
+  return response.blob()
+}
+
+async function adminPdf(credentials: AdminCredentials, path: string, init: RequestInit,
+  onUnauthorized?: () => void, onForbidden?: () => void): Promise<Blob> {
+  const headers = new Headers(init.headers)
+  headers.set('Accept', 'application/pdf')
+  headers.set('Authorization', basicAuthorization(credentials))
+  const response = await fetch(apiUrl(path), { ...init, headers })
+  if (!response.ok) {
+    notifyUnauthorized(response.status, onUnauthorized)
+    if (response.status === 403) onForbidden?.()
     const payload = await response.json().catch(() => null) as { code?: string; message?: string } | null
     throw new ApiError(response.status, payload?.message ?? `HTTP ${response.status}`, payload?.code ?? null)
   }
@@ -316,6 +334,34 @@ export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: (
     ),
     documentContent: (eventId: number, documentId: number) =>
       adminBlob(credentials, `/admin/events/${eventId}/documents/${documentId}/content`, onUnauthorized),
+    certificateSettings: (eventId: number) => request<CertificateSettings>(
+      `/admin/events/${eventId}/certificates/settings`,
+    ),
+    updateCertificateSettings: (eventId: number, body: CertificateSettings) => request<CertificateSettings>(
+      `/admin/events/${eventId}/certificates/settings`, { method: 'PUT', ...json(body) },
+    ),
+    certificateTemplates: (eventId: number) => request<CertificateTemplate[]>(
+      `/admin/events/${eventId}/certificates/templates`,
+    ),
+    uploadCertificateTemplate: (eventId: number, metadata: {
+      displayName: string; displayOrder: number; active: boolean; raceIds: number[]
+    }, file: File) => {
+      const form = new FormData(); form.append('file', file)
+      return request<CertificateTemplate>(
+        `/admin/events/${eventId}/certificates/templates${queryString(metadata)}`,
+        { method: 'POST', body: form },
+      )
+    },
+    updateCertificateTemplate: (eventId: number, templateId: number, body: object) =>
+      request<CertificateTemplate>(`/admin/events/${eventId}/certificates/templates/${templateId}`,
+        { method: 'PUT', ...json(body) }),
+    deleteCertificateTemplate: (eventId: number, templateId: number) => request<void>(
+      `/admin/events/${eventId}/certificates/templates/${templateId}`, { method: 'DELETE' }, true,
+    ),
+    previewCertificateTemplate: (eventId: number, templateId: number, fields: CertificateField[]) =>
+      adminPdf(credentials, `/admin/events/${eventId}/certificates/templates/${templateId}/preview`, {
+        method: 'POST', ...json({ fields }),
+      }, onUnauthorized, onForbidden),
     results: (eventId: number, query: object) =>
       request<PageResponse<ResultListItem>>(`/admin/events/${eventId}/results${queryString(query)}`),
     result: (resultId: number) => request<AdminResultDetails>(`/admin/results/${resultId}`),

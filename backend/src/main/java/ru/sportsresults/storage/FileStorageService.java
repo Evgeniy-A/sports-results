@@ -36,6 +36,14 @@ public class FileStorageService {
         return new StoredDocument(storage.provider(), storage.store(eventId, content));
     }
 
+    public StoredDocument storeCertificateTemplate(Long eventId, byte[] content) {
+        if (eventId == null || eventId <= 0) {
+            throw new IllegalArgumentException("Event id must be positive");
+        }
+        DocumentStorage storage = provider(defaultProvider);
+        return new StoredDocument(storage.provider(), storage.storeCertificateTemplate(eventId, content));
+    }
+
     public InputStream open(EventDocumentStorageProvider storageProvider, String storageKey) {
         return provider(storageProvider).open(storageKey);
     }

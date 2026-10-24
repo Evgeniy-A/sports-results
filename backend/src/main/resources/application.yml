@@ -48,6 +48,13 @@ app:
       api-base-url: ${YANDEX_DISK_API_BASE_URL:https://cloud-api.yandex.net/v1/disk}
       root-path: ${DOCUMENT_YANDEX_DISK_ROOT_PATH:app:/}
       token: ${YANDEX_DISK_TOKEN:}
+  certificates:
+    max-template-size-bytes: ${CERTIFICATE_MAX_TEMPLATE_SIZE_BYTES:10485760}
+    max-generated-size-bytes: ${CERTIFICATE_MAX_GENERATED_SIZE_BYTES:15728640}
+    max-concurrent-generations: ${CERTIFICATE_MAX_CONCURRENT_GENERATIONS:2}
+    acquire-timeout-ms: ${CERTIFICATE_ACQUIRE_TIMEOUT_MS:250}
+    cache-max-entries: ${CERTIFICATE_CACHE_MAX_ENTRIES:8}
+    cache-max-bytes: ${CERTIFICATE_CACHE_MAX_BYTES:52428800}
   result-issues:
     attachments:
       storage-provider: ${RESULT_ISSUE_ATTACHMENT_STORAGE_PROVIDER:memory}

@@ -332,3 +332,14 @@ export interface ApiFieldViolation {
   field: string
   message: string
 }
+
+export type CertificateField =
+  | 'OFFICIAL_TIME' | 'GUN_TIME' | 'CHIP_TIME'
+  | 'OFFICIAL_PLACE' | 'OVERALL_PLACE' | 'GENDER_PLACE' | 'CATEGORY_PLACE'
+  | 'CATEGORY_NAME' | 'BIB'
+
+export interface CertificateAvailability {
+  enabled: boolean
+  templates: Array<{ id: number; displayName: string }>
+  fields: Array<{ field: CertificateField; label: string; available: boolean }>
+}
