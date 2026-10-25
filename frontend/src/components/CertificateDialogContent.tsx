@@ -35,25 +35,33 @@ export function CertificateDialogContent({ resultId, availability, onBack }: {
     <p className="eyebrow">Персональный PDF</p>
     <h2 id="result-title">Создать сертификат</h2>
     <section className="certificate-section">
-      <h3>Выберите дизайн</h3>
-      <div className="certificate-template-options">{availability.templates.map((template) => <label key={template.id}>
+      <h3><span className="certificate-step">1</span>Выберите дизайн</h3>
+      <div className="certificate-template-options">{availability.templates.map((template) => <label
+        className={`certificate-option${templateId === template.id ? ' is-selected' : ''}`} key={template.id}>
         <input type="radio" name="certificate-template" checked={templateId === template.id}
-          onChange={() => setTemplateId(template.id)} /> <span>{template.displayName}</span>
+          onChange={() => setTemplateId(template.id)} />
+        <span className="certificate-option-copy"><strong>{template.displayName}</strong></span>
       </label>)}</div>
     </section>
     <section className="certificate-section">
-      <h3>Что добавить?</h3>
-      <p>В сертификат автоматически войдут: ФИО или название команды, мероприятие, город и дистанция.</p>
-      <div className="certificate-field-options">{availability.fields.map((option) => <label key={option.field}>
+      <h3><span className="certificate-step">2</span>Что добавить?</h3>
+      <p className="certificate-info-note"><strong>Автоматически добавим</strong>
+        <span>ФИО или название команды · мероприятие · город · дистанцию</span>
+      </p>
+      <div className="certificate-field-options">{availability.fields.map((option) => <label
+        className={`certificate-option certificate-field-option${option.available ? '' : ' is-disabled'}`} key={option.field}>
         <input type="checkbox" checked={fields.includes(option.field)} disabled={!option.available}
           onChange={() => toggle(option.field)} />
-        <span>{option.label}{!option.available ? ' — нет данных' : ''}</span>
+        <span className="certificate-option-copy"><strong>{option.label}</strong>
+          {!option.available && <small>Нет данных для этого результата</small>}
+        </span>
       </label>)}</div>
     </section>
     {error && <p className="state-message compact error" role="alert">{error}</p>}
     <div className="certificate-actions">
-      <button type="button" onClick={onBack}>Назад</button>
-      <button type="button" className="primary-action" disabled={busy || !templateId} onClick={() => void generate()}>
+      <button type="button" className="certificate-back-button" onClick={onBack}>Назад</button>
+      <button type="button" className="primary-action certificate-download-button" disabled={busy || !templateId}
+        onClick={() => void generate()}>
         {busy ? 'Создаём…' : 'Скачать PDF'}
       </button>
     </div>
