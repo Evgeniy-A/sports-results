@@ -50,3 +50,10 @@ test('event info retains structured rules and optional participant content', () 
   assert.match(info, /!race\.resultsPublished/)
   assert.match(info, /Результаты ещё не опубликованы/)
 })
+
+test('public event documents open the configured API resource in a separate safe tab', () => {
+  assert.match(info, /href=\{apiResourceUrl\(document\.contentUrl\)\}/)
+  assert.match(info, /target="_blank"/)
+  assert.match(info, /rel="noopener noreferrer"/)
+  assert.doesNotMatch(info, /document\.contentUrl[\s\S]{0,120}onClick=/)
+})

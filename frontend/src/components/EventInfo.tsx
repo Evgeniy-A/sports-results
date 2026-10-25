@@ -1,4 +1,5 @@
 import type { EventDetails, RaceRules } from '../api/types'
+import { apiResourceUrl } from '../api/baseUrl'
 import { formatLocalScheduleTime } from '../utils/format'
 
 const rankingBasis = { GUN_TIME: 'по времени от стартового сигнала', CHIP_TIME: 'по чистому времени участника', NONE: 'не проводится' }
@@ -55,7 +56,7 @@ export function EventInfo({ event }: { event: EventDetails }) {
 
     {event.documents.length > 0 && <section className="detail-section">
       <p className="eyebrow">Материалы</p><h2>Документы</h2>
-      <div className="document-list">{event.documents.map((document) => <a href={document.contentUrl} target="_blank" rel="noreferrer" key={document.id}><span>PDF</span><strong>{document.displayName}</strong><i>Открыть ↗</i></a>)}</div>
+      <div className="document-list">{event.documents.map((document) => <a href={apiResourceUrl(document.contentUrl)} target="_blank" rel="noopener noreferrer" key={document.id}><span>PDF</span><strong>{document.displayName}</strong><i>Открыть ↗</i></a>)}</div>
     </section>}
 
     {event.infoBlocks.length > 0 && <section className="detail-section">

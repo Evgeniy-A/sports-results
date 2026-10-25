@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
-import { apiUrl, resolveApiRoot } from '../src/api/baseUrl.ts'
+import { apiResourceUrl, apiUrl, resolveApiRoot } from '../src/api/baseUrl.ts'
 
 const [publicClient, adminClient, directUpload] = await Promise.all([
   readFile(new URL('../src/api/client.ts', import.meta.url), 'utf8'),
@@ -25,6 +25,14 @@ test('API base normalization avoids duplicate slashes and duplicate api paths', 
   assert.equal(resolveApiRoot('https://api.example.test/'), 'https://api.example.test/api')
   assert.equal(resolveApiRoot('https://api.example.test/api'), 'https://api.example.test/api')
   assert.equal(apiUrl('admin/events', 'https://api.example.test/'), 'https://api.example.test/api/admin/events')
+})
+
+test('backend resource URLs use the configured API origin without duplicating the api path', () => {
+  const renderUrl = 'https://sports-results-api.onrender.com'
+  const contentPath = '/api/events/3/documents/7/content'
+  assert.equal(apiResourceUrl(contentPath, ''), '/api/events/3/documents/7/content')
+  assert.equal(apiResourceUrl(contentPath, renderUrl), `${renderUrl}/api/events/3/documents/7/content`)
+  assert.equal(apiResourceUrl(`${renderUrl}${contentPath}`, 'https://unused.example'), `${renderUrl}${contentPath}`)
 })
 
 test('public, admin and XLSX requests share the API URL builder while direct uploads use signed URLs', () => {

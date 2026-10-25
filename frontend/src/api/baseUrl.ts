@@ -11,3 +11,12 @@ export function apiUrl(
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
   return `${resolveApiRoot(apiBaseUrl)}${normalizedPath}`
 }
+
+export function apiResourceUrl(
+  resourceUrl: string,
+  apiBaseUrl = import.meta.env?.VITE_API_BASE_URL,
+): string {
+  const normalizedResourceUrl = resourceUrl.trim()
+  if (/^https?:\/\//i.test(normalizedResourceUrl)) return normalizedResourceUrl
+  return apiUrl(normalizedResourceUrl.replace(/^\/api(?=\/)/, ''), apiBaseUrl)
+}
