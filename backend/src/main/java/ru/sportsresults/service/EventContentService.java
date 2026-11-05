@@ -7,6 +7,7 @@ import ru.sportsresults.domain.*;
 import ru.sportsresults.repository.*;
 
 import java.util.List;
+import java.util.HashSet;
 
 @Service
 public class EventContentService {
@@ -85,10 +86,50 @@ public class EventContentService {
     }
 
     @Transactional
+    public List<EventInfoBlockDto> reorderInfoBlocks(Long eventId, List<Long> blockIds, String actor) {
+        eventService.requireEvent(eventId);
+        List<EventInfoBlock> blocks = infoBlockRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId);
+        if (blockIds.size() != blocks.size()
+                || new HashSet<>(blockIds).size() != blockIds.size()
+                || !new HashSet<>(blockIds).equals(blocks.stream().map(EventInfoBlock::getId)
+                        .collect(java.util.stream.Collectors.toSet()))) {
+            throw new InvalidRequestException(
+                    "INVALID_INFO_BLOCK_ORDER",
+                    "The order must contain every Event info block exactly once"
+            );
+        }
+        java.util.Map<Long, EventInfoBlock> byId = blocks.stream()
+                .collect(java.util.stream.Collectors.toMap(EventInfoBlock::getId, java.util.function.Function.identity()));
+        for (int index = 0; index < blockIds.size(); index++) {
+            EventInfoBlock block = byId.get(blockIds.get(index));
+            int oldOrder = block.getDisplayOrder();
+            if (oldOrder == index) continue;
+            block.setDisplayOrder(index);
+            audit(actor, AuditEntityType.EVENT_INFO_BLOCK, block.getId(), "displayOrder",
+                    Integer.toString(oldOrder), Integer.toString(index));
+        }
+        infoBlockRepository.saveAll(blocks);
+        infoBlockRepository.flush();
+        return infoBlockRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId).stream()
+                .map(EventContentService::toDto).toList();
+    }
+
+    @Transactional
     public void deleteInfoBlock(Long eventId, Long blockId, String actor) {
         EventInfoBlock block = infoBlockRepository.findByIdAndEventId(blockId, eventId)
                 .orElseThrow(() -> new ResourceNotFoundException("EVENT_INFO_BLOCK_NOT_FOUND", "Event info block not found"));
         infoBlockRepository.delete(block);
+        infoBlockRepository.flush();
+        List<EventInfoBlock> remaining = infoBlockRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(eventId);
+        for (int index = 0; index < remaining.size(); index++) {
+            EventInfoBlock remainingBlock = remaining.get(index);
+            int oldOrder = remainingBlock.getDisplayOrder();
+            if (oldOrder == index) continue;
+            remainingBlock.setDisplayOrder(index);
+            audit(actor, AuditEntityType.EVENT_INFO_BLOCK, remainingBlock.getId(), "displayOrder",
+                    Integer.toString(oldOrder), Integer.toString(index));
+        }
+        infoBlockRepository.saveAll(remaining);
         audit(actor, AuditEntityType.EVENT_INFO_BLOCK, blockId, "deleted", toDto(block).toString(), null);
     }
 

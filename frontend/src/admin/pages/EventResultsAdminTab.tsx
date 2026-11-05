@@ -6,17 +6,19 @@ import { formatDuration, formatGender } from '../../utils/format'
 import { adminErrorMessage } from '../utils'
 import { AdminPagination, Drawer, Field, Loadable, StatusBadge } from '../components/AdminUi'
 import { AdminResultEditor } from '../components/AdminResultEditor'
+import { AdminLink } from '../router'
 
 const EMPTY_PAGE: PageResponse<ResultListItem> = { content: [], page: 0, size: 50, totalElements: 0, totalPages: 0, sort: 'place', direction: 'asc' }
 
-export function EventResultsAdminTab({ api, event, races, mode }: {
+export function EventResultsAdminTab({ api, event, races, mode, initialRaceId }: {
   api: AdminApi
   event: EventSummary
   races: Race[]
   mode: 'participants' | 'results'
+  initialRaceId?: number
 }) {
   const [rows, setRows] = useState(EMPTY_PAGE)
-  const [filters, setFilters] = useState({ name: '', bib: '', raceId: '', categoryId: '', clusterId: '', status: '', sort: mode === 'results' ? 'place' : 'displayName', direction: 'asc', page: 0 })
+  const [filters, setFilters] = useState({ name: '', bib: '', raceId: initialRaceId ? String(initialRaceId) : '', categoryId: '', clusterId: '', status: '', sort: mode === 'results' ? 'place' : 'displayName', direction: 'asc', page: 0 })
   const [categories, setCategories] = useState<AdminCategory[]>([])
   const [clusters, setClusters] = useState<StartCluster[]>([])
   const [loading, setLoading] = useState(true)
@@ -50,7 +52,7 @@ export function EventResultsAdminTab({ api, event, races, mode }: {
   const setFilter = (field: keyof typeof filters, value: string | number) => setFilters((current) => ({ ...current, [field]: value, page: field === 'page' ? Number(value) : 0 }))
 
   return <div className="admin-stack">
-    <div className="admin-section-toolbar"><div><h2>{mode === 'participants' ? 'Участники мероприятия' : 'Результаты'}</h2><p>{mode === 'participants' ? 'Текущие участники по всем стартам. Общее место по мероприятию не вычисляется.' : 'Текущие спортивные факты. Официальный зачёт рассчитывает только система.'}</p></div><span className="admin-count">{rows.totalElements} записей</span></div>
+    <div className="admin-section-toolbar"><div><h2>{mode === 'participants' ? 'Участники мероприятия' : 'Результаты'}</h2><p>{mode === 'participants' ? 'Текущие участники по всем стартам. Общее место по мероприятию не вычисляется.' : 'Текущие спортивные факты. Официальный зачёт рассчитывает только система.'}</p></div><div className="admin-heading-actions"><span className="admin-count">{rows.totalElements} записей</span>{filters.raceId && <AdminLink className="admin-button-secondary" href={`/admin/events/${event.id}?tab=award&raceId=${filters.raceId}`}>Настроить зачёт этого старта →</AdminLink>}</div></div>
     <div className="admin-filter-grid">
       <Field label="Стартовый номер"><input value={filters.bib} onChange={(change) => setFilter('bib', change.target.value)} /></Field>
       <Field label="Участник"><input value={filters.name} onChange={(change) => setFilter('name', change.target.value)} /></Field>

@@ -186,6 +186,9 @@ export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: (
       request<EventSeries>('/admin/event-series', { method: 'POST', ...json(body) }),
     updateEventSeries: (seriesId: number, body: object) =>
       request<EventSeries>(`/admin/event-series/${seriesId}`, { method: 'PUT', ...json(body) }),
+    deleteEventSeries: (seriesId: number) => request<void>(
+      `/admin/event-series/${seriesId}`, { method: 'DELETE' }, true,
+    ),
     templateStarts: (seriesId: number) =>
       request<TemplateStart[]>(`/admin/event-series/${seriesId}/start-templates`),
     createTemplateStart: (seriesId: number, body: object) => request<TemplateStart>(
@@ -306,6 +309,9 @@ export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: (
     updateInfoBlock: (eventId: number, blockId: number, body: object) => request<EventInfoBlock>(
       `/admin/events/${eventId}/info-blocks/${blockId}`, { method: 'PUT', ...json(body) },
     ),
+    reorderInfoBlocks: (eventId: number, blockIds: number[]) => request<EventInfoBlock[]>(
+      `/admin/events/${eventId}/info-blocks/order`, { method: 'PUT', ...json({ blockIds }) },
+    ),
     deleteInfoBlock: (eventId: number, blockId: number) => request<void>(
       `/admin/events/${eventId}/info-blocks/${blockId}`, { method: 'DELETE' }, true,
     ),
@@ -320,7 +326,7 @@ export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: (
       `/admin/events/${eventId}/schedule/${itemId}`, { method: 'DELETE' }, true,
     ),
     documents: (eventId: number) => request<EventDocument[]>(`/admin/events/${eventId}/documents`),
-    uploadDocument: (eventId: number, metadata: { type: string; displayName: string; displayOrder: number; publicDocument: boolean }, file: File) => {
+    uploadDocument: (eventId: number, metadata: { type: string; displayName: string; displayOrder: number; infoBlockId: number | null; publicDocument: boolean }, file: File) => {
       const form = new FormData()
       form.append('file', file)
       const query = queryString(metadata)

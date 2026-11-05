@@ -53,7 +53,7 @@ export function AdminEventPage({ api, eventId, requestedTab, requestedRaceId, cu
       : `${publishedRaceCount} из ${races.length} стартов опубликованы`
 
   const reload = useCallback(async () => {
-    setLoading(true); setError(null)
+    setError(null)
     try {
       const [eventValue, raceValues, seriesValues] = await Promise.all([
         api.event(eventId), api.races(eventId),
@@ -67,7 +67,7 @@ export function AdminEventPage({ api, eventId, requestedTab, requestedRaceId, cu
 
   useEffect(() => { void reload() }, [reload])
 
-  const selectTab = (next: string) => navigateAdmin(`/admin/events/${eventId}?tab=${next}`)
+  const selectTab = (next: string) => navigateAdmin(`/admin/events/${eventId}?tab=${next}${requestedRaceId ? `&raceId=${requestedRaceId}` : ''}`)
 
   return <Loadable loading={loading} error={error} empty={!event}>
     {event && <>
@@ -90,8 +90,8 @@ export function AdminEventPage({ api, eventId, requestedTab, requestedRaceId, cu
         {tab === 'starts' && <StartsTab api={api} event={event} races={races} onChanged={reload} onOpen={(raceId) => navigateAdmin(`/admin/events/${eventId}?tab=award&raceId=${raceId}`)} />}
         {tab === 'info' && <EventInformationTab api={api} event={event} />}
         {tab === 'certificates' && <EventCertificatesTab api={api} event={event} races={races} />}
-        {tab === 'participants' && <EventResultsAdminTab api={api} event={event} races={races} mode="participants" />}
-        {tab === 'results' && <EventResultsAdminTab api={api} event={event} races={races} mode="results" />}
+        {tab === 'participants' && <EventResultsAdminTab api={api} event={event} races={races} mode="participants" initialRaceId={Number(requestedRaceId) || undefined} />}
+        {tab === 'results' && <EventResultsAdminTab api={api} event={event} races={races} mode="results" initialRaceId={Number(requestedRaceId) || undefined} />}
         {tab === 'publication' && <EventResultsPublicationTab api={api} event={event} races={races} onChanged={reload} />}
         {tab === 'import' && <EventImportTab api={api} event={event} races={races} />}
         {tab === 'issues' && <EventIssuesTab api={api} event={event} />}

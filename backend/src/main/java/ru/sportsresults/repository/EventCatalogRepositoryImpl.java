@@ -147,7 +147,6 @@ public class EventCatalogRepositoryImpl implements EventCatalogRepository {
     ) {
         List<Predicate> predicates = new ArrayList<>();
         predicates.add(builder.equal(event.get("publicationStatus"), EventPublicationStatus.PUBLISHED));
-        predicates.add(builder.isTrue(series.get("active")));
         if (criteria.eventSeriesId() != null) {
             predicates.add(builder.equal(series.get("id"), criteria.eventSeriesId()));
         }

@@ -18,8 +18,7 @@ public final class PublicResultVisibility {
     }
 
     public static boolean isEventPublic(Event event) {
-        return event.getPublicationStatus() == EventPublicationStatus.PUBLISHED
-                && event.getEventSeries().isActive();
+        return event.getPublicationStatus() == EventPublicationStatus.PUBLISHED;
     }
 
     public static boolean isRegistrationPublic(Registration registration) {

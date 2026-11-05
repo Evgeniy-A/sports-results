@@ -25,7 +25,11 @@ public record BulkEventPreviewDto(
             String timeZone,
             boolean creatable,
             boolean duplicateInRequest,
-            Long existingEventId
+            Long existingEventId,
+            List<EventStartPreviewDto> starts
     ) {
+        public Item {
+            starts = List.copyOf(starts);
+        }
     }
 }

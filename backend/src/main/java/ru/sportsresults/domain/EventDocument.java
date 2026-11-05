@@ -25,6 +25,10 @@ public class EventDocument extends BaseEntity {
     @JoinColumn(name = "event_id", nullable = false)
     private Event event;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "info_block_id")
+    private EventInfoBlock infoBlock;
+
     @NotNull
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
@@ -81,6 +85,8 @@ public class EventDocument extends BaseEntity {
 
     public Event getEvent() { return event; }
     public void setEvent(Event event) { this.event = event; }
+    public EventInfoBlock getInfoBlock() { return infoBlock; }
+    public void setInfoBlock(EventInfoBlock infoBlock) { this.infoBlock = infoBlock; }
     public EventDocumentType getType() { return type; }
     public void setType(EventDocumentType type) { this.type = type; }
     public String getDisplayName() { return displayName; }

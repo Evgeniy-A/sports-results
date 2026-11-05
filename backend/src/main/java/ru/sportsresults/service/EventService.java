@@ -247,7 +247,9 @@ public class EventService {
 
     @Transactional(readOnly = true)
     public EventFilterOptionsDto filterOptions(Integer year, Long eventSeriesId, String city, LocalDate date) {
-        List<Event> events = eventRepository.findAllByPublicationStatusAndEventSeriesActiveTrue(EventPublicationStatus.PUBLISHED);
+        List<Event> events = eventRepository.findAllByPublicationStatusOrderByStartsAtDesc(
+                EventPublicationStatus.PUBLISHED
+        );
         String normalizedCity = normalizeNullable(city);
 
         List<Integer> years = events.stream()
@@ -336,7 +338,7 @@ public class EventService {
     @Transactional
     public EventDto createEvent(CreateEventRequest request) {
         try {
-            return toDto(createEventRecord(requireSeries(request.eventSeriesId()), request));
+            return toDto(createEventRecord(requireActiveSeries(request.eventSeriesId()), request));
         } catch (DataIntegrityViolationException exception) {
             throw new RequestConflictException("EVENT_SLUG_EXISTS", "An event with this slug already exists");
         }
@@ -348,6 +350,7 @@ public class EventService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "EVENT_SERIES_NOT_FOUND", "Event series not found"
                 ));
+        requireActiveSeries(series);
         List<ResolvedStartDefinition> starts = resolveStartDefinitions(series.getId(), request.starts());
         try {
             Event event = createEventRecord(series, request.event());
@@ -361,19 +364,18 @@ public class EventService {
 
     @Transactional(readOnly = true)
     public BulkEventPreviewDto previewBulkEvents(BulkCreateEventsRequest request) {
-        EventSeries series = requireSeries(request.eventSeriesId());
-        List<ResolvedStartDefinition> starts = resolveStartDefinitions(series.getId(), request.starts());
-        BulkPreparation preparation = prepareBulk(request);
-        validateBulkInquiryDefaults(series, preparation);
-        return toBulkPreview(series, preparation, starts);
+        EventSeries series = requireActiveSeries(request.eventSeriesId());
+        BulkPreparation preparation = prepareBulk(request, series.getName());
+        return toBulkPreview(series, preparation, resolveBulkStarts(series.getId(), request));
     }
 
     @Transactional
     public BulkCreateEventsResponseDto createBulkEvents(BulkCreateEventsRequest request) {
         EventSeries series = eventSeriesRepository.findByIdForUpdate(request.eventSeriesId())
                 .orElseThrow(() -> new ResourceNotFoundException("EVENT_SERIES_NOT_FOUND", "Event series not found"));
-        BulkPreparation preparation = prepareBulk(request);
-        List<ResolvedStartDefinition> starts = resolveStartDefinitions(series.getId(), request.starts());
+        requireActiveSeries(series);
+        BulkPreparation preparation = prepareBulk(request, series.getName());
+        Map<Integer, List<ResolvedStartDefinition>> startsByEvent = resolveBulkStarts(series.getId(), request);
         if (preparation.candidates().stream().anyMatch(candidate -> !candidate.creatable())) {
             throw new RequestConflictException(
                     "BULK_EVENT_DUPLICATE",
@@ -382,6 +384,7 @@ public class EventService {
         }
 
         List<EventDto> created = new ArrayList<>();
+        int totalStartCount = 0;
         try {
             for (BulkCandidate candidate : preparation.candidates()) {
                 CreateEventRequest eventRequest = new CreateEventRequest(
@@ -389,16 +392,18 @@ public class EventService {
                         candidate.location(), candidate.timeZone(), EventPublicationStatus.DRAFT
                 );
                 Event event = createEventRecord(series, eventRequest);
+                List<ResolvedStartDefinition> starts = startsByEvent.get(candidate.index());
                 materializeStarts(event, starts);
+                totalStartCount += starts.size();
                 created.add(toDto(event));
             }
         } catch (DataIntegrityViolationException exception) {
             throw new RequestConflictException("BULK_EVENT_CONFLICT", "Bulk event creation conflicted with existing data");
         }
-        return new BulkCreateEventsResponseDto(created, created.size() * starts.size());
+        return new BulkCreateEventsResponseDto(created, totalStartCount);
     }
 
-    private BulkPreparation prepareBulk(BulkCreateEventsRequest request) {
+    private BulkPreparation prepareBulk(BulkCreateEventsRequest request, String templateName) {
         List<Event> existing = eventRepository.findAllByEventSeriesIdOrderByIdAsc(request.eventSeriesId());
         Map<String, Long> existingByKey = new HashMap<>();
         for (Event event : existing) {
@@ -413,41 +418,68 @@ public class EventService {
             requestCounts.merge(key, 1, Integer::sum);
         }
 
-        List<BulkCandidate> candidates = request.events().stream().map(item -> {
-            String name = item.name().strip();
+        List<BulkCandidate> candidates = new ArrayList<>();
+        for (int index = 0; index < request.events().size(); index++) {
+            BulkEventItemRequest item = request.events().get(index);
             String location = item.location().strip();
+            String requestedName = item.name().strip();
+            String name = requestedName.equalsIgnoreCase(location)
+                    ? templateName.strip() + " — " + location
+                    : requestedName;
             String timeZone = normalizedTimeZone(item.timeZone());
             String key = bulkDuplicateKey(location, request.date());
             boolean duplicateInRequest = requestCounts.getOrDefault(key, 0) > 1;
             Long existingEventId = existingByKey.get(key);
             Instant startsAt = request.date().atTime(LocalTime.MIDNIGHT).atZone(ZoneId.of(timeZone)).toInstant();
-            return new BulkCandidate(name, location, timeZone, startsAt,
-                    !duplicateInRequest && existingEventId == null, duplicateInRequest, existingEventId);
-        }).toList();
+            candidates.add(new BulkCandidate(index, name, location, timeZone, startsAt,
+                    !duplicateInRequest && existingEventId == null, duplicateInRequest, existingEventId));
+        }
         return new BulkPreparation(request.date(), candidates);
     }
 
     private static BulkEventPreviewDto toBulkPreview(
             EventSeries series,
             BulkPreparation preparation,
-            List<ResolvedStartDefinition> starts
+            Map<Integer, List<ResolvedStartDefinition>> startsByEvent
     ) {
         List<BulkEventPreviewDto.Item> items = preparation.candidates().stream()
                 .map(candidate -> new BulkEventPreviewDto.Item(
                         candidate.name(), candidate.location(), candidate.timeZone(), candidate.creatable(),
-                        candidate.duplicateInRequest(), candidate.existingEventId()
+                        candidate.duplicateInRequest(), candidate.existingEventId(),
+                        toStartPreviews(startsByEvent.get(candidate.index()))
                 ))
                 .toList();
+        List<ResolvedStartDefinition> commonStarts = startsByEvent.getOrDefault(0, List.of());
+        int totalStartCount = startsByEvent.values().stream().mapToInt(List::size).sum();
+        boolean sameCount = startsByEvent.values().stream().map(List::size).distinct().count() <= 1;
         return new BulkEventPreviewDto(
                 series.getId(), series.getName(), preparation.date(), items.size(),
                 (int) items.stream().filter(BulkEventPreviewDto.Item::creatable).count(),
-                starts.size(), items.size() * starts.size(),
-                starts.stream().map(start -> new EventStartPreviewDto(
-                        start.name(), start.distanceMeters(), start.sourceCode(), start.publicVisible(),
-                        start.awardPolicy() != null
-                )).toList(),
+                sameCount ? commonStarts.size() : 0, totalStartCount,
+                toStartPreviews(commonStarts),
                 items
         );
+    }
+
+    private Map<Integer, List<ResolvedStartDefinition>> resolveBulkStarts(
+            Long eventSeriesId,
+            BulkCreateEventsRequest request
+    ) {
+        Map<Integer, List<ResolvedStartDefinition>> resolved = new java.util.LinkedHashMap<>();
+        for (int index = 0; index < request.events().size(); index++) {
+            BulkEventItemRequest item = request.events().get(index);
+            resolved.put(index, resolveStartDefinitions(
+                    eventSeriesId, item.starts() == null ? request.starts() : item.starts()
+            ));
+        }
+        return Map.copyOf(resolved);
+    }
+
+    private static List<EventStartPreviewDto> toStartPreviews(List<ResolvedStartDefinition> starts) {
+        return starts.stream().map(start -> new EventStartPreviewDto(
+                start.name(), start.distanceMeters(), start.sourceCode(), start.publicVisible(),
+                start.awardPolicy() != null
+        )).toList();
     }
 
     private Event createEventRecord(EventSeries series, CreateEventRequest request) {
@@ -464,7 +496,7 @@ public class EventService {
         );
         apply(event, request.name(), slug, request.startsAt(), request.endsAt(), request.location(),
                 request.timeZone(), status);
-        applyInitialResultInquirySettings(event, series, request.resultInquiry());
+        applyInitialResultInquirySettings(event, request.resultInquiry());
         return eventRepository.saveAndFlush(event);
     }
 
@@ -594,6 +626,7 @@ public class EventService {
     }
 
     private record BulkCandidate(
+            int index,
             String name,
             String location,
             String timeZone,
@@ -737,13 +770,25 @@ public class EventService {
 
     private Event requirePublishedEvent(Long eventId) {
         return eventRepository.findByIdAndPublicationStatus(eventId, EventPublicationStatus.PUBLISHED)
-                .filter(event -> event.getEventSeries().isActive())
                 .orElseThrow(() -> new ResourceNotFoundException("EVENT_NOT_FOUND", "Published event not found"));
     }
 
     private EventSeries requireSeries(Long seriesId) {
         return eventSeriesRepository.findById(seriesId)
                 .orElseThrow(() -> new ResourceNotFoundException("EVENT_SERIES_NOT_FOUND", "Event series not found"));
+    }
+
+    private EventSeries requireActiveSeries(Long seriesId) {
+        return requireActiveSeries(requireSeries(seriesId));
+    }
+
+    private static EventSeries requireActiveSeries(EventSeries series) {
+        if (!series.isActive()) {
+            throw new InvalidRequestException(
+                    "EVENT_SERIES_ARCHIVED", "Archived templates cannot be used for new events"
+            );
+        }
+        return series;
     }
 
     private static boolean matches(Event event, Integer year, Long seriesId, String city, LocalDate date) {
@@ -870,11 +915,12 @@ public class EventService {
 
     private void applyInitialResultInquirySettings(
             Event event,
-            EventSeries series,
             UpdateResultInquirySettingsRequest request
     ) {
         UpdateResultInquirySettingsRequest resolved = request == null
-                ? inquiryDefaults(series)
+                ? new UpdateResultInquirySettingsRequest(
+                        false, ResultInquiryDeadlineMode.AFTER_EVENT_DAYS, null, null, null
+                )
                 : request;
         boolean enabled = Boolean.TRUE.equals(resolved.enabled());
         ResultInquiryDeadlineMode deadlineMode = normalizeDeadlineMode(resolved.deadlineMode());
@@ -908,45 +954,6 @@ public class EventService {
                 decision.state(),
                 decision.deadline()
         );
-    }
-
-    private static UpdateResultInquirySettingsRequest inquiryDefaults(EventSeries series) {
-        return new UpdateResultInquirySettingsRequest(
-                series.isDefaultResultInquiryEnabled(),
-                series.getDefaultResultInquiryDeadlineMode(),
-                series.getDefaultResultInquiryWindowDays(),
-                series.getDefaultResultInquiryFixedDate(),
-                series.getDefaultResultInquiryEmail()
-        );
-    }
-
-    private void validateBulkInquiryDefaults(EventSeries series, BulkPreparation preparation) {
-        UpdateResultInquirySettingsRequest defaults = inquiryDefaults(series);
-        if (!Boolean.TRUE.equals(defaults.enabled())) {
-            return;
-        }
-        for (BulkCandidate candidate : preparation.candidates()) {
-            Event event = new Event();
-            event.setStartsAt(candidate.startsAt());
-            event.setTimeZone(candidate.timeZone());
-            validateResultInquiryFixedDateForEvent(
-                    event,
-                    true,
-                    normalizeDeadlineMode(defaults.deadlineMode()),
-                    defaults.fixedDate()
-            );
-            event.setResultInquiryEnabled(true);
-            event.setResultInquiryDeadlineMode(normalizeDeadlineMode(defaults.deadlineMode()));
-            event.setResultInquiryWindowDays(defaults.windowDays());
-            event.setResultInquiryFixedDate(defaults.fixedDate());
-            if (resultInquiryAvailabilityService.calculate(event).state()
-                    == ru.sportsresults.domain.ResultInquiryAvailability.CLOSED) {
-                throw new InvalidRequestException(
-                        "RESULT_INQUIRY_DEADLINE_EXPIRED",
-                        "Template result issue deadline is expired for one or more events"
-                );
-            }
-        }
     }
 
     private static void validateResultInquiryFixedDateForEvent(

@@ -15,7 +15,9 @@ export function draftsFromTemplate(starts: TemplateStart[]): EventStartDraft[] {
     name: start.name,
     distanceMeters: start.distanceMeters,
     sourceCode: null,
-    publicVisible: start.publicVisible,
+    // Template visibility is a deprecated compatibility value. Every new Event starts visible
+    // and can then be configured independently in its own Race settings.
+    publicVisible: true,
     awardPolicy: start.awardPolicy ? { ...start.awardPolicy } : null,
   }))
 }
@@ -33,7 +35,7 @@ export function startCommands(drafts: EventStartDraft[]): EventStartCommand[] {
 
 export function defaultPolicy(): AwardPolicyUpdate {
   return {
-    rankingBasis: 'CHIP_TIME', categoryRankingBasis: 'CHIP_TIME', primaryStandingMode: 'ALL', absolutePrizePlaces: 0,
+    rankingBasis: 'CHIP_TIME', categoryRankingBasis: 'CHIP_TIME', primaryStandingMode: 'BY_GENDER', absolutePrizePlaces: 0,
     categoryEnabled: false, ageCalculationMode: 'EVENT_DATE', categoryPrizePlaces: 0,
     excludeAbsoluteWinnersFromCategory: false,
   }

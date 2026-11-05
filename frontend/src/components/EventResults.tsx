@@ -53,10 +53,13 @@ export function EventResults({ event }: { event: EventDetails }) {
   const races = useMemo(() => publicResultRaces(event.races), [event.races])
   const selectedRace = useMemo(() => races.find((race) => String(race.id) === raceId), [races, raceId])
   const categories = selectedRace?.rules?.categoryEnabled
-    ? selectedRace.rules.availableCategories.map((category) => ({ id: category.id, name: category.name }))
+    ? selectedRace.rules.availableCategories.map((category) => ({ id: category.id, name: category.name, rankingBasis: category.rankingBasis }))
     : []
   const showCategoryColumn = selectedRace?.rules?.categoryEnabled ?? false
-  const rankingBasis = selectedRace?.rules?.rankingBasis ?? protocol.content[0]?.rankingBasis
+  const selectedCategory = categories.find((category) => String(category.id) === categoryId)
+  const rankingBasis = selectedCategory?.rankingBasis
+    ?? selectedRace?.rules?.rankingBasis
+    ?? protocol.content[0]?.rankingBasis
   const hasOfficialStanding = rankingBasis !== undefined && rankingBasis !== 'NONE'
   const hasPublicResultRows = protocol.content.length > 0
   const rankingMode = categoryId ? 'CATEGORY' : 'PRIMARY'
@@ -272,7 +275,7 @@ export function EventResults({ event }: { event: EventDetails }) {
           <label><span>ФИО</span><input aria-label="Поиск по ФИО" value={name} onChange={(changeEvent) => { clearInquiryState(); setName(changeEvent.target.value); resetPage() }} placeholder="Начните вводить имя" /></label>
           <label><span>Стартовый номер</span><input aria-label="Точный стартовый номер" value={bib} onChange={(changeEvent) => { clearInquiryState(); setBib(changeEvent.target.value); resetPage() }} placeholder="Например, 00123" /></label>
           <label><span>Пол</span><select aria-label="Пол" value={gender} onChange={(changeEvent) => { clearInquiryState(); setGender(changeEvent.target.value); resetPage() }}><option value="">Все</option><option value="female">Женщины</option><option value="male">Мужчины</option></select></label>
-          {selectedRace.rules?.categoryEnabled && <label><span>Категория</span><select aria-label="Категория" value={categoryId} onChange={(changeEvent) => { clearInquiryState(); setCategoryId(changeEvent.target.value); resetPage() }}><option value="">Все категории</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>}
+          {selectedRace.rules?.categoryEnabled && <label><span>Категория</span><select aria-label="Категория" value={categoryId} onChange={(changeEvent) => { clearInquiryState(); const nextCategoryId = changeEvent.target.value; const nextCategory = categories.find((category) => String(category.id) === nextCategoryId); setCategoryId(nextCategoryId); setSort(defaultPublicResultSort(nextCategory?.rankingBasis ?? selectedRace.rules?.rankingBasis)); setDirection('asc'); resetPage() }}><option value="">Все категории</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>}
           <label><span>Статус</span><select aria-label="Статус" value={status} onChange={(changeEvent) => { clearInquiryState(); setStatus(changeEvent.target.value); resetPage() }}><option value="">Финишировавшие и дисквалифицированные</option><option value="finished">Финишировавшие</option><option value="disqualified">Дисквалифицированные</option></select></label>
         </div>
       </section>
@@ -286,7 +289,7 @@ export function EventResults({ event }: { event: EventDetails }) {
     </div>}
 
     {selectedRace && (hasOfficialStanding
-      ? <div className="context-note"><strong>Официальный зачёт</strong> рассчитывается только внутри выбранного старта и не меняется от фильтров или сортировки. Выбранная сортировка управляет только порядком строк.</div>
+      ? <div className="context-note"><strong>{rankingBasis === 'CHIP_TIME' ? 'Зачёт по чистому времени' : 'Зачёт по официальному времени'}</strong>{categoryId ? ' внутри выбранной возрастной категории' : ' внутри выбранного старта'} не меняется от фильтров или сортировки. Выбранная сортировка управляет только порядком строк.</div>
       : <div className="context-note"><strong>Место</strong> — позиция в текущей таблице результатов. Она меняется вместе с фильтрами и сортировкой и не является официальным спортивным местом.</div>)}
     {error && <div className="state-message error" role="alert">{error}</div>}
     {!error && inquiryError && <div className="state-message" role="status">{inquiryError}</div>}

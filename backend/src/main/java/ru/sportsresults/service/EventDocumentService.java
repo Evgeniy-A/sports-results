@@ -10,6 +10,7 @@ import ru.sportsresults.api.dto.UpdateEventDocumentRequest;
 import ru.sportsresults.domain.*;
 import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.EventDocumentRepository;
+import ru.sportsresults.repository.EventInfoBlockRepository;
 import ru.sportsresults.storage.FileStorageService;
 
 import java.io.InputStream;
@@ -25,15 +26,18 @@ public class EventDocumentService {
 
     private final EventService eventService;
     private final EventDocumentRepository repository;
+    private final EventInfoBlockRepository infoBlockRepository;
     private final FileStorageService storage;
     private final AdminChangeLogRepository auditRepository;
     private final long maxSizeBytes;
 
     public EventDocumentService(EventService eventService, EventDocumentRepository repository,
+                                EventInfoBlockRepository infoBlockRepository,
                                 FileStorageService storage, AdminChangeLogRepository auditRepository,
                                 @Value("${app.documents.max-size-bytes:10485760}") long maxSizeBytes) {
         this.eventService = eventService;
         this.repository = repository;
+        this.infoBlockRepository = infoBlockRepository;
         this.storage = storage;
         this.auditRepository = auditRepository;
         this.maxSizeBytes = maxSizeBytes;
@@ -55,14 +59,22 @@ public class EventDocumentService {
 
     @Transactional
     public EventDocumentDto upload(Long eventId, EventDocumentType type, String displayName, int displayOrder,
+                                   Long infoBlockId,
                                    boolean publicDocument, String originalFilename, String contentType,
                                    byte[] content, String actor) {
         Event event = eventService.requireEvent(eventId);
         validate(displayName, originalFilename, contentType, content);
-        FileStorageService.StoredDocument storedDocument = storage.store(eventId, content);
+        EventInfoBlock infoBlock = requireInfoBlock(eventId, infoBlockId);
+        FileStorageService.StoredDocument storedDocument;
+        try {
+            storedDocument = storage.store(eventId, content);
+        } catch (RuntimeException exception) {
+            throw new DocumentStorageUnavailableException(exception);
+        }
         try {
             EventDocument document = new EventDocument();
             document.setEvent(event);
+            document.setInfoBlock(infoBlock);
             document.setType(type);
             document.setDisplayName(displayName.strip());
             document.setOriginalFilename(safeFilename(originalFilename));
@@ -79,7 +91,11 @@ public class EventDocumentService {
             audit(actor, saved.getId(), "uploaded", null, summary(saved));
             return toDto(saved);
         } catch (RuntimeException exception) {
-            storage.delete(storedDocument.provider(), storedDocument.storageKey());
+            try {
+                storage.delete(storedDocument.provider(), storedDocument.storageKey());
+            } catch (RuntimeException cleanupFailure) {
+                exception.addSuppressed(cleanupFailure);
+            }
             throw exception;
         }
     }
@@ -91,6 +107,7 @@ public class EventDocumentService {
         document.setType(request.type());
         document.setDisplayName(request.displayName().strip());
         document.setDisplayOrder(request.displayOrder());
+        document.setInfoBlock(requireInfoBlock(eventId, request.infoBlockId()));
         document.setPublicDocument(request.publicDocument());
         EventDocument saved = repository.save(document);
         audit(actor, documentId, "updated", old, summary(saved));
@@ -102,7 +119,11 @@ public class EventDocumentService {
         EventDocument document = requireOwned(eventId, documentId);
         repository.delete(document);
         repository.flush();
-        storage.delete(document.getStorageProvider(), document.getStorageKey());
+        try {
+            storage.delete(document.getStorageProvider(), document.getStorageKey());
+        } catch (RuntimeException exception) {
+            throw new DocumentStorageUnavailableException(exception);
+        }
         audit(actor, documentId, "deleted", summary(document), null);
     }
 
@@ -121,7 +142,12 @@ public class EventDocumentService {
     }
 
     private DocumentContent content(EventDocument document) {
-        InputStream stream = storage.open(document.getStorageProvider(), document.getStorageKey());
+        InputStream stream;
+        try {
+            stream = storage.open(document.getStorageProvider(), document.getStorageKey());
+        } catch (RuntimeException exception) {
+            throw new DocumentStorageUnavailableException(exception);
+        }
         Resource resource = new InputStreamResource(stream);
         return new DocumentContent(resource, document.getOriginalFilename(), document.getSizeBytes());
     }
@@ -131,9 +157,18 @@ public class EventDocumentService {
                 .orElseThrow(() -> new ResourceNotFoundException("EVENT_DOCUMENT_NOT_FOUND", "Event document not found"));
     }
 
+    private EventInfoBlock requireInfoBlock(Long eventId, Long infoBlockId) {
+        if (infoBlockId == null) return null;
+        return infoBlockRepository.findByIdAndEventId(infoBlockId, eventId)
+                .orElseThrow(() -> new InvalidRequestException(
+                        "INVALID_DOCUMENT_INFO_BLOCK",
+                        "Document info block must belong to the same Event"
+                ));
+    }
+
     private Event requirePublishedEvent(Long eventId) {
         Event event = eventService.requireEvent(eventId);
-        if (event.getPublicationStatus() != EventPublicationStatus.PUBLISHED || !event.getEventSeries().isActive()) {
+        if (event.getPublicationStatus() != EventPublicationStatus.PUBLISHED) {
             throw new ResourceNotFoundException("EVENT_NOT_FOUND", "Published event not found");
         }
         return event;
@@ -175,7 +210,8 @@ public class EventDocumentService {
     public static EventDocumentDto toDto(EventDocument document) {
         return new EventDocumentDto(document.getId(), document.getType(), document.getDisplayName(),
                 document.getOriginalFilename(), document.getContentType(), document.getSizeBytes(), document.getSha256(),
-                document.getDisplayOrder(), document.isPublicDocument(), document.getUploadedAt(),
+                document.getDisplayOrder(), document.getInfoBlock() == null ? null : document.getInfoBlock().getId(),
+                document.isPublicDocument(), document.getUploadedAt(),
                 "/api/events/" + document.getEvent().getId() + "/documents/" + document.getId() + "/content");
     }
 

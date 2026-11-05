@@ -55,8 +55,20 @@ test('category controls and cells depend on backend race metadata', () => {
   assert.match(page, /selectedRace\.rules\.availableCategories\.map/)
   assert.doesNotMatch(page, /selectedRace\.rules\.categories\.map/)
   assert.match(types, /availableCategories: CategoryRule\[\]/)
+  assert.match(types, /categoryRankingBasis: RankingBasis/)
+  assert.match(types, /rankingBasis: RankingBasis/)
+  assert.match(page, /selectedCategory\?\.rankingBasis/)
+  assert.match(page, /defaultPublicResultSort\(nextCategory\?\.rankingBasis/)
   assert.match(page, /showCategoryColumn && <th>Категория<\/th>/)
   assert.match(page, /categoryEnabled=\{showCategoryColumn\}/)
+})
+
+test('category filter labels the actual category scoring time without changing backend places', () => {
+  assert.match(page, /selectedCategory = categories\.find/)
+  assert.match(page, /Зачёт по чистому времени/)
+  assert.match(page, /Зачёт по официальному времени/)
+  assert.match(page, /inside|внутри выбранной возрастной категории/)
+  assert.doesNotMatch(page, /set.*Place|calculate.*Place/)
 })
 
 test('result detail category follows race policy without rendering an empty placeholder', () => {

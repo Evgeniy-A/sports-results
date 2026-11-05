@@ -65,6 +65,12 @@ public class AdminEventContentController {
         return contentService.updateInfoBlock(eventId, blockId, request, principal.getName());
     }
 
+    @PutMapping("/info-blocks/order")
+    public List<EventInfoBlockDto> reorderInfoBlocks(@PathVariable Long eventId,
+            @Valid @RequestBody ReorderEventInfoBlocksRequest request, Principal principal) {
+        return contentService.reorderInfoBlocks(eventId, request.blockIds(), principal.getName());
+    }
+
     @DeleteMapping("/info-blocks/{blockId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteInfoBlock(@PathVariable Long eventId, @PathVariable Long blockId, Principal principal) {
@@ -169,10 +175,11 @@ public class AdminEventContentController {
     public EventDocumentDto uploadDocument(@PathVariable Long eventId,
             @RequestParam EventDocumentType type, @RequestParam String displayName,
             @RequestParam(defaultValue = "0") int displayOrder,
+            @RequestParam(required = false) Long infoBlockId,
             @RequestParam(defaultValue = "true") boolean publicDocument,
             @RequestPart("file") MultipartFile file, Principal principal) {
         try {
-            return documentService.upload(eventId, type, displayName, displayOrder, publicDocument,
+            return documentService.upload(eventId, type, displayName, displayOrder, infoBlockId, publicDocument,
                     file.getOriginalFilename(), file.getContentType(), file.getBytes(), principal.getName());
         } catch (IOException exception) {
             throw new InvalidRequestException("UPLOAD_READ_FAILED", "Uploaded file could not be read");

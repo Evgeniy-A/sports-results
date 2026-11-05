@@ -62,21 +62,30 @@ public class OfficialRankingQueryRepositoryImpl implements OfficialRankingQueryR
             ), category_eligible AS (
                 SELECT base.*
                 FROM base
-                LEFT JOIN primary_ranked ON primary_ranked.result_id = base.result_id
                 WHERE base.category_enabled
                   AND base.category_id IS NOT NULL
                   AND base.category_ranking_time_ms IS NOT NULL
-                  AND NOT (
-                      base.exclude_absolute_winners_from_category
-                      AND primary_ranked.primary_place IS NOT NULL
-                      AND primary_ranked.primary_place <= base.absolute_prize_places
-                  )
             ), category_ranked AS (
                 SELECT category_eligible.*,
                        rank() OVER (
                            PARTITION BY race_id, category_id ORDER BY category_ranking_time_ms
                        ) AS category_place
                 FROM category_eligible
+            ), category_award_eligible AS (
+                SELECT category_ranked.*
+                FROM category_ranked
+                LEFT JOIN primary_ranked ON primary_ranked.result_id = category_ranked.result_id
+                WHERE NOT (
+                    category_ranked.exclude_absolute_winners_from_category
+                    AND primary_ranked.primary_place IS NOT NULL
+                    AND primary_ranked.primary_place <= category_ranked.absolute_prize_places
+                )
+            ), category_award_ranked AS (
+                SELECT category_award_eligible.*,
+                       rank() OVER (
+                           PARTITION BY race_id, category_id ORDER BY category_ranking_time_ms
+                       ) AS category_award_place
+                FROM category_award_eligible
             ), achievements AS (
                 SELECT result_id,
                        primary_place AS place,
@@ -98,7 +107,12 @@ public class OfficialRankingQueryRepositoryImpl implements OfficialRankingQueryR
                        category_display_name,
                        NULL::varchar AS gender,
                        category_prize_places > 0
-                           AND category_place <= category_prize_places AS prize
+                           AND EXISTS (
+                               SELECT 1
+                               FROM category_award_ranked awarded
+                               WHERE awarded.result_id = category_ranked.result_id
+                                 AND awarded.category_award_place <= category_ranked.category_prize_places
+                           ) AS prize
                 FROM category_ranked
             )
             SELECT result_id, place, achievement_type, category_id,

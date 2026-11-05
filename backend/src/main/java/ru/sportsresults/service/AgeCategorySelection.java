@@ -58,7 +58,9 @@ final class AgeCategorySelection {
             return resolved(
                     matches.size() == 1 ? matches.getFirst().value() : null,
                     AgeCategoryBranch.UNKNOWN,
-                    AgeCategoryResolutionReason.NO_BIRTH_DATE
+                    matches.size() == 1
+                            ? AgeCategoryResolutionReason.NO_BIRTH_DATE
+                            : AgeCategoryResolutionReason.SOURCE_CATEGORY_UNMAPPED
             );
         }
 
@@ -136,7 +138,9 @@ final class AgeCategorySelection {
         return resolved(
                 matches.isEmpty() ? null : matches.getFirst().value(),
                 AgeCategoryBranch.ADULT,
-                AgeCategoryResolutionReason.ADULT_RECALCULATED
+                matches.isEmpty()
+                        ? AgeCategoryResolutionReason.ADULT_OUTSIDE_CATEGORY_RANGES
+                        : AgeCategoryResolutionReason.ADULT_RECALCULATED
         );
     }
 

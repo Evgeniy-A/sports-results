@@ -10,6 +10,7 @@ public record UpdateEventDocumentRequest(
         @NotNull EventDocumentType type,
         @NotBlank @Size(max = 255) String displayName,
         @PositiveOrZero int displayOrder,
+        Long infoBlockId,
         boolean publicDocument
 ) {
 }

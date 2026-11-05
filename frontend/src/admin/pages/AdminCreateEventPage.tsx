@@ -11,6 +11,7 @@ import { AdminNotice, Field, Loadable } from '../components/AdminUi'
 import { AdminCreationHeader, AdminCreationSection } from '../components/AdminCreationLayout'
 import { InlineTemplateCreator } from '../components/InlineTemplateCreator'
 import { TimeZoneCombobox } from '../components/TimeZoneCombobox'
+import { LocationCombobox } from '../components/LocationCombobox'
 import { EventStartComposer } from '../components/EventStartComposer'
 import { ResultInquirySettingsFields } from '../components/ResultInquirySettingsFields'
 import { draftsFromTemplate, startCommands } from '../eventStartDrafts'
@@ -23,7 +24,7 @@ import {
 
 const CREATION_STEPS = [
   { number: '01', label: 'Основное' },
-  { number: '02', label: 'Старты' },
+  { number: '02', label: 'Форматы' },
   { number: '03', label: 'Обращения' },
   { number: '04', label: 'Проверка' },
 ]
@@ -49,11 +50,11 @@ export function AdminCreateEventPage({ api }: { api: AdminApi }) {
 
   useEffect(() => {
     api.eventSeries().then((loaded) => {
-      setTemplates(loaded)
-      const initial = loaded[0]
+      const available = loaded.filter((item) => item.active)
+      setTemplates(available)
+      const initial = available[0]
       if (initial) {
         setTemplateId(String(initial.id))
-        setInquiry(initial.resultInquiryDefaults ?? emptyInquirySettings())
       }
     }).catch((reason) => setError(adminErrorMessage(reason))).finally(() => setLoading(false))
   }, [api])
@@ -62,14 +63,12 @@ export function AdminCreateEventPage({ api }: { api: AdminApi }) {
     if (!templateId) { setStarts([]); return }
     let cancelled = false
     setStartsLoading(true); setError(null); setPreview(false)
-    const selectedTemplate = templates.find((item) => String(item.id) === templateId)
-    setInquiry(selectedTemplate?.resultInquiryDefaults ?? emptyInquirySettings())
     api.templateStarts(Number(templateId))
       .then((loaded) => { if (!cancelled) setStarts(draftsFromTemplate(loaded)) })
       .catch((reason) => { if (!cancelled) setError(adminErrorMessage(reason)) })
       .finally(() => { if (!cancelled) setStartsLoading(false) })
     return () => { cancelled = true }
-  }, [api, templateId, templates])
+  }, [api, templateId])
 
   const dirty = Boolean(name || startsAt || endsAt || location || userModified)
   useEffect(() => {
@@ -148,12 +147,12 @@ export function AdminCreateEventPage({ api }: { api: AdminApi }) {
               <Field label="Шаблон" hint="Шаблон объединяет мероприятия одного бренда и может использоваться повторно."><select required value={templateId} onChange={(event) => changeTemplate(event.target.value)}><option value="">Выберите шаблон</option>{templates.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
               <InlineTemplateCreator api={api} initiallyOpen={templates.length === 0} onCreated={templateCreated} />
               <div className="admin-form-grid"><Field label="Начало"><input type="datetime-local" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} /></Field><Field label="Окончание"><input type="datetime-local" value={endsAt} onChange={(event) => setEndsAt(event.target.value)} /></Field></div>
-              <Field label="Город / место"><input maxLength={255} value={location} onChange={(event) => setLocation(event.target.value)} /></Field>
+              <Field label="Город / место"><LocationCombobox value={location} onChange={(value, suggestedTimeZone) => { setLocation(value); if (suggestedTimeZone) setTimeZone(suggestedTimeZone) }} /></Field>
               <Field label="Часовой пояс" hint="Выберите город с подходящим местным временем"><TimeZoneCombobox value={timeZone} location={location} onChange={changeTimeZone} /></Field>
             </div>
           </AdminCreationSection>
-          <AdminCreationSection number="02" title="Старты" description="Старты будут созданы вместе с мероприятием.">
-            {startsLoading ? <p className="admin-creation-loading">Загружаем старты шаблона…</p> : <EventStartComposer value={starts} onChange={changeStarts} compactHeader />}
+          <AdminCreationSection number="02" title="Форматы" description="Форматы будут созданы вместе с мероприятием.">
+            {startsLoading ? <p className="admin-creation-loading">Загружаем форматы шаблона…</p> : <EventStartComposer value={starts} onChange={changeStarts} compactHeader />}
           </AdminCreationSection>
           <AdminCreationSection number="03" title="Обращения по результатам" description="Укажите, смогут ли участники обращаться по опубликованным результатам." muted={!inquiry.enabled}>
             <div className="admin-inquiry-create-fields">
@@ -170,7 +169,7 @@ export function AdminCreateEventPage({ api }: { api: AdminApi }) {
         </> : <AdminCreationSection number="04" title="Проверка" description="Проверьте данные перед созданием мероприятия.">
           <section className="admin-event-preview">
             <div className="admin-preview-summary"><p className="admin-eyebrow">Готово к созданию</p><h2>{name}</h2><dl><div><dt>Шаблон</dt><dd>{templates.find((item) => String(item.id) === templateId)?.name}</dd></div><div><dt>Город / место</dt><dd>{location || '—'}</dd></div><div><dt>Обращения</dt><dd>{inquiry.enabled ? `${inquiry.deadlineMode === 'FIXED_DATE' ? 'до выбранной даты' : `${inquiry.windowDays} дн. после мероприятия`}, ${formatResultInquiryDeadline(inquiryDeadline, timeZone)}` : 'приём выключен'}</dd></div></dl></div>
-            <div><h3>Будут созданы старты</h3>{selectedStarts.length ? <ol>{selectedStarts.map((start) => <li key={`${start.templateStartId}-${start.sourceCode}-${start.name}`}><strong>{start.name}</strong><span>{start.distanceMeters === null ? 'Дистанция не указана' : `${start.distanceMeters} м`} · Награждение: {start.awardPolicy ? 'настроено' : 'штатные настройки'}</span></li>)}</ol> : <p>Мероприятие будет создано без стартов.</p>}</div>
+            <div><h3>Будут созданы форматы</h3>{selectedStarts.length ? <ol>{selectedStarts.map((start) => <li key={`${start.templateStartId}-${start.sourceCode}-${start.name}`}><strong>{start.name}</strong><span>{start.distanceMeters === null ? 'Дистанция не указана' : `${start.distanceMeters} м`} · Награждение: {start.awardPolicy ? 'настроено' : 'штатные настройки'}</span></li>)}</ol> : <p>Мероприятие будет создано без форматов.</p>}</div>
             <div className="admin-creation-actions"><div><strong>Все данные готовы</strong><span>После создания откроется карточка мероприятия.</span></div><div><button className="admin-button-secondary" type="button" disabled={busy} onClick={() => setPreview(false)}>Назад</button><button className="admin-button-primary" type="button" disabled={busy} onClick={() => void create()}>{busy ? 'Создаём…' : 'Создать мероприятие'}</button></div></div>
           </section>
         </AdminCreationSection>}

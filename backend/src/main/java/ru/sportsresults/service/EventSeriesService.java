@@ -86,6 +86,21 @@ public class EventSeriesService {
         }
     }
 
+    @Transactional
+    public void delete(Long id) {
+        EventSeries series = repository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "EVENT_SERIES_NOT_FOUND", "Event series not found"
+                ));
+        if (eventRepository.countByEventSeriesId(id) > 0) {
+            throw new RequestConflictException(
+                    "EVENT_SERIES_IN_USE", "A template used by events cannot be deleted"
+            );
+        }
+        repository.delete(series);
+        repository.flush();
+    }
+
     private static void apply(EventSeries series, String name, String slug, String description, boolean active) {
         series.setName(name.strip());
         series.setSlug(slug.strip());

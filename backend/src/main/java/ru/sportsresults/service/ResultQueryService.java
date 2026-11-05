@@ -310,7 +310,6 @@ public class ResultQueryService {
 
     private void requirePublishedEvent(Long eventId) {
         if (eventRepository.findByIdAndPublicationStatus(eventId, EventPublicationStatus.PUBLISHED)
-                .filter(event -> event.getEventSeries().isActive())
                 .isEmpty()) {
             throw new ResourceNotFoundException("EVENT_NOT_FOUND", "Published event not found");
         }

@@ -121,6 +121,35 @@ class AgeCategoryResolverTest {
     }
 
     @Test
+    void reportsAdultOutsideConfiguredRangesSeparatelyFromMissingConfiguration() {
+        Category ageEighteenToTwentyNine = category("18-29 Male", 18, 29, CategoryGender.MALE);
+        Category ageFortyToFortyNine = category("40-49 Male", 40, 49, CategoryGender.MALE);
+
+        AgeCategoryResolution<Category> resolution = resolver.resolveDetailed(
+                LocalDate.of(1992, 1, 1), "male", "30-39 Male", EVENT_DATE, "UTC",
+                AgeCalculationMode.EVENT_DATE, List.of(ageEighteenToTwentyNine, ageFortyToFortyNine)
+        );
+
+        assertThat(resolution.category()).isNull();
+        assertThat(resolution.reason()).isEqualTo(AgeCategoryResolutionReason.ADULT_OUTSIDE_CATEGORY_RANGES);
+        assertThat(resolution.blocked()).isFalse();
+    }
+
+    @Test
+    void reportsUnmappedSourceCategoryWhenBirthDateIsMissing() {
+        Category configured = category("30-39 Male", 30, 39, CategoryGender.MALE);
+
+        AgeCategoryResolution<Category> resolution = resolver.resolveDetailed(
+                null, "male", "UNKNOWN SOURCE", EVENT_DATE, "UTC",
+                AgeCalculationMode.EVENT_DATE, List.of(configured)
+        );
+
+        assertThat(resolution.category()).isNull();
+        assertThat(resolution.reason()).isEqualTo(AgeCategoryResolutionReason.SOURCE_CATEGORY_UNMAPPED);
+        assertThat(resolution.blocked()).isFalse();
+    }
+
+    @Test
     void doesNotGuessMissingGenderOrResolveWithoutFacts() {
         Category male = category("30-39 Male", 30, 39, CategoryGender.MALE);
 

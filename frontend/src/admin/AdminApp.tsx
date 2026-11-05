@@ -105,6 +105,8 @@ function AuthenticatedAdmin({ credentials, onLogout }: { credentials: AdminCrede
     content = <AdminBulkEventsPage api={api} />
   } else if (location.pathname === '/admin/templates' || location.pathname === '/admin/templates/') {
     content = <AdminTemplatesPage api={api} />
+  } else if (location.pathname === '/admin/templates/new' || location.pathname === '/admin/templates/new/') {
+    content = <AdminTemplatePage api={api} templateId="new" />
   } else if (templateMatch) {
     content = <AdminTemplatePage api={api} templateId={Number(templateMatch[1])} />
   } else if (location.pathname === '/admin/support/issues' || location.pathname === '/admin/support/issues/') {

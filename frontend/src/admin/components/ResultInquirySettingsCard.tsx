@@ -93,10 +93,7 @@ export function ResultInquirySettingsCard({ api, event, compact = false }: {
         <p className="admin-form-help">После окончания срока участники не смогут создавать новые обращения. Уже созданные обращения останутся доступны для обработки.</p>
         {savedSettings.availability === 'CLOSED' && <AdminNotice tone="warning">Чтобы снова открыть приём, увеличьте количество дней или выберите будущую дату.</AdminNotice>}
         <div className="admin-form-actions admin-inquiry-actions">
-          <button className="admin-button-primary" disabled={busy}>{busy ? 'Сохраняем…' : 'Сохранить настройки'}</button>
-          {savedSettings.enabled
-            ? <button className="admin-button-danger-outline admin-inquiry-manual-toggle" type="button" disabled={busy} onClick={() => void persist({ ...draftSettings, enabled: false })}>Закрыть приём</button>
-            : <button className="admin-button-secondary admin-inquiry-manual-toggle" type="button" disabled={busy} onClick={() => void persist({ ...draftSettings, enabled: true })}>Включить приём</button>}
+          <button className="admin-button-primary" disabled={busy || !dirty}>{busy ? 'Сохраняем…' : 'Сохранить'}</button>
         </div>
       </form>}
     </Loadable>

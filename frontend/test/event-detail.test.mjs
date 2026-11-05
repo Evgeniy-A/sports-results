@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
+import { linkifyHttpText } from '../src/utils/linkifyText.ts'
 
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const detail = await readFile(new URL('../src/pages/EventDetailPage.tsx', import.meta.url), 'utf8')
@@ -43,12 +44,51 @@ test('event info retains structured rules and optional participant content', () 
   assert.match(info, /rules\.rankingBasis/)
   assert.match(info, /rules\.categoryEnabled/)
   assert.match(info, /event\.schedule\.length > 0/)
-  assert.match(info, /event\.documents\.length > 0/)
+  assert.match(info, /generalDocuments\.length > 0/)
   assert.match(info, /event\.infoBlocks\.length > 0/)
   assert.match(info, /event\.races\.map/)
   assert.doesNotMatch(info, /event\.sportFormats|format\.races/)
   assert.match(info, /!race\.resultsPublished/)
   assert.match(info, /Результаты ещё не опубликованы/)
+})
+
+test('participant information groups public documents by block and keeps legacy documents general', () => {
+  assert.match(info, /document\.infoBlockId === null/)
+  assert.match(info, /document\.infoBlockId === block\.id/)
+  assert.match(info, /<DocumentLinks documents=\{generalDocuments\}/)
+  assert.match(info, /<DocumentLinks documents=\{documentsByBlock\.get\(block\.id\) \?\? \[\]\}/)
+  assert.match(info, /linkifyHttpText\(value\)/)
+})
+
+test('participant information linkifies only safe HTTP URLs without surrounding punctuation', () => {
+  assert.deepEqual(
+    linkifyHttpText('Читайте (https://example.com/path), затем javascript:alert(1).'),
+    [
+      { text: 'Читайте (' },
+      { text: 'https://example.com/path', href: 'https://example.com/path' },
+      { text: '),' },
+      { text: ' затем javascript:alert(1).' },
+    ],
+  )
+  assert.deepEqual(
+    linkifyHttpText('Документация: https://example.com/a_(b).'),
+    [
+      { text: 'Документация: ' },
+      { text: 'https://example.com/a_(b)', href: 'https://example.com/a_(b)' },
+      { text: '.' },
+    ],
+  )
+  assert.deepEqual(linkifyHttpText('Зеркало http://a.'), [
+    { text: 'Зеркало ' },
+    { text: 'http://a', href: 'http://a' },
+    { text: '.' },
+  ])
+})
+
+test('public rules distinguish primary and category scoring bases', () => {
+  assert.match(info, /Основной зачёт/)
+  assert.match(info, /rules\.categoryRankingBasis/)
+  assert.match(info, /category\.rankingBasis/)
 })
 
 test('public event documents open the configured API resource in a separate safe tab', () => {

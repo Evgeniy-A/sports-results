@@ -2443,7 +2443,7 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void copiesTemplateInquiryDefaultsOnceAndAllowsEventOverride() throws Exception {
+    void ignoresLegacyTemplateInquiryDefaultsAndKeepsEventSettingsIndependent() throws Exception {
         EventSeries series = createSeries("Inquiry defaults", "inquiry-defaults-series");
         String fiveDayDefaults = objectMapper.writeValueAsString(Map.of(
                 "name", series.getName(),
@@ -2462,7 +2462,7 @@ class BackendIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.resultInquiryDefaults.windowDays").value(5));
 
-        String fromTemplate = objectMapper.writeValueAsString(Map.of(
+        String withoutEventSettings = objectMapper.writeValueAsString(Map.of(
                 "eventSeriesId", series.getId(),
                 "name", "Copied defaults event",
                 "startsAt", "2027-08-15T08:00:00Z",
@@ -2472,17 +2472,17 @@ class BackendIntegrationTest {
         ));
         MvcResult copiedResult = mockMvc.perform(post("/api/admin/events")
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
-                        .contentType(MediaType.APPLICATION_JSON).content(fromTemplate))
+                        .contentType(MediaType.APPLICATION_JSON).content(withoutEventSettings))
                 .andExpect(status().isCreated()).andReturn();
         long copiedEventId = objectMapper.readTree(
                 copiedResult.getResponse().getContentAsByteArray()).get("id").asLong();
         mockMvc.perform(get("/api/admin/events/{eventId}/result-inquiry", copiedEventId)
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.enabled").value(true))
+                .andExpect(jsonPath("$.enabled").value(false))
                 .andExpect(jsonPath("$.deadlineMode").value("AFTER_EVENT_DAYS"))
-                .andExpect(jsonPath("$.windowDays").value(5))
-                .andExpect(jsonPath("$.email").value("template@example.org"));
+                .andExpect(jsonPath("$.windowDays").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.email").value(org.hamcrest.Matchers.nullValue()));
 
         String tenDayDefaults = fiveDayDefaults
                 .replace("\"windowDays\":5", "\"windowDays\":10")
@@ -2496,21 +2496,9 @@ class BackendIntegrationTest {
         mockMvc.perform(get("/api/admin/events/{eventId}/result-inquiry", copiedEventId)
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.windowDays").value(5))
-                .andExpect(jsonPath("$.email").value("template@example.org"));
-        Event copiedEvent = eventRepository.findById(copiedEventId).orElseThrow();
-        copiedEvent.setStartsAt(Instant.now().minus(Duration.ofDays(2)));
-        copiedEvent.setEndsAt(Instant.now().minus(Duration.ofDays(1)));
-        copiedEvent.setPublicationStatus(EventPublicationStatus.PUBLISHED);
-        copiedEvent.setResultsPublicationStatus(ru.sportsresults.domain.ResultsPublicationStatus.PUBLISHED);
-        eventRepository.saveAndFlush(copiedEvent);
-        importPublishedFixture(
-                copiedEventId, "copied-template-fallback.csv",
-                singleInquiryBibCsv("Copied", "finished").getBytes(StandardCharsets.UTF_8)
-        );
-        assertThat(resultInquiryService.verify(
-                copiedEventId, "1100", LocalDate.parse("1980-01-01")
-        ).contactEmail()).isEqualTo("template@example.org");
+                .andExpect(jsonPath("$.enabled").value(false))
+                .andExpect(jsonPath("$.windowDays").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.email").value(org.hamcrest.Matchers.nullValue()));
 
         Map<String, Object> overridePayload = new LinkedHashMap<>();
         overridePayload.put("eventSeriesId", series.getId());
@@ -2538,6 +2526,18 @@ class BackendIntegrationTest {
                 .andExpect(jsonPath("$.windowDays").value(7))
                 .andExpect(jsonPath("$.email").value("override@example.org"));
 
+        mockMvc.perform(put("/api/admin/events/{eventId}/result-inquiry", overriddenEventId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true,\"windowDays\":9,\"email\":\"changed-event@example.org\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.windowDays").value(9));
+        mockMvc.perform(get("/api/admin/events/{eventId}/result-inquiry", copiedEventId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(false))
+                .andExpect(jsonPath("$.email").value(org.hamcrest.Matchers.nullValue()));
+
         String bulk = objectMapper.writeValueAsString(Map.of(
                 "eventSeriesId", series.getId(),
                 "date", "2027-09-01",
@@ -2556,16 +2556,16 @@ class BackendIntegrationTest {
         assertThat(eventRepository.findAllByEventSeriesIdOrderByIdAsc(series.getId()).stream()
                 .filter(created -> created.getName().startsWith("Bulk Inquiry")).toList())
                 .allSatisfy(created -> {
-                    assertThat(created.isResultInquiryEnabled()).isTrue();
+                    assertThat(created.isResultInquiryEnabled()).isFalse();
                     assertThat(created.getResultInquiryDeadlineMode())
                             .isEqualTo(ResultInquiryDeadlineMode.AFTER_EVENT_DAYS);
-                    assertThat(created.getResultInquiryWindowDays()).isEqualTo(10);
-                    assertThat(created.getResultInquiryEmail()).isEqualTo("changed-template@example.org");
+                    assertThat(created.getResultInquiryWindowDays()).isNull();
+                    assertThat(created.getResultInquiryEmail()).isNull();
                 });
     }
 
     @Test
-    void copiesFixedDateTemplateDefaultAndRejectsInvalidEventAndBulkDates() throws Exception {
+    void ignoresLegacyFixedDateTemplateDefaultAndValidatesExplicitEventDate() throws Exception {
         EventSeries series = createSeries("Fixed inquiry defaults", "fixed-inquiry-defaults-series");
         String defaults = objectMapper.writeValueAsString(Map.of(
                 "name", series.getName(),
@@ -2599,16 +2599,28 @@ class BackendIntegrationTest {
         mockMvc.perform(get("/api/admin/events/{eventId}/result-inquiry", eventId)
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.deadlineMode").value("FIXED_DATE"))
-                .andExpect(jsonPath("$.fixedDate").value("2027-08-20"))
-                .andExpect(jsonPath("$.deadline").value("2027-08-20T18:59:59.999999999Z"));
+                .andExpect(jsonPath("$.enabled").value(false))
+                .andExpect(jsonPath("$.deadlineMode").value("AFTER_EVENT_DAYS"))
+                .andExpect(jsonPath("$.fixedDate").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.deadline").value(org.hamcrest.Matchers.nullValue()));
 
-        String invalidEvent = validEvent.replace("Valid fixed date event", "Invalid fixed date event")
-                .replace("2027-08-15T08:00:00Z", "2027-08-21T08:00:00Z")
-                .replace("2027-08-15T13:00:00Z", "2027-08-21T13:00:00Z");
+        Map<String, Object> invalidEvent = new LinkedHashMap<>();
+        invalidEvent.put("eventSeriesId", series.getId());
+        invalidEvent.put("name", "Invalid fixed date event");
+        invalidEvent.put("startsAt", "2027-08-21T08:00:00Z");
+        invalidEvent.put("endsAt", "2027-08-21T13:00:00Z");
+        invalidEvent.put("timeZone", "Asia/Yekaterinburg");
+        invalidEvent.put("publicationStatus", "DRAFT");
+        invalidEvent.put("resultInquiry", Map.of(
+                "enabled", true,
+                "deadlineMode", "FIXED_DATE",
+                "fixedDate", "2027-08-20",
+                "email", "fixed@example.org"
+        ));
         mockMvc.perform(post("/api/admin/events")
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
-                        .contentType(MediaType.APPLICATION_JSON).content(invalidEvent))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalidEvent)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("RESULT_INQUIRY_FIXED_DATE_BEFORE_EVENT"));
 
@@ -2624,8 +2636,8 @@ class BackendIntegrationTest {
         mockMvc.perform(post("/api/admin/events/bulk/preview")
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
                         .contentType(MediaType.APPLICATION_JSON).content(bulk))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("RESULT_INQUIRY_FIXED_DATE_BEFORE_EVENT"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.creatableCount").value(1));
     }
 
     @Test
@@ -5404,11 +5416,14 @@ class BackendIntegrationTest {
         );
         assertThat(excluded.content()).extracting(ResultListItemDto::displayName)
                 .containsExactly("B", "C", "D");
-        assertThat(achievement(excluded.content(), "B", "CATEGORY").place()).isEqualTo(1);
-        assertThat(achievement(excluded.content(), "C", "CATEGORY").place()).isEqualTo(2);
-        assertThat(achievement(excluded.content(), "D", "CATEGORY").place()).isEqualTo(3);
+        assertThat(achievement(excluded.content(), "B", "CATEGORY").place()).isEqualTo(3);
+        assertThat(achievement(excluded.content(), "C", "CATEGORY").place()).isEqualTo(4);
+        assertThat(achievement(excluded.content(), "D", "CATEGORY").place()).isEqualTo(5);
         assertThat(achievement(excluded.content(), "B", "CATEGORY").label())
-                .isEqualTo("1 место · Target");
+                .isEqualTo("3 место · Target");
+        assertThat(achievement(excluded.content(), "B", "CATEGORY").prize()).isTrue();
+        assertThat(achievement(excluded.content(), "C", "CATEGORY").prize()).isTrue();
+        assertThat(achievement(excluded.content(), "D", "CATEGORY").prize()).isTrue();
         assertThat(resultQueryService.searchAdmin(
                 event.getId(), race.getId(), null, null, null, target.getId(), null,
                 0, 20, "chipTime", "asc", RankingBasis.CHIP_TIME
@@ -5507,14 +5522,9 @@ class BackendIntegrationTest {
         for (int primaryPlace = 1; primaryPlace <= 60; primaryPlace++) {
             String name = "Участник %02d".formatted(primaryPlace);
             assertThat(achievement(withCategories.content(), name, "GENDER").place()).isEqualTo(primaryPlace);
-            if (primaryPlace <= 3) {
-                assertThat(item(withCategories.content(), name).rankingAchievements())
-                        .noneMatch(value -> value.type().name().equals("CATEGORY"));
-            } else {
-                RankingAchievementDto category = achievement(withCategories.content(), name, "CATEGORY");
-                assertThat(category.place()).isEqualTo(primaryPlace - 3);
-                assertThat(category.prize()).isEqualTo(primaryPlace <= 6);
-            }
+            RankingAchievementDto category = achievement(withCategories.content(), name, "CATEGORY");
+            assertThat(category.place()).isEqualTo(primaryPlace);
+            assertThat(category.prize()).isEqualTo(primaryPlace >= 4 && primaryPlace <= 6);
         }
         assertThat(eventService.listPublishedEventRaces(event.getId()))
                 .filteredOn(value -> value.id().equals(race.getId()))
@@ -5526,7 +5536,7 @@ class BackendIntegrationTest {
                 event.getId(), race.getId(), "Участник 08", null, null, null, null,
                 0, 20, "displayName", "asc"
         );
-        assertThat(achievement(filtered.content(), "Участник 08", "CATEGORY").place()).isEqualTo(5);
+        assertThat(achievement(filtered.content(), "Участник 08", "CATEGORY").place()).isEqualTo(8);
         var pageTwelve = resultQueryService.search(
                 event.getId(), race.getId(), null, null, null, null, null,
                 11, 5, "gunTime", "asc"
@@ -5534,7 +5544,7 @@ class BackendIntegrationTest {
         assertThat(pageTwelve.content()).extracting(ResultListItemDto::displayName)
                 .containsExactly("Участник 56", "Участник 57", "Участник 58", "Участник 59", "Участник 60");
         assertThat(achievement(pageTwelve.content(), "Участник 57", "GENDER").place()).isEqualTo(57);
-        assertThat(achievement(pageTwelve.content(), "Участник 57", "CATEGORY").place()).isEqualTo(54);
+        assertThat(achievement(pageTwelve.content(), "Участник 57", "CATEGORY").place()).isEqualTo(57);
 
         awardPolicyService.upsert(race.getId(), new UpdateAwardPolicyRequest(
                 RankingBasis.GUN_TIME, PrimaryStandingMode.BY_GENDER, 3, false,
@@ -5808,6 +5818,15 @@ class BackendIntegrationTest {
                         )))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CATEGORY_RANGE_OVERLAP"));
+        mockMvc.perform(post("/api/admin/races/{raceId}/categories", race.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(categoryJson(
+                                "invalid-range", "Invalid range", 45, 35,
+                                CategoryGender.FEMALE, 3, true
+                        )))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_CATEGORY_RANGE"));
 
         long importCount = importBatchRepository.count();
         awardPolicyService.upsert(race.getId(), new UpdateAwardPolicyRequest(
@@ -6806,7 +6825,7 @@ class BackendIntegrationTest {
         List<Event> createdEvents = eventRepository.findAllByEventSeriesIdOrderByIdAsc(template.getId());
         assertThat(createdEvents)
                 .extracting(Event::getName)
-                .containsExactly("Казань", "Екатеринбург");
+                .containsExactly("Гонка Героев — Казань", "Гонка Героев — Екатеринбург");
         assertThat(createdEvents).extracting(Event::getStartsAt)
                 .containsExactly(Instant.parse("2027-08-14T21:00:00Z"), Instant.parse("2027-08-14T19:00:00Z"));
         assertThat(eventSeriesRepository.count()).isEqualTo(1);
@@ -6902,6 +6921,50 @@ class BackendIntegrationTest {
     }
 
     @Test
+    void deletesOnlyUnusedTemplatesAndArchiveKeepsHistoricalPublishedEventPublic() throws Exception {
+        EventSeries unused = createSeries("Unused template", "unused-template");
+        createTemplateStart(unused.getId(), "Без дистанции", null);
+        mockMvc.perform(delete("/api/admin/event-series/{id}", unused.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isNoContent());
+        assertThat(eventSeriesRepository.findById(unused.getId())).isEmpty();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM event_series_start_templates WHERE event_series_id=?",
+                Long.class, unused.getId())).isZero();
+
+        EventSeries used = createSeries("Historical template", "historical-template");
+        Event historical = createEvent(
+                used, "Historical Event", "historical-event", "Москва", "2027-08-15T06:00:00Z"
+        );
+        mockMvc.perform(put("/api/admin/event-series/{id}", used.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Historical template\",\"description\":null,\"active\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.active").value(false));
+
+        mockMvc.perform(get("/api/events/{eventId}", historical.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Historical Event"));
+        mockMvc.perform(post("/api/admin/events")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "eventSeriesId", used.getId(),
+                                "name", "Must not be created",
+                                "timeZone", "Europe/Moscow",
+                                "publicationStatus", "DRAFT"
+                        ))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("EVENT_SERIES_ARCHIVED"));
+        mockMvc.perform(delete("/api/admin/event-series/{id}", used.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("EVENT_SERIES_IN_USE"));
+        assertThat(eventRepository.findById(historical.getId())).isPresent();
+    }
+
+    @Test
     void managesOrderedTemplateStartsAndOptionalAwardPolicyWithoutNumericOrderInput() throws Exception {
         EventSeries template = createSeries("Template starts", "template-starts");
         assertThat(jdbcTemplate.queryForObject(
@@ -6918,6 +6981,7 @@ class BackendIntegrationTest {
                 .andExpect(jsonPath("$[0].id").value(five))
                 .andExpect(jsonPath("$[0].displayOrder").value(0))
                 .andExpect(jsonPath("$[2].id").value(championship))
+                .andExpect(jsonPath("$[2].distanceMeters").value(org.hamcrest.Matchers.nullValue()))
                 .andExpect(jsonPath("$[0].sourceCode").doesNotExist())
                 .andExpect(jsonPath("$[2].awardPolicy").doesNotExist());
         mockMvc.perform(get("/api/admin/event-series")
@@ -7207,6 +7271,9 @@ class BackendIntegrationTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT ranking_basis FROM award_policies WHERE race_id=?", String.class, copied.get(1).getId()))
                 .isEqualTo("CHIP_TIME");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT primary_standing_mode FROM award_policies WHERE race_id=?",
+                String.class, copied.get(1).getId())).isEqualTo("BY_GENDER");
 
         mockMvc.perform(put("/api/admin/event-series/{seriesId}/start-templates/{startId}",
                         template.getId(), five).with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
@@ -7243,12 +7310,13 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void bulkCopyUsesTheSameStartMaterializationAndCreatesIndependentRaceSets() throws Exception {
+    void bulkCopyUsesPerEventFormatsAndCreatesIndependentRacePolicyAndCategorySets() throws Exception {
         EventSeries template = createSeries("Bulk starts", "bulk-starts");
-        long five = createTemplateStart(template.getId(), "5 км", 5000);
-        long ten = createTemplateStart(template.getId(), "10 км", 10000);
+        long mass = createTemplateStart(template.getId(), "Массовый", 5000);
+        long teams = createTemplateStart(template.getId(), "Командный", 10000);
+        long rollers = createTemplateStart(template.getId(), "Роллеры", null);
         mockMvc.perform(put("/api/admin/event-series/{seriesId}/start-templates/{startId}/award-policy",
-                        template.getId(), five)
+                        template.getId(), mass)
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -7258,7 +7326,7 @@ class BackendIntegrationTest {
                                 """))
                 .andExpect(status().isOk());
         mockMvc.perform(post("/api/admin/event-series/{seriesId}/start-templates/{startId}/categories",
-                        template.getId(), five)
+                        template.getId(), mass)
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -7269,37 +7337,51 @@ class BackendIntegrationTest {
         String command = """
                 {"eventSeriesId":%d,"date":"2027-08-15",
                  "events":[
-                   {"name":"Казань","location":"Казань","timeZone":"Europe/Moscow"},
-                   {"name":"Омск","location":"Омск","timeZone":"Asia/Omsk"},
-                   {"name":"Иркутск","location":"Иркутск","timeZone":"Asia/Irkutsk"}],
-                 "starts":[
-                   {"templateStartId":%d,"name":"5 км","distanceMeters":5000,"sourceCode":"5K","publicVisible":true},
-                   {"templateStartId":%d,"name":"10 км","distanceMeters":10000,"sourceCode":"10K","publicVisible":true},
-                   {"name":"Детский забег","distanceMeters":1000,"sourceCode":"KIDS","publicVisible":true}
+                   {"name":"Москва","location":"Москва","timeZone":"Europe/Moscow","starts":[
+                     {"templateStartId":%d,"name":"Массовый","distanceMeters":5000,"sourceCode":"MASS","publicVisible":true},
+                     {"templateStartId":%d,"name":"Командный","distanceMeters":10000,"sourceCode":"TEAMS","publicVisible":true}
+                   ]},
+                   {"name":"Санкт-Петербург","location":"Санкт-Петербург","timeZone":"Europe/Moscow","starts":[
+                     {"templateStartId":%d,"name":"Массовый","distanceMeters":5000,"sourceCode":"MASS","publicVisible":true},
+                     {"templateStartId":%d,"name":"Командный","distanceMeters":10000,"sourceCode":"TEAMS","publicVisible":true},
+                     {"templateStartId":%d,"name":"Роллеры","distanceMeters":null,"sourceCode":"ROLLERS","publicVisible":true}
+                   ]}
                  ]}
-                """.formatted(template.getId(), five, ten);
+                """.formatted(template.getId(), mass, teams, mass, teams, rollers);
         mockMvc.perform(post("/api/admin/events/bulk/preview")
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
-                        .contentType(MediaType.APPLICATION_JSON).content(command))
+                .contentType(MediaType.APPLICATION_JSON).content(command))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.startsPerEvent").value(3))
-                .andExpect(jsonPath("$.totalStartCount").value(9))
-                .andExpect(jsonPath("$.starts[2].name").value("Детский забег"));
+                .andExpect(jsonPath("$.totalStartCount").value(5))
+                .andExpect(jsonPath("$.events[0].name").value("Bulk starts — Москва"))
+                .andExpect(jsonPath("$.events[0].starts.length()").value(2))
+                .andExpect(jsonPath("$.events[0].starts[0].name").value("Массовый"))
+                .andExpect(jsonPath("$.events[1].name").value("Bulk starts — Санкт-Петербург"))
+                .andExpect(jsonPath("$.events[1].starts.length()").value(3))
+                .andExpect(jsonPath("$.events[1].starts[2].distanceMeters").value(org.hamcrest.Matchers.nullValue()));
         mockMvc.perform(post("/api/admin/events/bulk")
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
                         .contentType(MediaType.APPLICATION_JSON).content(command))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.events.length()").value(3))
-                .andExpect(jsonPath("$.totalStartCount").value(9));
+                .andExpect(jsonPath("$.events.length()").value(2))
+                .andExpect(jsonPath("$.totalStartCount").value(5));
 
         List<Event> events = eventRepository.findAllByEventSeriesIdOrderByIdAsc(template.getId());
-        assertThat(events).hasSize(3);
+        assertThat(events).hasSize(2);
+        assertThat(events).extracting(Event::getName)
+                .containsExactly("Bulk starts — Москва", "Bulk starts — Санкт-Петербург");
         Set<Long> allRaceIds = new HashSet<>();
         Set<Long> allCategoryIds = new HashSet<>();
-        for (Event event : events) {
+        for (int index = 0; index < events.size(); index++) {
+            Event event = events.get(index);
             List<Race> races = raceRepository.findAllByEventIdOrderByDisplayOrderAscIdAsc(event.getId());
-            assertThat(races).extracting(Race::getName).containsExactly("5 км", "10 км", "Детский забег");
-            assertThat(races).extracting(Race::getDisplayOrder).containsExactly(0, 1, 2);
+            if (index == 0) {
+                assertThat(races).extracting(Race::getName).containsExactly("Массовый", "Командный");
+            } else {
+                assertThat(races).extracting(Race::getName)
+                        .containsExactly("Массовый", "Командный", "Роллеры");
+                assertThat(races.get(2).getDistanceMeters()).isNull();
+            }
             races.forEach(race -> assertThat(allRaceIds.add(race.getId())).isTrue());
             List<Category> copiedCategories = categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(
                     races.getFirst().getId());
@@ -7309,11 +7391,11 @@ class BackendIntegrationTest {
                     "SELECT category_enabled FROM award_policies WHERE race_id=?",
                     Boolean.class, races.getFirst().getId())).isTrue();
         }
-        assertThat(allRaceIds).hasSize(9);
-        assertThat(allCategoryIds).hasSize(3);
+        assertThat(allRaceIds).hasSize(5);
+        assertThat(allCategoryIds).hasSize(2);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM event_series_start_templates WHERE event_series_id=?",
-                Long.class, template.getId())).isEqualTo(2);
+                Long.class, template.getId())).isEqualTo(3);
     }
 
     @Test
@@ -7420,8 +7502,11 @@ class BackendIntegrationTest {
                 new ru.sportsresults.api.dto.UpsertEventScheduleItemRequest(
                         java.time.LocalDateTime.parse("2027-06-15T08:00:00"), null, "Открытие", null, 5),
                 ADMIN_USERNAME);
-        eventContentService.createInfoBlock(event.getId(),
-                new ru.sportsresults.api.dto.UpsertEventInfoBlockRequest("Как добраться", "Метро Спортивная", 1),
+        var directions = eventContentService.createInfoBlock(event.getId(),
+                new ru.sportsresults.api.dto.UpsertEventInfoBlockRequest("Как добраться", "Метро Спортивная", 8),
+                ADMIN_USERNAME);
+        var guide = eventContentService.createInfoBlock(event.getId(),
+                new ru.sportsresults.api.dto.UpsertEventInfoBlockRequest("Гайд участника", "Подготовка к старту", 2),
                 ADMIN_USERNAME);
 
         assertThat(eventContentService.listSchedule(event.getId())).extracting(ru.sportsresults.api.dto.EventScheduleItemDto::title)
@@ -7432,11 +7517,36 @@ class BackendIntegrationTest {
                         java.time.LocalDateTime.parse("2027-06-15T09:00:00"), "Ошибка", null, 0),
                 ADMIN_USERNAME)).isInstanceOf(InvalidRequestException.class);
 
+        assertThat(eventContentService.listInfoBlocks(event.getId()))
+                .extracting(ru.sportsresults.api.dto.EventInfoBlockDto::title)
+                .containsExactly("Гайд участника", "Как добраться");
+        assertThat(eventContentService.reorderInfoBlocks(
+                event.getId(), List.of(directions.id(), guide.id()), ADMIN_USERNAME
+        )).extracting(ru.sportsresults.api.dto.EventInfoBlockDto::title)
+                .containsExactly("Как добраться", "Гайд участника");
+        assertThat(eventContentService.listInfoBlocks(event.getId()))
+                .extracting(ru.sportsresults.api.dto.EventInfoBlockDto::displayOrder)
+                .containsExactly(0, 1);
+        assertThatThrownBy(() -> eventContentService.reorderInfoBlocks(
+                event.getId(), List.of(directions.id(), directions.id()), ADMIN_USERNAME
+        )).isInstanceOf(InvalidRequestException.class)
+                .extracting(exception -> ((InvalidRequestException) exception).getCode())
+                .isEqualTo("INVALID_INFO_BLOCK_ORDER");
+
         mockMvc.perform(get("/api/events/slug/{slug}", event.getSlug()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.participantInfo.venueName").value("Лужники"))
                 .andExpect(jsonPath("$.schedule[0].title").value("Открытие"))
-                .andExpect(jsonPath("$.infoBlocks[0].title").value("Как добраться"));
+                .andExpect(jsonPath("$.infoBlocks[0].title").value("Как добраться"))
+                .andExpect(jsonPath("$.infoBlocks[1].title").value("Гайд участника"));
+
+        eventContentService.deleteInfoBlock(event.getId(), directions.id(), ADMIN_USERNAME);
+        assertThat(eventContentService.listInfoBlocks(event.getId()))
+                .extracting(
+                        ru.sportsresults.api.dto.EventInfoBlockDto::title,
+                        ru.sportsresults.api.dto.EventInfoBlockDto::displayOrder
+                )
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("Гайд участника", 0));
     }
 
     @Test
@@ -7619,12 +7729,19 @@ class BackendIntegrationTest {
     @Test
     void storesPdfThroughAbstractionAndEnforcesPublicationPrivacyAndOwnership() throws Exception {
         Event event = createPublishedEvent("Documents", "documents");
+        var guideBlock = eventContentService.createInfoBlock(event.getId(),
+                new ru.sportsresults.api.dto.UpsertEventInfoBlockRequest(
+                        "Гайд участника", "Синтетический текст", 0
+                ), ADMIN_USERNAME);
         byte[] pdf = "%PDF-1.4\n1 0 obj\n%%EOF".getBytes(StandardCharsets.US_ASCII);
         var document = eventDocumentService.upload(event.getId(), ru.sportsresults.domain.EventDocumentType.PARTICIPANT_GUIDE,
-                "Гайд участника", 0, true, "guide.pdf", MediaType.APPLICATION_PDF_VALUE, pdf, ADMIN_USERNAME);
+                "Гайд участника", 0, guideBlock.id(), true, "гайд участника 2027.pdf",
+                MediaType.APPLICATION_PDF_VALUE, pdf, ADMIN_USERNAME);
         var storedDocument = eventDocumentRepository.findById(document.id()).orElseThrow();
         assertThat(storedDocument.getStorageProvider()).isEqualTo(EventDocumentStorageProvider.LOCAL);
         assertThat(storedDocument.getStorageKey()).endsWith(".pdf");
+        assertThat(storedDocument.getOriginalFilename()).isEqualTo("гайд участника 2027.pdf");
+        assertThat(document.infoBlockId()).isEqualTo(guideBlock.id());
         assertThat(fileStorageService.exists(storedDocument.getStorageProvider(), storedDocument.getStorageKey())).isTrue();
         assertThat(document.contentUrl()).isEqualTo("/api/events/" + event.getId() + "/documents/" + document.id() + "/content");
         assertThat(eventDocumentService.listPublic(event.getId())).singleElement()
@@ -7635,7 +7752,7 @@ class BackendIntegrationTest {
         var privateDocument = eventDocumentService.update(event.getId(), document.id(),
                 new ru.sportsresults.api.dto.UpdateEventDocumentRequest(
                         ru.sportsresults.domain.EventDocumentType.REGULATIONS,
-                        "Положение", 2, false
+                        "Положение", 2, guideBlock.id(), false
                 ), ADMIN_USERNAME);
         assertThat(privateDocument.displayName()).isEqualTo("Положение");
         assertThat(eventDocumentService.listAdmin(event.getId())).singleElement()
@@ -7649,17 +7766,36 @@ class BackendIntegrationTest {
         eventDocumentService.update(event.getId(), document.id(),
                 new ru.sportsresults.api.dto.UpdateEventDocumentRequest(
                         ru.sportsresults.domain.EventDocumentType.REGULATIONS,
-                        "Положение", 2, true
+                        "Положение", 2, guideBlock.id(), true
                 ), ADMIN_USERNAME);
         assertThat(eventDocumentService.listPublic(event.getId())).hasSize(1);
 
         Event other = createPublishedEvent("Other Documents", "other-documents");
+        var otherBlock = eventContentService.createInfoBlock(other.getId(),
+                new ru.sportsresults.api.dto.UpsertEventInfoBlockRequest("Чужой блок", "Текст", 0),
+                ADMIN_USERNAME);
+        assertThatThrownBy(() -> eventDocumentService.update(event.getId(), document.id(),
+                new ru.sportsresults.api.dto.UpdateEventDocumentRequest(
+                        ru.sportsresults.domain.EventDocumentType.REGULATIONS,
+                        "Положение", 2, otherBlock.id(), true
+                ), ADMIN_USERNAME)).isInstanceOf(InvalidRequestException.class)
+                .extracting(exception -> ((InvalidRequestException) exception).getCode())
+                .isEqualTo("INVALID_DOCUMENT_INFO_BLOCK");
         assertThatThrownBy(() -> eventDocumentService.openPublic(other.getId(), document.id()))
                 .isInstanceOf(ResourceNotFoundException.class);
         assertThatThrownBy(() -> fileStorageService.open(EventDocumentStorageProvider.LOCAL, "../guide.pdf"))
                 .isInstanceOf(InvalidRequestException.class);
+
+        String storageKey = storedDocument.getStorageKey();
+        eventContentService.deleteInfoBlock(event.getId(), guideBlock.id(), ADMIN_USERNAME);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT info_block_id IS NULL FROM event_documents WHERE id=?", Boolean.class, document.id()
+        )).isTrue();
+        assertThat(fileStorageService.exists(storedDocument.getStorageProvider(), storageKey)).isTrue();
+        assertThat(eventDocumentService.listPublic(event.getId())).singleElement()
+                .extracting(ru.sportsresults.api.dto.EventDocumentDto::infoBlockId).isNull();
         assertThatThrownBy(() -> eventDocumentService.upload(event.getId(),
-                ru.sportsresults.domain.EventDocumentType.OTHER, "Текст", 0, true, "text.pdf",
+                ru.sportsresults.domain.EventDocumentType.OTHER, "Текст", 0, null, true, "text.pdf",
                 MediaType.APPLICATION_PDF_VALUE, "not-pdf".getBytes(StandardCharsets.UTF_8), ADMIN_USERNAME))
                 .isInstanceOf(InvalidRequestException.class);
 
@@ -10659,8 +10795,8 @@ class BackendIntegrationTest {
                 0, 20, "displayName", "asc"
         );
         assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic A", "ABSOLUTE").place()).isEqualTo(1);
-        assertThat(item(gunPrimaryChipCategory.content(), "Synthetic A").rankingAchievements())
-                .noneMatch(value -> value.type().name().equals("CATEGORY"));
+        assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic A", "CATEGORY").place()).isEqualTo(5);
+        assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic A", "CATEGORY").prize()).isFalse();
         assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic B", "CATEGORY").place()).isEqualTo(1);
         assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic C", "CATEGORY").place()).isEqualTo(2);
         assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic G", "CATEGORY").place()).isEqualTo(3);
@@ -10671,6 +10807,20 @@ class BackendIntegrationTest {
                 .noneMatch(value -> value.type().name().equals("CATEGORY"));
         assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic F", "CATEGORY").place()).isEqualTo(1);
         assertThat(achievement(gunPrimaryChipCategory.content(), "Synthetic E", "CATEGORY").place()).isEqualTo(2);
+        var publicRaceRules = context.getBean(ru.sportsresults.service.EventDetailsService.class)
+                .getPublished(event.getId()).races().stream()
+                .filter(value -> value.id().equals(race.getId()))
+                .findFirst().orElseThrow().rules();
+        assertThat(publicRaceRules.rankingBasis()).isEqualTo(RankingBasis.GUN_TIME);
+        assertThat(publicRaceRules.categoryRankingBasis()).isEqualTo(RankingBasis.CHIP_TIME);
+        assertThat(publicRaceRules.categories())
+                .filteredOn(value -> value.id().equals(inheritedChip.getId()))
+                .singleElement().extracting(ru.sportsresults.api.dto.CategoryRuleDto::rankingBasis)
+                .isEqualTo(RankingBasis.CHIP_TIME);
+        assertThat(publicRaceRules.categories())
+                .filteredOn(value -> value.id().equals(gunOverride.getId()))
+                .singleElement().extracting(ru.sportsresults.api.dto.CategoryRuleDto::rankingBasis)
+                .isEqualTo(RankingBasis.GUN_TIME);
         assertAdminOfficialRankingMatchesPublic(event.getId(), race.getId());
 
         awardPolicyService.upsert(race.getId(), new UpdateAwardPolicyRequest(

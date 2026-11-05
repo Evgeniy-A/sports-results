@@ -63,7 +63,7 @@ export interface EventSeries {
 export interface BulkEventCommand {
   eventSeriesId: number
   date: string
-  events: Array<{ name: string; location: string; timeZone: string }>
+  events: Array<{ name: string; location: string; timeZone: string; starts?: EventStartCommand[] }>
   starts: EventStartCommand[]
 }
 
@@ -89,6 +89,13 @@ export interface BulkEventPreview {
     creatable: boolean
     duplicateInRequest: boolean
     existingEventId: number | null
+    starts: Array<{
+      name: string
+      distanceMeters: number | null
+      sourceCode: string
+      publicVisible: boolean
+      awardConfigured: boolean
+    }>
   }>
 }
 

@@ -21,6 +21,7 @@ import ru.sportsresults.service.RequestConflictException;
 import ru.sportsresults.service.ResourceNotFoundException;
 import ru.sportsresults.service.ResultIssueShareStorageUnavailableException;
 import ru.sportsresults.service.CertificateCapacityException;
+import ru.sportsresults.service.DocumentStorageUnavailableException;
 
 import java.time.Instant;
 import java.util.List;
@@ -88,6 +89,17 @@ public class ApiExceptionHandler {
                 HttpStatus.SERVICE_UNAVAILABLE,
                 "SHARE_STORAGE_UNAVAILABLE",
                 "Shared attachment storage is temporarily unavailable",
+                List.of()
+        );
+    }
+
+    @ExceptionHandler(DocumentStorageUnavailableException.class)
+    ResponseEntity<ApiErrorResponse> documentStorageUnavailable(DocumentStorageUnavailableException exception) {
+        LOGGER.warn("Event document storage is unavailable", exception);
+        return response(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "DOCUMENT_STORAGE_UNAVAILABLE",
+                "Event document storage is temporarily unavailable",
                 List.of()
         );
     }

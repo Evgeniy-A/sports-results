@@ -2,10 +2,18 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import { localDateTimeToIso, toDateTimeLocal } from '../src/admin/time.ts'
-import { filterTimeZones, suggestTimeZone, timeZoneLabel } from '../src/admin/timeZones.ts'
+import { filterLocations, filterTimeZones, suggestTimeZone, timeZoneLabel } from '../src/admin/timeZones.ts'
 import { awardPolicyChanged, awardPolicyUpdate, withRankingBasis } from '../src/admin/awardPolicy.ts'
 import { ApiError, readJsonBody } from '../src/api/client.ts'
-import { duplicateLocationIds, normalizedLocation } from '../src/admin/bulkEvents.ts'
+import {
+  addLocationToFormats,
+  duplicateLocationIds,
+  initializeFormatLocations,
+  normalizedLocation,
+  reconcileFormatLocations,
+  removeLocationFromFormats,
+} from '../src/admin/bulkEvents.ts'
+import { suggestedCategoryName } from '../src/admin/categorySettings.ts'
 import { authorizeAndOpenAttachment } from '../src/admin/attachmentOpening.ts'
 import { confirmAdminNavigation, setAdminNavigationBlocker } from '../src/admin/navigationGuard.ts'
 import {
@@ -188,21 +196,25 @@ test('admin navigation is a closed-by-default overlay with complete keyboard dis
   assert.match(css, /\.admin-sidebar-scrim[^}]*position:\s*fixed/)
 })
 
-test('templates screen supports list, empty state, create and stable-slug edit API', () => {
+test('templates screen uses full-page creation and editing routes', () => {
   assert.match(templates, /<h1>Шаблоны<\/h1>/)
   assert.match(templates, /Шаблонов пока нет/)
   assert.match(templates, /\+ Новый шаблон/)
-  assert.match(templates, /api\.createEventSeries/)
-  assert.match(templates, /api\.updateEventSeries/)
+  assert.match(templates, /href="\/admin\/templates\/new"/)
+  assert.match(templates, /href=\{`\/admin\/templates\/\$\{template\.id\}`\}/)
+  assert.match(adminApp, /<AdminTemplatePage api=\{api\} templateId="new"/)
+  assert.match(templateDetail, /api\.createEventSeries/)
+  assert.match(templateDetail, /api\.updateEventSeries/)
   assert.match(templates, /template\.eventCount/)
   assert.match(templates, /template\.startCount/)
-  assert.doesNotMatch(templates, /slug|Удалить шаблон/)
+  assert.doesNotMatch(templates, /<Drawer|api\.createEventSeries/)
 })
 
-test('template details provide start CRUD with ordered reusable definitions', () => {
+test('template details provide format CRUD with ordered reusable definitions', () => {
   assert.match(adminApp, /templateMatch/)
-  assert.match(templateDetail, /Старты шаблона/)
-  assert.match(templateDetail, /\+ Добавить старт/)
+  assert.match(templateDetail, /Полноэкранный редактор шаблона/)
+  assert.match(templateDetail, /title="Форматы"/)
+  assert.match(templateDetail, /\+ Добавить формат/)
   assert.match(templateDetail, /api\.createTemplateStart/)
   assert.match(templateDetail, /api\.updateTemplateStart/)
   assert.match(templateDetail, /api\.deleteTemplateStart/)
@@ -214,17 +226,17 @@ test('template details provide start CRUD with ordered reusable definitions', ()
   assert.match(startDrafts, /sourceCode: null/)
 })
 
-test('template start ordering uses drag drop and touch arrows without a numeric order field', () => {
+test('template format ordering uses drag drop and touch arrows without a numeric order field', () => {
   assert.match(templateDetail, /draggable={!busy}/)
   assert.match(templateDetail, /onDrop=\{\(\) => dropBefore/)
   assert.match(templateDetail, /api\.reorderTemplateStarts/)
-  assert.match(templateDetail, /Поднять старт/)
-  assert.match(templateDetail, /Опустить старт/)
+  assert.match(templateDetail, /Поднять формат/)
+  assert.match(templateDetail, /Опустить формат/)
   assert.doesNotMatch(`${templateDetail}\n${startComposer}`, /Field label="(?:Порядок|displayOrder)"/)
   assert.doesNotMatch(`${templateDetail}\n${startComposer}`, /type="number"[^>]*(?:displayOrder|Порядок)/)
 })
 
-test('award editor separates absolute and category awards without NONE dropdown options', () => {
+test('award editor defaults to BY_GENDER while preserving legacy ALL explicitly', () => {
   for (const status of ['Награждение: Абсолют', 'Награждение: Категории', 'Награждение: Абсолют + категории', 'Награждение не настроено']) {
     assert.ok(`${templateDetail}\n${startComposer}\n${awardPresentation}`.includes(status))
   }
@@ -235,13 +247,16 @@ test('award editor separates absolute and category awards without NONE dropdown 
   }
   assert.match(startComposer, /Награждение — абсолют/)
   assert.match(startComposer, /checked=\{value\.primaryStandingMode !== 'NONE'\}/)
-  assert.match(startComposer, /<option value="ALL">Общее/)
-  assert.match(startComposer, /<option value="BY_GENDER">По полу/)
+  assert.match(startComposer, /value\.primaryStandingMode === 'BY_GENDER'/)
+  assert.match(startComposer, /Текущая конфигурация: общий зачёт/)
+  assert.match(startComposer, /Перевести на раздельный зачёт/)
+  assert.match(startComposer, /primaryStandingMode: enabled \? \(value\.primaryStandingMode === 'NONE' \? 'BY_GENDER'/)
   assert.doesNotMatch(startComposer, /<option value="NONE">/)
   assert.doesNotMatch(startComposer, /Без официального зачёта|Без награждения/)
   assert.match(startComposer, /Награждение по категориям/)
   assert.match(startComposer, /Призовых мест в каждой категории/)
-  assert.match(startComposer, /Не награждать в возрастных категориях призёров абсолютного награждения/)
+  assert.match(startComposer, /Исключать абсолютных призёров из награждения в возрастных категориях/)
+  assert.match(startComposer, /сохраняет своё спортивное место в категории/)
   assert.match(startComposer, /rankingBasis === 'NONE'/)
   assert.ok(startComposer.indexOf('Возраст считать') > startComposer.indexOf('value.categoryEnabled &&'))
 })
@@ -258,7 +273,7 @@ test('template and Race award flows reuse category editing without navigation', 
   assert.match(categorySettings, />Удалить</)
   assert.match(categorySettings, />Отключить</)
   assert.match(categorySettings, /category\.inUse/)
-  assert.match(categorySettings, /старая категория и её исторические связи сохранятся/i)
+  assert.match(categorySettings, /Исторические связи сохранятся/i)
   assert.match(categorySettings, /Название в файле/)
   assert.match(categorySettings, /minAge/)
   assert.match(categorySettings, /maxAge/)
@@ -280,23 +295,26 @@ test('single Event creation copies selected starts and keeps the preview editabl
   assert.match(api, /\/admin\/events\/with-starts/)
 })
 
-test('event composer allows event-only edits, extra starts and visual reordering', () => {
+test('event composer uses format terminology, optional distance and visual reordering', () => {
   assert.match(startComposer, /origin: 'extra'/)
-  assert.match(startComposer, /\+ Добавить старт/)
-  assert.match(startComposer, /Удалить дополнительный старт/)
+  assert.match(startComposer, /\+ Добавить формат/)
+  assert.match(startComposer, /Удалить дополнительный формат/)
   assert.match(startComposer, /Изменения применятся только к создаваемому мероприятию/)
   assert.match(startComposer, /onDrop=\{\(\) => dropBefore/)
   assert.doesNotMatch(`${startComposer}\n${createEvent}`, /Код импорта|· Код:/)
   assert.match(startComposer, /Дистанция, м/)
+  assert.match(startComposer, /hint="Необязательно"/)
 })
 
-test('bulk creation uses one common start set and previews total materialization', () => {
+test('bulk creation sends per-city formats and previews each Event materialization', () => {
   assert.match(bulkEvents, /api\.templateStarts/)
   assert.match(bulkEvents, /<EventStartComposer/)
+  assert.match(bulkEvents, /formatLocations/)
+  assert.match(bulkEvents, /starts: startCommands\(starts\.filter/)
   assert.match(bulkEvents, /starts: startCommands\(starts\)/)
   assert.match(bulkEvents, /preview\.totalStartCount/)
-  assert.match(bulkEvents, /preview\.starts\.map/)
-  assert.doesNotMatch(bulkEvents, /per-city|для каждого города/i)
+  assert.match(bulkEvents, /item\.starts\.map/)
+  assert.match(bulkEvents, /Выберите, в каких городах будет создан каждый формат/)
 })
 
 test('template UX exposes user terminology rather than persistence entity names', () => {
@@ -309,8 +327,8 @@ test('template UX exposes user terminology rather than persistence entity names'
 test('bulk screen manages cities, explicit timezones and two-step Preview without losing draft state', () => {
   assert.match(bulkEvents, /title="Создать несколько мероприятий"/)
   assert.match(bulkEvents, /\+ Добавить город/)
-  assert.match(bulkEvents, /LOCATION_SUGGESTIONS/)
-  assert.match(bulkEvents, /suggestTimeZone\(location\) \?\? ''/)
+  assert.match(bulkEvents, /<LocationCombobox required/)
+  assert.match(bulkEvents, /suggestTimeZone\(location\) \?\? row\.timeZone/)
   assert.match(bulkEvents, /rows\.every\(\(row\) => row\.location\.trim\(\) && row\.timeZone\)/)
   assert.match(bulkEvents, /api\.previewBulkEvents/)
   assert.match(bulkEvents, /api\.createBulkEvents/)
@@ -497,6 +515,36 @@ test('import exposes three explicit modes and never auto-syncs them', () => {
   assert.doesNotMatch(imports, /Синхронизировать всё/)
 })
 
+test('per-city format state keeps existing choices and removes only stale rows or formats', () => {
+  const initialized = initializeFormatLocations(['mass', 'teams'], [1, 2])
+  assert.deepEqual(initialized, { mass: [1, 2], teams: [1, 2] })
+  const customized = { ...initialized, teams: [2] }
+  assert.deepEqual(addLocationToFormats(customized, 3), { mass: [1, 2, 3], teams: [2, 3] })
+  assert.deepEqual(removeLocationFromFormats(customized, 1), { mass: [2], teams: [2] })
+  assert.deepEqual(reconcileFormatLocations(customized, ['mass', 'teams', 'rollers'], [1, 2]), {
+    mass: [1, 2], teams: [2], rollers: [1, 2],
+  })
+  assert.deepEqual(reconcileFormatLocations(customized, ['teams'], [2]), { teams: [2] })
+})
+
+test('category names are suggested from ranges without overwriting explicit UI editing', () => {
+  assert.equal(suggestedCategoryName('18', '29'), '18–29')
+  assert.equal(suggestedCategoryName('60', ''), '60+')
+  assert.equal(suggestedCategoryName('', '17'), 'До 17')
+  assert.match(categorySettings, /setCustomName\(true\)/)
+  assert.match(categorySettings, /value\?\.displayOrder \?\? nextDisplayOrder/)
+  assert.doesNotMatch(categorySettings, /Field label="(?:Порядок|displayOrder)"/)
+  assert.match(categorySettings, /Создать диапазон для мужчин и женщин/)
+})
+
+test('location search prioritizes normalized exact matches and keeps international cities', () => {
+  assert.equal(filterLocations('Санкт-Петербург')[0]?.name, 'Санкт-Петербург')
+  assert.equal(filterLocations('санкт петербург')[0]?.name, 'Санкт-Петербург')
+  assert.equal(filterLocations('Сан-Паулу')[0]?.name, 'Сан-Паулу')
+  assert.equal(suggestTimeZone('Санкт-Петербург'), 'Europe/Moscow')
+  assert.equal(suggestTimeZone('Сан-Паулу'), 'America/Sao_Paulo')
+})
+
 test('update import exposes authoritative per-field manual conflict resolution', () => {
   assert.match(imports, /manualConflicts/)
   assert.match(imports, /ordinaryBlockingErrorsPresent/)
@@ -568,6 +616,43 @@ test('recalculation pending, Preview and Apply remain explicit', () => {
   assert.match(policy, /recalculationPreview/)
   assert.match(policy, /recalculationApply/)
   assert.match(policy, /Применить пересчёт/)
+  assert.match(policy, /recalculationReasonLabel\(row\.reason\)/)
+  assert.match(policy, /ADULT_OUTSIDE_CATEGORY_RANGES/)
+  assert.match(policy, /SOURCE_CATEGORY_UNMAPPED/)
+  assert.match(policy, /Preview не изменяет данные/)
+})
+
+test('information blocks auto-order, reorder without numeric input and accept linked documents', () => {
+  const infoBlockEditor = content.match(/function InfoBlockEditor[\s\S]*?function ScheduleEditor/)?.[0] ?? ''
+  assert.match(content, /api\.reorderInfoBlocks/)
+  assert.match(content, /Переместить «\$\{value\.title\}» выше/)
+  assert.match(content, /Переместить «\$\{value\.title\}» ниже/)
+  assert.doesNotMatch(infoBlockEditor, /<Field label="Порядок"><input[^>]*form\.displayOrder/)
+  assert.match(content, /Field label="Раздел информации"/)
+  assert.match(content, /infoBlockId/)
+  assert.match(api, /reorderInfoBlocks:[\s\S]*info-blocks\/order/)
+  assert.match(api, /uploadDocument:[\s\S]*infoBlockId/)
+})
+
+test('document upload errors are actionable and storage details remain hidden', () => {
+  for (const code of [
+    'INVALID_DOCUMENT_SIZE', 'INVALID_DOCUMENT_TYPE', 'INVALID_DOCUMENT_FILENAME',
+    'UPLOAD_READ_FAILED', 'DOCUMENT_STORAGE_UNAVAILABLE',
+  ]) assert.match(utils, new RegExp(code))
+  assert.doesNotMatch(utils, /Yandex|S3|bucket|storageKey/)
+})
+
+test('results and award settings provide race-scoped direct navigation', () => {
+  assert.match(results, /tab=award&raceId=\$\{filters\.raceId\}/)
+  assert.match(policy, /tab=results&raceId=\$\{raceId\}/)
+  assert.match(eventPage, /initialRaceId=\{Number\(requestedRaceId\) \|\| undefined\}/)
+})
+
+test('category bulk confirmation names the affected overrides and follow-up actions', () => {
+  assert.match(policy, /bulkConfirmationMessage\(bulkAction, categories\.filter/)
+  assert.match(policy, /Индивидуальные настройки будут удалены у \$\{overrideCount\} категорий/)
+  assert.match(policy, /потребуется Preview и Apply пересчёта/)
+  assert.match(policy, /публикация не выполняется автоматически/)
 })
 
 test('AwardPolicy stays backend-owned and published Start is never auto-drafted', () => {
@@ -614,11 +699,11 @@ test('AwardPolicy update supports GUN_TIME, CHIP_TIME and a valid normalized NON
 
 test('primary and category ranking bases have independent Russian controls and atomic bulk actions', () => {
   assert.match(startComposer, /Field label="Основной зачёт"/)
-  assert.match(startComposer, /Field label="Возрастные категории" hint="Используется для категорий без индивидуальной настройки\."/)
+  assert.match(startComposer, /Field label="Время зачёта возрастных категорий" hint="Используется для категорий без индивидуальной настройки\."/)
   assert.match(startComposer, /Официальное время \(Gun Time\)/)
   assert.match(startComposer, /Чистое время \(Chip Time\)/)
-  assert.match(categorySettings, /Время зачёта:/)
-  assert.match(categorySettings, /По умолчанию ·/)
+  assert.match(categorySettings, /Время зачёта этой категории:/)
+  assert.match(categorySettings, /Как у формата/)
   assert.match(categorySettings, /rankingBasisOverride/)
   assert.match(policy, /Все по официальному времени/)
   assert.match(policy, /Все по чистому времени/)
@@ -673,6 +758,13 @@ test('saved AwardPolicy response becomes the clean baseline and race switch requ
   assert.match(policy, /if \(requestId !== policyLoadRequest\.current\) return/)
   assert.match(policy, /if \(policyDirty && !window\.confirm\(DISCARD_AWARD_POLICY_MESSAGE\)\) return/)
   assert.match(policy, /onChange=\{\(change\) => selectRace\(Number\(change\.target\.value\)\)\}/)
+})
+
+test('Event refresh preserves the active Race editor instead of remounting the whole page', () => {
+  assert.match(eventPage, /const \[loading, setLoading\] = useState\(true\)/)
+  const reload = eventPage.match(/const reload = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[api, currentUser\.role, eventId\]\)/)?.[1] ?? ''
+  assert.doesNotMatch(reload, /setLoading\(true\)/)
+  assert.match(reload, /finally \{ setLoading\(false\) \}/)
 })
 
 test('dirty AwardPolicy protects admin navigation, browser history and reload without duplicating the Race guard', () => {

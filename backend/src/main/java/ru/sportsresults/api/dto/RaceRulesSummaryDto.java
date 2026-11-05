@@ -8,6 +8,7 @@ import java.util.List;
 
 public record RaceRulesSummaryDto(
         RankingBasis rankingBasis,
+        RankingBasis categoryRankingBasis,
         PrimaryStandingMode primaryStandingMode,
         int absolutePrizePlaces,
         boolean categoryEnabled,

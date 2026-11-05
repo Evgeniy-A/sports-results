@@ -13,6 +13,7 @@ public record EventDocumentDto(
         long sizeBytes,
         String sha256,
         int displayOrder,
+        Long infoBlockId,
         boolean publicDocument,
         Instant uploadedAt,
         String contentUrl

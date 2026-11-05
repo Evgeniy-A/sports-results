@@ -72,11 +72,13 @@ export interface CategoryRule {
   minAge: number | null
   maxAge: number | null
   gender: 'MALE' | 'FEMALE' | null
+  rankingBasis: RankingBasis
   displayOrder: number
 }
 
 export interface RaceRules {
   rankingBasis: RankingBasis
+  categoryRankingBasis: RankingBasis
   primaryStandingMode: 'ALL' | 'BY_GENDER' | 'NONE'
   absolutePrizePlaces: number
   categoryEnabled: boolean
@@ -132,6 +134,7 @@ export interface EventDocument {
   sizeBytes: number
   sha256: string
   displayOrder: number
+  infoBlockId: number | null
   publicDocument: boolean
   uploadedAt: string
   contentUrl: string

@@ -50,7 +50,6 @@ public class EventDetailsService {
     @Transactional(readOnly = true)
     public EventDetailsDto getPublished(Long eventId) {
         Event event = eventRepository.findByIdAndPublicationStatus(eventId, EventPublicationStatus.PUBLISHED)
-                .filter(candidate -> candidate.getEventSeries().isActive())
                 .orElseThrow(() -> new ResourceNotFoundException("EVENT_NOT_FOUND", "Published event not found"));
         return toDto(event);
     }
@@ -58,7 +57,6 @@ public class EventDetailsService {
     @Transactional(readOnly = true)
     public EventDetailsDto getPublished(String slug) {
         Event event = eventRepository.findBySlugAndPublicationStatus(slug, EventPublicationStatus.PUBLISHED)
-                .filter(candidate -> candidate.getEventSeries().isActive())
                 .orElseThrow(() -> new ResourceNotFoundException("EVENT_NOT_FOUND", "Published event not found"));
         return toDto(event);
     }
@@ -121,9 +119,11 @@ public class EventDetailsService {
             List<Category> availableCategories
     ) {
         boolean enabled = policy.isCategoryEnabled();
-        List<CategoryRuleDto> categoryRules = enabled ? rules(categories) : List.of();
-        List<CategoryRuleDto> availableCategoryRules = enabled ? rules(availableCategories) : List.of();
-        return new RaceRulesSummaryDto(policy.getRankingBasis(), policy.getPrimaryStandingMode(),
+        List<CategoryRuleDto> categoryRules = enabled ? rules(categories, policy.getCategoryRankingBasis()) : List.of();
+        List<CategoryRuleDto> availableCategoryRules = enabled
+                ? rules(availableCategories, policy.getCategoryRankingBasis()) : List.of();
+        return new RaceRulesSummaryDto(policy.getRankingBasis(), policy.getCategoryRankingBasis(),
+                policy.getPrimaryStandingMode(),
                 policy.getAbsolutePrizePlaces(), enabled,
                 enabled ? policy.getCategoryPrizePlaces() : null,
                 enabled ? policy.isExcludeAbsoluteWinnersFromCategory() : null,
@@ -132,12 +132,14 @@ public class EventDetailsService {
                 availableCategoryRules);
     }
 
-    private static List<CategoryRuleDto> rules(List<Category> categories) {
+    private static List<CategoryRuleDto> rules(List<Category> categories, RankingBasis defaultBasis) {
         return categories.stream()
                 .sorted(java.util.Comparator.comparingInt(Category::getDisplayOrder)
                         .thenComparing(Category::getDisplayName))
                 .map(category -> new CategoryRuleDto(category.getId(), category.getDisplayName(), category.getMinAge(),
-                        category.getMaxAge(), category.getGender(), category.getDisplayOrder()))
+                        category.getMaxAge(), category.getGender(),
+                        category.getRankingBasisOverride() == null ? defaultBasis : category.getRankingBasisOverride(),
+                        category.getDisplayOrder()))
                 .toList();
     }
 }

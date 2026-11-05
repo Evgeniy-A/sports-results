@@ -36,6 +36,4 @@ public interface EventRepository extends JpaRepository<Event, Long>, EventCatalo
     @EntityGraph(attributePaths = "eventSeries")
     Optional<Event> findBySlugAndPublicationStatus(String slug, EventPublicationStatus publicationStatus);
 
-    @EntityGraph(attributePaths = "eventSeries")
-    List<Event> findAllByPublicationStatusAndEventSeriesActiveTrue(EventPublicationStatus publicationStatus);
 }

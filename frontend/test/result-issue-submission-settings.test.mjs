@@ -31,7 +31,7 @@ test('event creation submits the Event-level result issue settings', () => {
   assert.match(settingsFields, /FIXED_DATE/)
   assert.match(settingsFields, /type="date"/)
   assert.match(createPage, /resultInquiry: inquiry/)
-  assert.match(createPage, /selectedTemplate\?\.resultInquiryDefaults/)
+  assert.doesNotMatch(createPage, /selectedTemplate\?\.resultInquiryDefaults/)
   assert.match(createPage, /Уже созданные обращения останутся доступны/)
 })
 
@@ -40,8 +40,9 @@ test('the same settings card is available in Event main and Results issues', () 
   assert.match(issuesTab, /<ResultInquirySettingsCard api=\{api\} event=\{event\} compact/)
   assert.match(settingsCard, /api\.resultInquiry\(event\.id\)/)
   assert.match(settingsCard, /api\.updateResultInquiry\(event\.id/)
-  assert.match(settingsCard, /Закрыть приём/)
-  assert.match(settingsCard, /Включить приём/)
+  assert.match(settingsCard, /Сохранить/)
+  assert.match(settingsCard, /disabled=\{busy \|\| !dirty\}/)
+  assert.doesNotMatch(settingsCard, /admin-inquiry-manual-toggle/)
 })
 
 test('date and email patches coexist and are preserved in the update payload', () => {
@@ -196,11 +197,11 @@ test('event editor keeps saved summary separate from the unsaved deadline previe
   assert.match(settingsCard, /После сохранения обращения будут приниматься до:/)
 })
 
-test('template keeps editable inquiry defaults and documents copy-on-create', () => {
-  assert.match(templatePage, /TemplateInquirySettingsCard/)
-  assert.match(templatePage, /resultInquiryDefaults: settings/)
-  assert.match(templatePage, /будут скопированы/i)
-  assert.match(templatePage, /Уже созданные мероприятия не изменятся/)
+test('template no longer exposes inquiry defaults or copies them into new Events', () => {
+  assert.doesNotMatch(templatePage, /TemplateInquirySettingsCard/)
+  assert.doesNotMatch(templatePage, /resultInquiryDefaults: settings/)
+  assert.doesNotMatch(templatePage, /будут скопированы/i)
+  assert.doesNotMatch(createPage, /selectedTemplate\?\.resultInquiryDefaults/)
 })
 
 test('admin availability labels distinguish manual disable and expiry', () => {

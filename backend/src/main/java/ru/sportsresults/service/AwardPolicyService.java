@@ -135,7 +135,7 @@ public class AwardPolicyService {
         policy.setRace(race);
         policy.setRankingBasis(RankingBasis.CHIP_TIME);
         policy.setCategoryRankingBasis(RankingBasis.CHIP_TIME);
-        policy.setPrimaryStandingMode(PrimaryStandingMode.ALL);
+        policy.setPrimaryStandingMode(PrimaryStandingMode.BY_GENDER);
         policy.setAbsolutePrizePlaces(0);
         policy.setCategoryEnabled(false);
         policy.setAgeCalculationMode(ru.sportsresults.domain.AgeCalculationMode.EVENT_DATE);

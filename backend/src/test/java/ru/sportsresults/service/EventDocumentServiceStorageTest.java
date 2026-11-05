@@ -6,6 +6,7 @@ import ru.sportsresults.domain.EventDocumentStorageProvider;
 import ru.sportsresults.domain.EventDocumentType;
 import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.EventDocumentRepository;
+import ru.sportsresults.repository.EventInfoBlockRepository;
 import ru.sportsresults.storage.FileStorageService;
 
 import java.nio.charset.StandardCharsets;
@@ -26,10 +27,11 @@ class EventDocumentServiceStorageTest {
     void deletesTheNewObjectWithItsActualProviderWhenDatabasePersistenceFails() {
         EventService eventService = mock(EventService.class);
         EventDocumentRepository repository = mock(EventDocumentRepository.class);
+        EventInfoBlockRepository infoBlockRepository = mock(EventInfoBlockRepository.class);
         FileStorageService storage = mock(FileStorageService.class);
         AdminChangeLogRepository auditRepository = mock(AdminChangeLogRepository.class);
         EventDocumentService service = new EventDocumentService(
-                eventService, repository, storage, auditRepository, 10_485_760L
+                eventService, repository, infoBlockRepository, storage, auditRepository, 10_485_760L
         );
         when(eventService.requireEvent(7L)).thenReturn(new Event());
         when(storage.store(7L, PDF)).thenReturn(new FileStorageService.StoredDocument(
@@ -39,7 +41,7 @@ class EventDocumentServiceStorageTest {
         when(repository.saveAndFlush(any())).thenThrow(new IllegalStateException("database unavailable"));
 
         assertThatThrownBy(() -> service.upload(
-                7L, EventDocumentType.PARTICIPANT_GUIDE, "Guide", 0, true,
+                7L, EventDocumentType.PARTICIPANT_GUIDE, "Guide", 0, null, true,
                 "guide.pdf", "application/pdf", PDF, "tester"
         )).isInstanceOf(IllegalStateException.class).hasMessage("database unavailable");
 
@@ -54,9 +56,11 @@ class EventDocumentServiceStorageTest {
     void documentListsUseOnlyDatabaseMetadataAndNeverContactStorage() {
         EventService eventService = mock(EventService.class);
         EventDocumentRepository repository = mock(EventDocumentRepository.class);
+        EventInfoBlockRepository infoBlockRepository = mock(EventInfoBlockRepository.class);
         FileStorageService storage = mock(FileStorageService.class);
         EventDocumentService service = new EventDocumentService(
-                eventService, repository, storage, mock(AdminChangeLogRepository.class), 10_485_760L
+                eventService, repository, infoBlockRepository, storage,
+                mock(AdminChangeLogRepository.class), 10_485_760L
         );
         when(eventService.requireEvent(7L)).thenReturn(new Event());
         when(repository.findAllByEventIdOrderByDisplayOrderAscIdAsc(7L)).thenReturn(List.of());
@@ -64,5 +68,29 @@ class EventDocumentServiceStorageTest {
         service.listAdmin(7L);
 
         verifyNoInteractions(storage);
+    }
+
+    @Test
+    void reportsStorageFailureWithoutPersistingDocumentMetadata() {
+        EventService eventService = mock(EventService.class);
+        EventDocumentRepository repository = mock(EventDocumentRepository.class);
+        EventInfoBlockRepository infoBlockRepository = mock(EventInfoBlockRepository.class);
+        FileStorageService storage = mock(FileStorageService.class);
+        AdminChangeLogRepository auditRepository = mock(AdminChangeLogRepository.class);
+        EventDocumentService service = new EventDocumentService(
+                eventService, repository, infoBlockRepository, storage, auditRepository, 10_485_760L
+        );
+        when(eventService.requireEvent(7L)).thenReturn(new Event());
+        when(storage.store(7L, PDF)).thenThrow(new IllegalStateException("provider unavailable"));
+
+        assertThatThrownBy(() -> service.upload(
+                7L, EventDocumentType.PARTICIPANT_GUIDE, "Guide", 0, null, true,
+                "guide.pdf", "application/pdf", PDF, "tester"
+        )).isInstanceOf(DocumentStorageUnavailableException.class)
+                .hasMessage("Document storage is temporarily unavailable")
+                .hasCauseInstanceOf(IllegalStateException.class);
+
+        verify(repository, never()).saveAndFlush(any());
+        verify(auditRepository, never()).save(any());
     }
 }

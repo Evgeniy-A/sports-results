@@ -281,7 +281,7 @@ class BrowserE2eServer {
                 "B", null, "Кластер B", 3, LocalDateTime.parse("2027-06-15T09:50:00")
         ), "e2e-admin");
         documentService.upload(future.getId(), EventDocumentType.PARTICIPANT_GUIDE, "Гайд участника", 1,
-                true, "guide-2027.pdf", "application/pdf",
+                null, true, "guide-2027.pdf", "application/pdf",
                 "%PDF-1.4\n%%EOF".getBytes(StandardCharsets.US_ASCII), "e2e-admin");
 
         Event separated = event(series, "Раздельные протоколы 2027", "razdelnye-protokoly-2027", "Казань");
