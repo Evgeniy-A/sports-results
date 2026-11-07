@@ -9,7 +9,6 @@ import ru.sportsresults.domain.AuditEntityType;
 import ru.sportsresults.domain.Category;
 import ru.sportsresults.domain.Registration;
 import ru.sportsresults.domain.Result;
-import ru.sportsresults.domain.ResultStatus;
 import ru.sportsresults.repository.AdminChangeLogRepository;
 import ru.sportsresults.repository.CategoryRepository;
 import ru.sportsresults.repository.RegistrationRepository;
@@ -17,7 +16,6 @@ import ru.sportsresults.repository.ResultRepository;
 import ru.sportsresults.repository.StartClusterRepository;
 import ru.sportsresults.domain.StartCluster;
 
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -35,6 +33,7 @@ public class AdminResultService {
     private final StartClusterRepository startClusterRepository;
     private final CategoryRepository categoryRepository;
     private final EventResultDataMutationGuard mutationGuard;
+    private final ResultFactualMutationService factualMutationService;
 
     public AdminResultService(
             RegistrationRepository registrationRepository,
@@ -43,7 +42,8 @@ public class AdminResultService {
             AgeCategoryRecalculationService categoryRecalculationService,
             StartClusterRepository startClusterRepository,
             CategoryRepository categoryRepository,
-            EventResultDataMutationGuard mutationGuard
+            EventResultDataMutationGuard mutationGuard,
+            ResultFactualMutationService factualMutationService
     ) {
         this.registrationRepository = registrationRepository;
         this.resultRepository = resultRepository;
@@ -52,6 +52,7 @@ public class AdminResultService {
         this.startClusterRepository = startClusterRepository;
         this.categoryRepository = categoryRepository;
         this.mutationGuard = mutationGuard;
+        this.factualMutationService = factualMutationService;
     }
 
     @Transactional
@@ -134,20 +135,8 @@ public class AdminResultService {
                 .orElseThrow(() -> new ResourceNotFoundException("RESULT_NOT_FOUND", "Result not found"));
         rejectRetired(result.getRegistration());
         List<AdminChangeLog> changes = new ArrayList<>();
-        String status = ResultStatus.normalize(request.status())
-                .orElseThrow(() -> new InvalidRequestException(
-                        "INVALID_RESULT_STATUS",
-                        "Unknown result status. Allowed values: " + ResultStatus.allowedCodes()
-                ));
-
-        change(changes, actor, AuditEntityType.RESULT, resultId, "status",
-                result.getStatus(), status, result::setStatus);
-        change(changes, actor, AuditEntityType.RESULT, resultId, "gunTimeMs",
-                milliseconds(result.getGunTime()), request.gunTimeMs(),
-                value -> result.setGunTime(duration(value)));
-        change(changes, actor, AuditEntityType.RESULT, resultId, "chipTimeMs",
-                milliseconds(result.getChipTime()), request.chipTimeMs(),
-                value -> result.setChipTime(duration(value)));
+        boolean factualChanged = factualMutationService.apply(
+                result, request.status(), request.gunTimeMs(), request.chipTimeMs(), actor);
         change(changes, actor, AuditEntityType.RESULT, resultId, "overallPlace",
                 result.getOverallPlace(), request.overallPlace(), result::setOverallPlace);
         change(changes, actor, AuditEntityType.RESULT, resultId, "genderPlace",
@@ -164,6 +153,8 @@ public class AdminResultService {
         if (!changes.isEmpty()) {
             resultRepository.saveAndFlush(result);
             changeLogRepository.saveAll(changes);
+        }
+        if (factualChanged || !changes.isEmpty()) {
             mutationGuard.bump(result.getRegistration().getRace().getEvent());
         }
     }
@@ -214,14 +205,6 @@ public class AdminResultService {
 
     private static String normalize(String value) {
         return value == null || value.isBlank() ? null : value.strip();
-    }
-
-    private static Long milliseconds(Duration duration) {
-        return duration == null ? null : duration.toMillis();
-    }
-
-    private static Duration duration(Long milliseconds) {
-        return milliseconds == null ? null : Duration.ofMillis(milliseconds);
     }
 
     private static String stringValue(Object value) {

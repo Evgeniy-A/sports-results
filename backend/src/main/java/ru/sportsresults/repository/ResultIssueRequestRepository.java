@@ -24,6 +24,9 @@ public interface ResultIssueRequestRepository extends JpaRepository<ResultIssueR
 
     boolean existsByIdAndEvent_Id(Long issueId, Long eventId);
 
+    @Query("select issue.event.id from ResultIssueRequest issue where issue.id = :issueId")
+    Optional<Long> findEventIdByIssueId(@Param("issueId") Long issueId);
+
     @EntityGraph(attributePaths = {
             "event",
             "registration",

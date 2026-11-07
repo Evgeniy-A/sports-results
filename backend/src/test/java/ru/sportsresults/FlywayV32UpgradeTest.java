@@ -30,7 +30,7 @@ class FlywayV32UpgradeTest {
             Flyway flyway = Flyway.configure().dataSource(dataSource).load();
             flyway.migrate(); flyway.validate();
 
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("33");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("34");
             assertThat(jdbc.queryForObject("SELECT count(*) FROM events WHERE id=?", Long.class, eventId)).isEqualTo(1);
             assertThat(jdbc.queryForObject("SELECT count(*) FROM races WHERE id=?", Long.class, raceId)).isEqualTo(1);
             assertThat(jdbc.queryForObject("SELECT count(*) FROM event_certificate_settings", Long.class)).isZero();
@@ -47,7 +47,7 @@ class FlywayV32UpgradeTest {
         try (EmbeddedPostgres postgres = EmbeddedPostgres.start()) {
             Flyway flyway = Flyway.configure().dataSource(postgres.getPostgresDatabase()).load();
             flyway.migrate(); flyway.validate();
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("33");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("34");
         }
     }
 }

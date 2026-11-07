@@ -918,6 +918,24 @@ test('global journal keeps filters in URL and uses server-side pagination', () =
   assert.match(journal, /Текущее состояние/)
 })
 
+test('result issue journal exposes the spreadsheet workspace and explicit synchronization flow', () => {
+  assert.match(api, /journalSheets:.*result-issue-workspace\/sheets/s)
+  assert.match(api, /journalWorkspaceRows:.*result-issue-workspace\/sheets\/\$\{seriesId\}\/\$\{year\}\/rows/s)
+  assert.match(api, /updateJournalWorkItem:.*result-issue-workspace\/issues\/\$\{issueId\}/s)
+  assert.match(api, /resetJournalWorkItem:.*result-issue-workspace\/issues\/\$\{issueId\}\/reset/s)
+  assert.match(api, /syncJournalSheet:.*result-issue-workspace\/sheets\/\$\{seriesId\}\/\$\{year\}\/sync/s)
+  assert.match(journal, /Журнал обращений/)
+  assert.match(journal, /Current Result Status/)
+  assert.match(journal, /Gun Time/)
+  assert.match(journal, /Chip Time/)
+  assert.match(journal, /Синхронизировать сейчас/)
+  assert.match(journal, /Сбросить изменения/)
+  assert.match(journal, /admin-journal-sheets/)
+  assert.match(journal, /expectedVersion: row\.workItem\?\.version \?\? 0/)
+  assert.match(journal, /parseResultTime\(draft\)/)
+  assert.match(journal, /Текущий результат отсутствует\./)
+})
+
 test('XLSX is downloaded as binary and share batch can be revoked', () => {
   assert.match(api, /response\.blob\(\)/)
   assert.match(api, /Content-Disposition/)

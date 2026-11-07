@@ -35,6 +35,10 @@ import type {
   JournalDetail,
   JournalFilters,
   JournalItem,
+  JournalSyncSummary,
+  JournalWorkspaceRow,
+  JournalWorkspaceSheet,
+  JournalWorkItemResponse,
   PageResponse,
   ParticipantInfo,
   Race,
@@ -475,6 +479,22 @@ export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: (
       `/admin/result-issue-requests${queryString({ ...filters, status: filters.status })}`,
     ),
     journalDetail: (issueId: number) => request<JournalDetail>(`/admin/result-issue-requests/${issueId}`),
+    journalSheets: () => request<JournalWorkspaceSheet[]>('/admin/result-issue-workspace/sheets'),
+    journalWorkspaceRows: (seriesId: number, year: number) => request<JournalWorkspaceRow[]>(
+      `/admin/result-issue-workspace/sheets/${seriesId}/${year}/rows`,
+    ),
+    updateJournalWorkItem: (issueId: number, body: object) => request<JournalWorkItemResponse>(
+      `/admin/result-issue-workspace/issues/${issueId}`,
+      { method: 'PUT', ...json(body) },
+    ),
+    resetJournalWorkItem: (issueId: number, expectedVersion: number) => request<JournalWorkItemResponse>(
+      `/admin/result-issue-workspace/issues/${issueId}/reset`,
+      { method: 'POST', ...json({ expectedVersion }) },
+    ),
+    syncJournalSheet: (seriesId: number, year: number) => request<JournalSyncSummary>(
+      `/admin/result-issue-workspace/sheets/${seriesId}/${year}/sync`,
+      { method: 'POST' },
+    ),
     exportJournal: async (
       filters: JournalFilters,
       shareLifetimeDays: number | null,

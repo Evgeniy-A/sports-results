@@ -9372,6 +9372,425 @@ class BackendIntegrationTest {
     }
 
     @Test
+    void resultIssueWorkspaceKeepsClaimsImmutableAndSynchronizesPendingFactsExplicitly() throws Exception {
+        AdminIssueFixture fixture = createGlobalIssueFixture(
+                "Workspace series", "workspace-series", "Kazan", "2027-05-17T06:00:00Z", 3
+        );
+        ResultIssueRequest issue = fixture.issues().get(2);
+        Registration registration = fixture.registrations().get(2);
+        Result official = resultRepository.findByRegistrationId(registration.getId()).orElseThrow();
+        long seriesId = fixture.event().getEventSeries().getId();
+        long originalGun = official.getGunTime().toMillis();
+        Long originalChip = official.getChipTime() == null ? null : official.getChipTime().toMillis();
+        String originalStatus = official.getStatus();
+        Integer originalOverallPlace = official.getOverallPlace();
+        Duration claimedGun = issue.getClaimedGunTime();
+        Duration claimedChip = issue.getClaimedChipTime();
+        String snapshotEventName = issue.getSnapshotEventName();
+        String snapshotRaceName = issue.getSnapshotRaceName();
+        String snapshotRanking = issue.getSnapshotRanking();
+        AdminUser assignee = adminUserRepository.findByUsernameIgnoreCase(ADMIN_USERNAME).orElseThrow();
+
+        mockMvc.perform(get("/api/admin/result-issue-workspace/sheets"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/admin/result-issue-workspace/sheets")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].seriesId").value(seriesId))
+                .andExpect(jsonPath("$[0].year").value(2027))
+                .andExpect(jsonPath("$[0].issueCount").value(3))
+                .andExpect(jsonPath("$[0].pendingSyncCount").value(0));
+        mockMvc.perform(get("/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/rows", seriesId, 2027)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[2].issueId").value(issue.getId()))
+                .andExpect(jsonPath("$[2].location").value("Kazan"))
+                .andExpect(jsonPath("$[2].currentResultId").value(official.getId()))
+                .andExpect(jsonPath("$[2].workItem").doesNotExist());
+        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM result_issue_work_items", Long.class))
+                .isZero();
+
+        Map<String, Object> noOp = new LinkedHashMap<>();
+        noOp.put("expectedVersion", 0);
+        noOp.put("desiredResultStatus", originalStatus);
+        noOp.put("desiredGunTimeMs", originalGun);
+        noOp.put("desiredChipTimeMs", originalChip);
+        noOp.put("assigneeUserId", null);
+        noOp.put("internalComment", null);
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(noOp)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.workItemId").doesNotExist())
+                .andExpect(jsonPath("$.syncStatus").value("SYNCED"));
+        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM result_issue_work_items", Long.class))
+                .isZero();
+
+        long desiredGun = Math.max(0, originalGun - 500);
+        Map<String, Object> update = new LinkedHashMap<>(noOp);
+        update.put("desiredGunTimeMs", desiredGun);
+        update.put("assigneeUserId", assignee.getId());
+        update.put("internalComment", "Проверить фото финиша");
+        MvcResult pending = mockMvc.perform(put(
+                        "/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(update)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.desiredGunTimeMs").value(desiredGun))
+                .andExpect(jsonPath("$.assigneeUserId").value(assignee.getId()))
+                .andExpect(jsonPath("$.internalComment").value("Проверить фото финиша"))
+                .andExpect(jsonPath("$.syncStatus").value("PENDING"))
+                .andExpect(jsonPath("$.version").value(1))
+                .andReturn();
+        long workItemId = objectMapper.readTree(pending.getResponse().getContentAsByteArray())
+                .get("workItemId").asLong();
+
+        Result unchanged = resultRepository.findById(official.getId()).orElseThrow();
+        assertThat(unchanged.getGunTime()).isEqualTo(Duration.ofMillis(originalGun));
+        assertThat(unchanged.getOverallPlace()).isEqualTo(originalOverallPlace);
+        assertThat(resultIssueRequestRepository.findById(issue.getId()).orElseThrow()).satisfies(reloaded -> {
+            assertThat(reloaded.getClaimedGunTime()).isEqualTo(claimedGun);
+            assertThat(reloaded.getClaimedChipTime()).isEqualTo(claimedChip);
+        });
+        assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
+                AuditEntityType.RESULT_ISSUE_WORK_ITEM, workItemId
+        )).extracting(AdminChangeLog::getFieldName)
+                .contains("desiredGunTimeMs", "assigneeUserId", "internalComment", "syncStatus");
+
+        long desiredChip = originalChip == null ? 500 : Math.max(0, originalChip - 400);
+        Map<String, Object> secondUpdate = new LinkedHashMap<>(update);
+        secondUpdate.put("expectedVersion", 1);
+        secondUpdate.put("desiredResultStatus", "running");
+        secondUpdate.put("desiredChipTimeMs", desiredChip);
+        secondUpdate.put("internalComment", "Проверено по фото финиша");
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(secondUpdate)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.desiredResultStatus").value("running"))
+                .andExpect(jsonPath("$.desiredChipTimeMs").value(desiredChip))
+                .andExpect(jsonPath("$.version").value(2));
+        assertThat(resultRepository.findById(official.getId()).orElseThrow()).satisfies(stillOfficial -> {
+            assertThat(stillOfficial.getStatus()).isEqualTo(originalStatus);
+            assertThat(stillOfficial.getGunTime()).isEqualTo(Duration.ofMillis(originalGun));
+            assertThat(stillOfficial.getChipTime()).isEqualTo(
+                    originalChip == null ? null : Duration.ofMillis(originalChip));
+        });
+
+        Map<String, Object> finalUpdate = new LinkedHashMap<>(secondUpdate);
+        finalUpdate.put("expectedVersion", 2);
+        finalUpdate.put("desiredResultStatus", originalStatus);
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(finalUpdate)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.desiredResultStatus").value(originalStatus))
+                .andExpect(jsonPath("$.version").value(3));
+
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of(
+                                "expectedVersion", 2,
+                                "desiredResultStatus", originalStatus,
+                                "desiredGunTimeMs", desiredGun
+                        ))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("JOURNAL_WORK_ITEM_VERSION_CONFLICT"));
+
+        mockMvc.perform(post(
+                        "/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/sync", seriesId, 2027)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempted").value(1))
+                .andExpect(jsonPath("$.applied").value(1))
+                .andExpect(jsonPath("$.conflicts").value(0))
+                .andExpect(jsonPath("$.errors").value(0))
+                .andExpect(jsonPath("$.remainingPending").value(0));
+
+        mockMvc.perform(post(
+                        "/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/sync", seriesId, 2027)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.attempted").value(0))
+                .andExpect(jsonPath("$.applied").value(0))
+                .andExpect(jsonPath("$.conflicts").value(0))
+                .andExpect(jsonPath("$.errors").value(0))
+                .andExpect(jsonPath("$.remainingPending").value(0));
+
+        Result synchronizedResult = resultRepository.findById(official.getId()).orElseThrow();
+        assertThat(synchronizedResult.getGunTime()).isEqualTo(Duration.ofMillis(desiredGun));
+        assertThat(synchronizedResult.getChipTime()).isEqualTo(Duration.ofMillis(desiredChip));
+        assertThat(synchronizedResult.getStatus()).isEqualTo(originalStatus);
+        assertThat(synchronizedResult.getOverallPlace()).isEqualTo(originalOverallPlace);
+        PageResponse<ResultListItemDto> authoritativeOrder = resultQueryService.search(
+                fixture.event().getId(), registration.getRace().getId(),
+                null, null, null, null, null, 0, 20, "gunTime", "asc"
+        );
+        assertThat(authoritativeOrder.content().getFirst().resultId()).isEqualTo(official.getId());
+        assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
+                AuditEntityType.RESULT, official.getId()
+        )).extracting(AdminChangeLog::getFieldName).contains("gunTimeMs");
+        assertThat(resultIssueRequestRepository.findById(issue.getId()).orElseThrow()).satisfies(reloaded -> {
+            assertThat(reloaded.getClaimedGunTime()).isEqualTo(claimedGun);
+            assertThat(reloaded.getClaimedChipTime()).isEqualTo(claimedChip);
+            assertThat(reloaded.getSnapshotEventName()).isEqualTo(snapshotEventName);
+            assertThat(reloaded.getSnapshotRaceName()).isEqualTo(snapshotRaceName);
+            assertThat(reloaded.getSnapshotRanking()).isEqualTo(snapshotRanking);
+        });
+    }
+
+    @Test
+    void resultIssueWorkspaceRejectsAStaleSecondFirstEditWithoutOverwritingTheWinner() throws Exception {
+        AdminIssueFixture fixture = createGlobalIssueFixture(
+                "Workspace first edit race", "workspace-first-edit-race", "Ufa",
+                "2027-06-12T06:00:00Z", 1
+        );
+        ResultIssueRequest issue = fixture.issues().getFirst();
+        Result official = resultRepository.findByRegistrationId(
+                fixture.registrations().getFirst().getId()).orElseThrow();
+        long originalGun = official.getGunTime().toMillis();
+
+        String firstEdit = objectMapper.writeValueAsString(Map.of(
+                "expectedVersion", 0,
+                "desiredResultStatus", official.getStatus(),
+                "desiredGunTimeMs", originalGun + 1_000,
+                "internalComment", "First editor"
+        ));
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(firstEdit))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.version").value(1))
+                .andExpect(jsonPath("$.desiredGunTimeMs").value(originalGun + 1_000))
+                .andExpect(jsonPath("$.internalComment").value("First editor"));
+
+        String staleSecondEdit = objectMapper.writeValueAsString(Map.of(
+                "expectedVersion", 0,
+                "desiredResultStatus", official.getStatus(),
+                "desiredGunTimeMs", originalGun + 2_000,
+                "internalComment", "Second editor"
+        ));
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(staleSecondEdit))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("JOURNAL_WORK_ITEM_VERSION_CONFLICT"));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM result_issue_work_items WHERE issue_request_id=?",
+                Long.class, issue.getId())).isOne();
+        Map<String, Object> retained = jdbcTemplate.queryForMap(
+                "SELECT desired_gun_time_ms, internal_comment, version "
+                        + "FROM result_issue_work_items WHERE issue_request_id=?",
+                issue.getId());
+        assertThat(((Number) retained.get("desired_gun_time_ms")).longValue())
+                .isEqualTo(originalGun + 1_000);
+        assertThat(retained.get("internal_comment")).isEqualTo("First editor");
+        assertThat(((Number) retained.get("version")).longValue()).isEqualTo(1);
+        assertThat(resultRepository.findById(official.getId()).orElseThrow().getGunTime())
+                .isEqualTo(Duration.ofMillis(originalGun));
+    }
+
+    @Test
+    void resultIssueWorkspaceDetectsOfficialConflictsAndNeverCreatesMissingResults() throws Exception {
+        AdminIssueFixture fixture = createGlobalIssueFixture(
+                "Workspace conflicts", "workspace-conflicts", "Omsk", "2028-06-21T06:00:00Z", 2
+        );
+        long seriesId = fixture.event().getEventSeries().getId();
+        ResultIssueRequest conflictIssue = fixture.issues().getFirst();
+        Result conflictResult = resultRepository.findByRegistrationId(
+                fixture.registrations().getFirst().getId()).orElseThrow();
+        long originalGun = conflictResult.getGunTime().toMillis();
+
+        Map<String, Object> pending = new LinkedHashMap<>();
+        pending.put("expectedVersion", 0);
+        pending.put("desiredResultStatus", conflictResult.getStatus());
+        pending.put("desiredGunTimeMs", originalGun + 2_000);
+        pending.put("desiredChipTimeMs", conflictResult.getChipTime() == null
+                ? null : conflictResult.getChipTime().toMillis());
+        MvcResult created = mockMvc.perform(put(
+                        "/api/admin/result-issue-workspace/issues/{issueId}", conflictIssue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(pending)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.syncStatus").value("PENDING"))
+                .andReturn();
+        long workItemId = objectMapper.readTree(created.getResponse().getContentAsByteArray())
+                .get("workItemId").asLong();
+
+        conflictResult.setGunTime(Duration.ofMillis(originalGun + 777));
+        resultRepository.saveAndFlush(conflictResult);
+        mockMvc.perform(post(
+                        "/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/sync", seriesId, 2028)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applied").value(0))
+                .andExpect(jsonPath("$.conflicts").value(1));
+        assertThat(resultRepository.findById(conflictResult.getId()).orElseThrow().getGunTime())
+                .isEqualTo(Duration.ofMillis(originalGun + 777));
+        long conflictVersion = jdbcTemplate.queryForObject(
+                "SELECT version FROM result_issue_work_items WHERE id=?", Long.class, workItemId);
+
+        mockMvc.perform(post("/api/admin/result-issue-workspace/issues/{issueId}/reset", conflictIssue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedVersion\":" + conflictVersion + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.desiredGunTimeMs").value(originalGun + 777))
+                .andExpect(jsonPath("$.syncStatus").value("SYNCED"));
+
+        ResultIssueRequest missingIssue = fixture.issues().get(1);
+        Result removed = resultRepository.findByRegistrationId(
+                fixture.registrations().get(1).getId()).orElseThrow();
+        resultRepository.delete(removed);
+        resultRepository.flush();
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", missingIssue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"expectedVersion":0,"desiredResultStatus":"finished",
+                                 "desiredGunTimeMs":12000,"desiredChipTimeMs":11000}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("RESULT_ISSUE_CURRENT_RESULT_MISSING"));
+
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", missingIssue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"expectedVersion":0,"desiredResultStatus":null,
+                                 "desiredGunTimeMs":null,"desiredChipTimeMs":null,
+                                 "internalComment":"Результат отсутствует, требуется проверка"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resultId").doesNotExist())
+                .andExpect(jsonPath("$.internalComment").value("Результат отсутствует, требуется проверка"))
+                .andExpect(jsonPath("$.syncStatus").value("SYNCED"));
+        assertThat(resultRepository.findByRegistrationId(fixture.registrations().get(1).getId())).isEmpty();
+    }
+
+    @Test
+    void resultIssueWorkspaceRejectsMalformedInvalidAndOversizedTimes() throws Exception {
+        AdminIssueFixture fixture = createGlobalIssueFixture(
+                "Workspace validation", "workspace-validation", "Perm", "2029-07-05T06:00:00Z", 1
+        );
+        ResultIssueRequest issue = fixture.issues().getFirst();
+        Result result = resultRepository.findByRegistrationId(fixture.registrations().getFirst().getId())
+                .orElseThrow();
+        String base = "{\"expectedVersion\":0,\"desiredResultStatus\":\"%s\","
+                + "\"desiredGunTimeMs\":%s,\"desiredChipTimeMs\":null}";
+
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted(result.getStatus(), -1)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted(result.getStatus(), 2_592_000_001L)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted(result.getStatus(), "\"12:34\"")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted("UNKNOWN_RESULT", 1_000)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_RESULT_STATUS"));
+        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM result_issue_work_items", Long.class))
+                .isZero();
+
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(base.formatted(result.getStatus(), 0)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.desiredGunTimeMs").value(0))
+                .andExpect(jsonPath("$.desiredChipTimeMs").doesNotExist())
+                .andExpect(jsonPath("$.syncStatus").value("PENDING"));
+        assertThat(resultRepository.findById(result.getId()).orElseThrow().getGunTime())
+                .isEqualTo(result.getGunTime());
+    }
+
+    @Test
+    void resultIssueWorkspaceGroupsCitiesIntoSeriesYearSheetsAndRejectsTimekeepers() throws Exception {
+        AdminIssueFixture kazan = createGlobalIssueFixture(
+                "Series Kazan", "workspace-city-kazan", "Kazan", "2026-08-01T06:00:00Z", 1
+        );
+        AdminIssueFixture moscow = createGlobalIssueFixture(
+                "Series Moscow", "workspace-city-moscow", "Moscow", "2026-09-01T06:00:00Z", 1
+        );
+        Event moscowEvent = eventRepository.findById(moscow.event().getId()).orElseThrow();
+        moscowEvent.setEventSeries(kazan.event().getEventSeries());
+        eventRepository.saveAndFlush(moscowEvent);
+        long seriesId = kazan.event().getEventSeries().getId();
+
+        mockMvc.perform(get("/api/admin/result-issue-workspace/sheets")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].seriesId").value(seriesId))
+                .andExpect(jsonPath("$[0].year").value(2026))
+                .andExpect(jsonPath("$[0].issueCount").value(2));
+        mockMvc.perform(get("/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/rows", seriesId, 2026)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[*].location", org.hamcrest.Matchers.containsInAnyOrder(
+                        "Kazan", "Moscow")));
+
+        mockMvc.perform(post("/api/admin/users")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"workspace-timekeeper","displayName":"Workspace timekeeper",
+                                 "role":"TIMEKEEPER","password":"workspace-secret","active":true}
+                                """))
+                .andExpect(status().isCreated());
+        mockMvc.perform(get("/api/admin/result-issue-workspace/sheets")
+                        .with(httpBasic("workspace-timekeeper", "workspace-secret")))
+                .andExpect(status().isForbidden());
+        assertThat(jdbcTemplate.queryForObject("SELECT count(*) FROM result_issue_work_items", Long.class))
+                .isZero();
+    }
+
+    @Test
+    void resultIssueWorkspaceUsesTheEventLocalCalendarYearAtTheUtcYearBoundary() throws Exception {
+        AdminIssueFixture fixture = createGlobalIssueFixture(
+                "Local year boundary", "workspace-local-year", "Yekaterinburg",
+                "2030-12-31T20:30:00Z", 1
+        );
+        Event event = eventRepository.findById(fixture.event().getId()).orElseThrow();
+        event.setTimeZone("Asia/Yekaterinburg");
+        eventRepository.saveAndFlush(event);
+        long seriesId = event.getEventSeries().getId();
+
+        mockMvc.perform(get("/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/rows", seriesId, 2031)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].eventYear").value(2031));
+        mockMvc.perform(get("/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/rows", seriesId, 2030)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
     void globalResultIssueJournalIsAdminOnlyGlobalAllByDefaultAndKeepsEventQueueSemantics() throws Exception {
         AdminIssueFixture kazan = createGlobalIssueFixture(
                 "Global Kazan", "global-kazan", "Kazan", "2026-05-17T06:00:00Z", 6

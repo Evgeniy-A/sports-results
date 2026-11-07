@@ -640,6 +640,79 @@ export interface JournalFilters {
   direction?: 'asc' | 'desc'
 }
 
+export type JournalSyncStatus = 'PENDING' | 'SYNCED' | 'CONFLICT' | 'FAILED'
+
+export interface JournalWorkspaceSheet {
+  seriesId: number
+  seriesName: string
+  year: number
+  issueCount: number
+  pendingSyncCount: number
+  newCount: number
+  inProgressCount: number
+  lastSyncedAt: string | null
+}
+
+export interface JournalWorkItem {
+  workItemId: number | null
+  desiredResultStatus: string | null
+  desiredGunTimeMs: number | null
+  desiredChipTimeMs: number | null
+  assigneeUserId: number | null
+  assigneeName: string | null
+  internalComment: string | null
+  syncStatus: JournalSyncStatus
+  syncErrorCode: string | null
+  version: number
+  updatedAt: string | null
+  updatedBy: string
+  syncedAt: string | null
+  syncedBy: string | null
+}
+
+export interface JournalWorkspaceRow {
+  issueId: number
+  seriesId: number
+  seriesName: string
+  eventId: number
+  eventName: string
+  eventYear: number
+  location: string | null
+  raceId: number
+  raceName: string
+  registrationId: number
+  registrationCurrent: boolean
+  bib: string | null
+  participantName: string
+  categoryName: string | null
+  issueType: IssueType
+  correctionReason: string | null
+  issueStatus: IssueStatus
+  attachmentCount: number
+  currentResultId: number | null
+  currentResultStatus: string | null
+  currentGunTimeMs: number | null
+  currentChipTimeMs: number | null
+  claimedGunTimeMs: number | null
+  claimedChipTimeMs: number | null
+  workItem: JournalWorkItem | null
+  updatedAt: string
+}
+
+export interface JournalWorkItemResponse extends JournalWorkItem {
+  issueId: number
+  resultId: number | null
+}
+
+export interface JournalSyncSummary {
+  attempted: number
+  applied: number
+  conflicts: number
+  errors: number
+  remainingPending: number
+  completedAt: string
+}
+
 export interface ShareBatch {
   batchId: string
   createdBy: string
