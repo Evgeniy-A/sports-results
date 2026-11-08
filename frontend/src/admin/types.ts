@@ -658,6 +658,13 @@ export interface JournalWorkItem {
   desiredResultStatus: string | null
   desiredGunTimeMs: number | null
   desiredChipTimeMs: number | null
+  desiredDisplayName: string
+  desiredGender: string | null
+  desiredBirthDate: string | null
+  desiredBib: string | null
+  desiredRaceId: number
+  desiredRaceName?: string | null
+  desiredDistanceMeters?: number | null
   assigneeUserId: number | null
   assigneeName: string | null
   internalComment: string | null
@@ -678,13 +685,16 @@ export interface JournalWorkspaceRow {
   eventName: string
   eventYear: number
   location: string | null
-  raceId: number
-  raceName: string
+  currentRaceId: number
+  currentRaceName: string
+  currentDistanceMeters: number | null
   registrationId: number
   registrationCurrent: boolean
-  bib: string | null
-  participantName: string
-  categoryName: string | null
+  currentBib: string | null
+  currentDisplayName: string
+  currentGender: string | null
+  currentBirthDate: string | null
+  currentCategoryName: string | null
   issueType: IssueType
   correctionReason: string | null
   issueStatus: IssueStatus

@@ -2,9 +2,12 @@ package ru.sportsresults.repository;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import ru.sportsresults.domain.Registration;
+
+import jakarta.persistence.LockModeType;
 
 import java.util.List;
 import java.util.Optional;
@@ -59,6 +62,13 @@ public interface RegistrationRepository extends JpaRepository<Registration, Long
             "race", "race.event", "category", "cluster", "importBatch"
     })
     Optional<Registration> findById(Long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @EntityGraph(attributePaths = {
+            "race", "race.event", "race.event.eventSeries", "category", "cluster", "importBatch"
+    })
+    @Query("select registration from Registration registration where registration.id = :registrationId")
+    Optional<Registration> findByIdForUpdate(@Param("registrationId") Long registrationId);
 
     @Query("select registration.race.event.id from Registration registration where registration.id = :registrationId")
     Optional<Long> findEventIdByRegistrationId(@Param("registrationId") Long registrationId);

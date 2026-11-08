@@ -34,6 +34,7 @@ export function AdminJournalPage({ api }: { api: AdminApi }) {
   const [rows, setRows] = useState<JournalWorkspaceRow[]>([])
   const [events, setEvents] = useState<EventSummary[]>([])
   const [races, setRaces] = useState<Race[]>([])
+  const [raceOptionsByEvent, setRaceOptionsByEvent] = useState<Record<number, Race[]>>({})
   const [users, setUsers] = useState<AdminUser[]>([])
   const [collapsedCities, setCollapsedCities] = useState<Set<string>>(new Set())
   const [pageNumber, setPageNumber] = useState(0)
@@ -65,6 +66,9 @@ export function AdminJournalPage({ api }: { api: AdminApi }) {
     try {
       const next = await api.journalWorkspaceRows(selectedSheetData.seriesId, selectedSheetData.year)
       setRows(next)
+      const eventIds = [...new Set(next.map((row) => row.eventId))]
+      const options = await Promise.all(eventIds.map(async (eventId) => [eventId, await api.races(eventId)] as const))
+      setRaceOptionsByEvent(Object.fromEntries(options))
       const groups = cityGroups(next)
       setCollapsedCities(new Set(groups
         .filter((group) => !group.rows.some(isActiveRow))
@@ -108,6 +112,11 @@ export function AdminJournalPage({ api }: { api: AdminApi }) {
         desiredResultStatus: current.desiredResultStatus,
         desiredGunTimeMs: current.desiredGunTimeMs,
         desiredChipTimeMs: current.desiredChipTimeMs,
+        desiredDisplayName: current.desiredDisplayName,
+        desiredGender: current.desiredGender,
+        desiredBirthDate: current.desiredBirthDate,
+        desiredBib: current.desiredBib,
+        desiredRaceId: current.desiredRaceId,
         assigneeUserId: current.assigneeUserId,
         internalComment: current.internalComment,
         ...patch,
@@ -181,7 +190,7 @@ export function AdminJournalPage({ api }: { api: AdminApi }) {
       <button className="admin-button-primary" type="button" disabled={syncing || !selectedSheetData?.pendingSyncCount} onClick={() => void syncSheet()}>{syncing ? 'Синхронизируем…' : 'Синхронизировать сейчас'}</button>
     </section>
     <Loadable loading={loading} error={null} empty={!visibleRows.length}>
-      <div className="admin-table-wrap admin-journal-table-wrap"><table className="admin-table admin-journal-table"><thead><tr><th>№ обращения</th><th>Формат / дистанция</th><th>Bib</th><th>Участник</th><th>Категория</th><th>Причина</th><th>Current Result Status</th><th>Gun Time</th><th>Chip Time</th><th>Статус обращения</th><th>Ответственный</th><th>Внутренний комментарий</th><th>Синхронизация</th><th>Изменено</th><th /></tr></thead><tbody>{groups.map((group) => <CityGroup key={group.city} group={group} collapsed={collapsedCities.has(group.city)} toggle={() => setCollapsedCities((current) => toggleSet(current, group.city))} users={users} busyIssue={busyIssue} onSaveWork={saveWork} onSaveIssueStatus={saveIssueStatus} onReset={resetWork} onOpen={setSelected} />)}</tbody></table></div>
+      <div className="admin-table-wrap admin-journal-table-wrap"><table className="admin-table admin-journal-table"><thead><tr><th>№</th><th>Город</th><th>ФИО</th><th>Пол</th><th>Дата рождения</th><th>Bib</th><th>Формат / дистанция</th><th>Текущий Gun</th><th>Корректировка Gun</th><th>Текущий Chip</th><th>Корректировка Chip</th><th>Категория</th><th>Result Status</th><th>Причина</th><th>Статус обращения</th><th>Ответственный</th><th>Внутренний комментарий</th><th>Синхр.</th><th>Изменено</th><th /></tr></thead><tbody>{groups.map((group) => <CityGroup key={group.city} group={group} collapsed={collapsedCities.has(group.city)} toggle={() => setCollapsedCities((current) => toggleSet(current, group.city))} users={users} raceOptionsByEvent={raceOptionsByEvent} busyIssue={busyIssue} onSaveWork={saveWork} onSaveIssueStatus={saveIssueStatus} onReset={resetWork} onOpen={setSelected} />)}</tbody></table></div>
       <AdminPagination page={pageNumber} totalPages={totalPages} onChange={setPageNumber} />
     </Loadable>
     <nav className="admin-journal-sheets" aria-label="Листы журнала">{sheets.map((sheet) => <button key={sheetKey(sheet)} className={selectedSheet === sheetKey(sheet) ? 'active' : ''} type="button" onClick={() => { setSelectedSheet(sheetKey(sheet)); setPageNumber(0) }}>{sheet.seriesName} {sheet.year}<small>{sheet.issueCount} · ожидают {sheet.pendingSyncCount}</small></button>)}</nav>
@@ -190,27 +199,33 @@ export function AdminJournalPage({ api }: { api: AdminApi }) {
   </div>
 }
 
-function CityGroup({ group, collapsed, toggle, users, busyIssue, onSaveWork, onSaveIssueStatus, onReset, onOpen }: {
+function CityGroup({ group, collapsed, toggle, users, raceOptionsByEvent, busyIssue, onSaveWork, onSaveIssueStatus, onReset, onOpen }: {
   group: CityGroupData
   collapsed: boolean
   toggle: () => void
   users: AdminUser[]
+  raceOptionsByEvent: Record<number, Race[]>
   busyIssue: number | null
   onSaveWork: (row: JournalWorkspaceRow, patch: Partial<WorkDraft>) => Promise<void>
   onSaveIssueStatus: (row: JournalWorkspaceRow, status: IssueStatus) => Promise<void>
   onReset: (row: JournalWorkspaceRow) => Promise<void>
   onOpen: (issueId: number) => void
 }) {
-  return <><tr className="admin-journal-city-row"><td colSpan={15}><button type="button" onClick={toggle}>{collapsed ? '▶' : '▼'} {group.city} — {group.rows.length} обращений</button></td></tr>{!collapsed && group.rows.map((row) => <tr key={row.issueId} className={row.workItem?.syncStatus === 'PENDING' ? 'admin-journal-pending-row' : undefined}>
-    <td><button className="admin-row-link" type="button" onClick={() => onOpen(row.issueId)}>#{row.issueId}</button>{row.attachmentCount > 0 && <small>📎 {row.attachmentCount}</small>}</td>
-    <td><strong>{row.eventName}</strong><small>{row.raceName}</small></td>
-    <td>{row.bib ?? '—'}</td>
-    <td>{row.participantName}</td>
-    <td>{row.categoryName ?? '—'}</td>
-    <td>{statusRussian(row.correctionReason)}</td>
+  return <><tr className="admin-journal-city-row"><td colSpan={20}><button type="button" onClick={toggle}>{collapsed ? '▶' : '▼'} {group.city} — {group.rows.length} обращений</button></td></tr>{!collapsed && group.rows.map((row) => <tr key={row.issueId} className={row.workItem?.syncStatus === 'PENDING' ? 'admin-journal-pending-row' : undefined}>
+    <td className="admin-journal-sticky-number"><button className="admin-row-link" type="button" onClick={() => onOpen(row.issueId)}>#{row.issueId}</button>{row.attachmentCount > 0 && <small>📎 {row.attachmentCount}</small>}</td>
+    <td className="admin-journal-sticky-city">{row.location ?? '—'}</td>
+    <td className="admin-journal-sticky-name"><TextFactCell label={`ФИО ${row.issueId}`} value={row.workItem?.desiredDisplayName ?? row.currentDisplayName} current={row.currentDisplayName} maxLength={320} required disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredDisplayName: value })} /></td>
+    <td><GenderFactCell value={row.workItem?.desiredGender ?? row.currentGender} current={row.currentGender} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredGender: value })} /></td>
+    <td><DateFactCell value={row.workItem?.desiredBirthDate ?? row.currentBirthDate} current={row.currentBirthDate} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredBirthDate: value })} /></td>
+    <td><TextFactCell label={`Bib ${row.issueId}`} value={row.workItem?.desiredBib ?? row.currentBib} current={row.currentBib} maxLength={64} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredBib: value || null })} /></td>
+    <td><RaceFactCell value={row.workItem?.desiredRaceId ?? row.currentRaceId} current={row.currentRaceId} options={raceOptionsByEvent[row.eventId] ?? []} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredRaceId: value })} /></td>
+    <td className="admin-current-fact">{formatResultTime(row.currentGunTimeMs) || '—'}</td>
+    <td>{row.currentResultId ? <TimeCorrectionCell value={row.workItem?.desiredGunTimeMs ?? row.currentGunTimeMs} current={row.currentGunTimeMs} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredGunTimeMs: value })} /> : <MissingResult />}</td>
+    <td className="admin-current-fact">{formatResultTime(row.currentChipTimeMs) || '—'}</td>
+    <td>{row.currentResultId ? <TimeCorrectionCell value={row.workItem?.desiredChipTimeMs ?? row.currentChipTimeMs} current={row.currentChipTimeMs} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredChipTimeMs: value })} /> : <MissingResult />}</td>
+    <td>{row.currentCategoryName ?? '—'}</td>
     <td>{row.currentResultId ? <ResultStatusCell value={row.workItem?.desiredResultStatus ?? row.currentResultStatus ?? ''} current={row.currentResultStatus} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredResultStatus: value })} /> : <MissingResult />}</td>
-    <td>{row.currentResultId ? <TimeCell value={row.workItem?.desiredGunTimeMs ?? row.currentGunTimeMs} current={row.currentGunTimeMs} status={row.workItem?.syncStatus} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredGunTimeMs: value })} /> : <MissingResult />}</td>
-    <td>{row.currentResultId ? <TimeCell value={row.workItem?.desiredChipTimeMs ?? row.currentChipTimeMs} current={row.currentChipTimeMs} status={row.workItem?.syncStatus} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredChipTimeMs: value })} /> : <MissingResult />}</td>
+    <td>{statusRussian(row.correctionReason)}</td>
     <td><select aria-label={`Статус обращения ${row.issueId}`} disabled={busyIssue === row.issueId} value={row.issueStatus} onChange={(change) => { void onSaveIssueStatus(row, change.target.value as IssueStatus).catch(() => undefined) }}>{(['NEW', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'] as IssueStatus[]).map((status) => <option key={status} value={status}>{statusRussian(status)}</option>)}</select></td>
     <td><select aria-label={`Ответственный ${row.issueId}`} disabled={busyIssue === row.issueId} value={row.workItem?.assigneeUserId ?? ''} onChange={(change) => { void onSaveWork(row, { assigneeUserId: change.target.value ? Number(change.target.value) : null }).catch(() => undefined) }}><option value="">Не назначен</option>{users.map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}</select></td>
     <td><CommentCell value={row.workItem?.internalComment ?? ''} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { internalComment: value || null })} /></td>
@@ -220,14 +235,14 @@ function CityGroup({ group, collapsed, toggle, users, busyIssue, onSaveWork, onS
   </tr>)}</>
 }
 
-function TimeCell({ value, current, status, disabled, onSave }: { value: number | null; current: number | null; status?: string; disabled: boolean; onSave: (value: number | null) => Promise<void> }) {
+function TimeCorrectionCell({ value, current, disabled, onSave }: { value: number | null; current: number | null; disabled: boolean; onSave: (value: number | null) => Promise<void> }) {
   const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(() => formatResultTime(value))
+  const [draft, setDraft] = useState(() => value === current ? '' : formatResultTime(value))
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  useEffect(() => { if (!editing) setDraft(formatResultTime(value)) }, [editing, value])
+  useEffect(() => { if (!editing) setDraft(value === current ? '' : formatResultTime(value)) }, [current, editing, value])
   useEffect(() => { if (editing) { inputRef.current?.focus(); inputRef.current?.select() } }, [editing])
-  const start = () => { if (!disabled) { setDraft(formatResultTime(value)); setError(null); setEditing(true) } }
+  const start = () => { if (!disabled) { setDraft(value === current ? '' : formatResultTime(value)); setError(null); setEditing(true) } }
   const save = async () => {
     const parsed = parseResultTime(draft)
     if (!parsed.valid) { setError(parsed.error); return }
@@ -235,11 +250,47 @@ function TimeCell({ value, current, status, disabled, onSave }: { value: number 
   }
   const keyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') { event.preventDefault(); void save() }
-    if (event.key === 'Escape') { event.preventDefault(); setEditing(false); setError(null); setDraft(formatResultTime(value)) }
+    if (event.key === 'Escape') { event.preventDefault(); setEditing(false); setError(null); setDraft(value === current ? '' : formatResultTime(value)) }
   }
   if (editing) return <div className="admin-inline-editor"><input ref={inputRef} value={draft} aria-invalid={Boolean(error)} onChange={(change) => { setDraft(change.target.value); setError(null) }} onKeyDown={keyDown} />{error && <small className="admin-cell-error">{error}</small>}</div>
-  const pending = value !== current && status && status !== 'SYNCED'
-  return <button className="admin-editable-cell" type="button" disabled={disabled} onDoubleClick={start} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); start() } }}><strong>{formatResultTime(value) || '—'}</strong>{pending && <small>● ожидает синхронизации</small>}{pending && <small>Было: {formatResultTime(current) || '—'}</small>}</button>
+  const pending = value !== current
+  return <button className="admin-editable-cell" type="button" disabled={disabled} onDoubleClick={start} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); start() } }}><strong>{pending ? (formatResultTime(value) || 'очистить') : '—'}</strong>{pending && <small>● ожидает синхронизации</small>}</button>
+}
+
+function TextFactCell({ label, value, current, maxLength, required = false, disabled, onSave }: { label: string; value: string | null; current: string | null; maxLength: number; required?: boolean; disabled: boolean; onSave: (value: string) => Promise<void> }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value ?? '')
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { if (!editing) setDraft(value ?? '') }, [editing, value])
+  const save = async () => {
+    const normalized = draft.trim()
+    if (required && !normalized) { setError('Значение обязательно'); return }
+    if (normalized.length > maxLength) { setError(`Максимум ${maxLength} символов`); return }
+    try { await onSave(normalized); setEditing(false); setError(null) } catch { /* row notice is shown */ }
+  }
+  if (editing) return <div className="admin-inline-editor"><input autoFocus aria-label={label} maxLength={maxLength} value={draft} onChange={(event) => { setDraft(event.target.value); setError(null) }} onBlur={() => void save()} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void save() } else if (event.key === 'Escape') { setEditing(false); setDraft(value ?? ''); setError(null) } }} />{error && <small className="admin-cell-error">{error}</small>}</div>
+  const pending = value !== current
+  return <button className="admin-editable-cell" type="button" disabled={disabled} onDoubleClick={() => setEditing(true)} onKeyDown={(event) => { if (event.key === 'Enter') setEditing(true) }}><strong>{value || '—'}</strong>{pending && <small>текущее: {current || '—'}</small>}</button>
+}
+
+function GenderFactCell({ value, current, disabled, onSave }: { value: string | null; current: string | null; disabled: boolean; onSave: (value: string | null) => Promise<void> }) {
+  return <div className="admin-fact-select"><select aria-label="Пол" disabled={disabled} value={value ?? ''} onChange={(event) => void onSave(event.target.value || null).catch(() => undefined)}><option value="">Не указан</option><option value="male">Мужской</option><option value="female">Женский</option></select>{value !== current && <small>текущее: {genderLabel(current)}</small>}</div>
+}
+
+function DateFactCell({ value, current, disabled, onSave }: { value: string | null; current: string | null; disabled: boolean; onSave: (value: string | null) => Promise<void> }) {
+  const [draft, setDraft] = useState(value ?? '')
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => setDraft(value ?? ''), [value])
+  const save = async () => {
+    if (draft && (!/^\d{4}-\d{2}-\d{2}$/.test(draft) || Number.isNaN(Date.parse(`${draft}T00:00:00Z`)))) { setError('Некорректная дата'); return }
+    if (draft && draft > new Date().toISOString().slice(0, 10)) { setError('Дата не может быть в будущем'); return }
+    try { await onSave(draft || null); setError(null) } catch { /* row notice is shown */ }
+  }
+  return <div className="admin-inline-editor admin-fact-select"><input aria-label="Дата рождения" type="date" disabled={disabled} value={draft} onChange={(event) => { setDraft(event.target.value); setError(null) }} onBlur={() => void save()} />{value !== current && <small>текущее: {formatBirthDate(current)}</small>}{error && <small className="admin-cell-error">{error}</small>}</div>
+}
+
+function RaceFactCell({ value, current, options, disabled, onSave }: { value: number; current: number; options: Race[]; disabled: boolean; onSave: (value: number) => Promise<void> }) {
+  return <div className="admin-fact-select"><select aria-label="Формат / дистанция" disabled={disabled || !options.length} value={value} onChange={(event) => void onSave(Number(event.target.value)).catch(() => undefined)}>{options.map((race) => <option key={race.id} value={race.id}>{raceLabel(race)}</option>)}</select>{value !== current && <small>текущее: {raceLabel(options.find((race) => race.id === current))}</small>}</div>
 }
 
 function ResultStatusCell({ value, current, disabled, onSave }: { value: string; current: string | null; disabled: boolean; onSave: (value: string) => Promise<void> }) {
@@ -305,6 +356,11 @@ interface WorkDraft {
   desiredResultStatus: string | null
   desiredGunTimeMs: number | null
   desiredChipTimeMs: number | null
+  desiredDisplayName: string
+  desiredGender: string | null
+  desiredBirthDate: string | null
+  desiredBib: string | null
+  desiredRaceId: number
   assigneeUserId: number | null
   internalComment: string | null
 }
@@ -316,6 +372,11 @@ function workDraft(row: JournalWorkspaceRow): WorkDraft {
     desiredResultStatus: row.workItem?.desiredResultStatus ?? row.currentResultStatus,
     desiredGunTimeMs: row.workItem?.desiredGunTimeMs ?? row.currentGunTimeMs,
     desiredChipTimeMs: row.workItem?.desiredChipTimeMs ?? row.currentChipTimeMs,
+    desiredDisplayName: row.workItem?.desiredDisplayName ?? row.currentDisplayName,
+    desiredGender: row.workItem?.desiredGender ?? row.currentGender,
+    desiredBirthDate: row.workItem?.desiredBirthDate ?? row.currentBirthDate,
+    desiredBib: row.workItem?.desiredBib ?? row.currentBib,
+    desiredRaceId: row.workItem?.desiredRaceId ?? row.currentRaceId,
     assigneeUserId: row.workItem?.assigneeUserId ?? null,
     internalComment: row.workItem?.internalComment ?? null,
   }
@@ -337,10 +398,10 @@ function matchesFilters(row: JournalWorkspaceRow, filters: JournalFilters): bool
   const contains = (value: string | null, query: string | undefined) => !query || (value ?? '').toLocaleLowerCase('ru-RU').includes(query.toLocaleLowerCase('ru-RU'))
   return (!filters.issueId || row.issueId === filters.issueId)
     && (!filters.eventId || row.eventId === filters.eventId)
-    && (!filters.raceId || row.raceId === filters.raceId)
+    && (!filters.raceId || row.currentRaceId === filters.raceId)
     && contains(row.location, filters.location)
-    && contains(row.bib, filters.bib)
-    && contains(row.participantName, filters.participant)
+    && contains(row.workItem?.desiredBib ?? row.currentBib, filters.bib)
+    && contains(row.workItem?.desiredDisplayName ?? row.currentDisplayName, filters.participant)
     && (!filters.issueType || row.issueType === filters.issueType)
     && (!filters.correctionReason || row.correctionReason === filters.correctionReason)
     && (!filters.status?.length || filters.status.includes(row.issueStatus))
@@ -372,6 +433,25 @@ function filtersFromUrl(): JournalFilters {
 
 function historicalStartName(formatName: string | null, raceName: string): string {
   return formatName ? `${formatName} · ${raceName}` : raceName
+}
+
+function genderLabel(value: string | null): string {
+  if (value === 'male') return 'Мужской'
+  if (value === 'female') return 'Женский'
+  return 'Не указан'
+}
+
+function formatBirthDate(value: string | null): string {
+  if (!value) return '—'
+  const [year, month, day] = value.split('-')
+  return `${day}.${month}.${year}`
+}
+
+function raceLabel(race: Race | undefined): string {
+  if (!race) return '—'
+  if (race.distanceMeters === null) return race.name
+  const kilometres = race.distanceMeters / 1000
+  return `${race.name} · ${Number.isInteger(kilometres) ? kilometres : kilometres.toFixed(1)} км`
 }
 
 function writeFiltersToUrl(filters: JournalFilters): void {

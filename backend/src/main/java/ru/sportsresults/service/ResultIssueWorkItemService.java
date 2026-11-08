@@ -6,6 +6,7 @@ import ru.sportsresults.api.dto.ResetResultIssueWorkItemRequest;
 import ru.sportsresults.api.dto.ResultIssueWorkItemDto;
 import ru.sportsresults.api.dto.UpdateResultIssueWorkItemRequest;
 import ru.sportsresults.domain.AdminUser;
+import ru.sportsresults.domain.Race;
 import ru.sportsresults.domain.Registration;
 import ru.sportsresults.domain.Result;
 import ru.sportsresults.domain.ResultIssueRequest;
@@ -28,6 +29,7 @@ public class ResultIssueWorkItemService {
     private final AdminUserRepository userRepository;
     private final EventResultDataMutationGuard mutationGuard;
     private final ResultFactualMutationService factualMutationService;
+    private final RegistrationFactualMutationService registrationMutationService;
     private final ResultIssueWorkItemAuditService auditService;
 
     public ResultIssueWorkItemService(
@@ -37,6 +39,7 @@ public class ResultIssueWorkItemService {
             AdminUserRepository userRepository,
             EventResultDataMutationGuard mutationGuard,
             ResultFactualMutationService factualMutationService,
+            RegistrationFactualMutationService registrationMutationService,
             ResultIssueWorkItemAuditService auditService
     ) {
         this.issueRepository = issueRepository;
@@ -45,6 +48,7 @@ public class ResultIssueWorkItemService {
         this.userRepository = userRepository;
         this.mutationGuard = mutationGuard;
         this.factualMutationService = factualMutationService;
+        this.registrationMutationService = registrationMutationService;
         this.auditService = auditService;
     }
 
@@ -55,31 +59,37 @@ public class ResultIssueWorkItemService {
             String actor
     ) {
         ResultIssueRequest issue = lockIssue(issueId);
+        Registration registration = issue.getRegistration();
         Result currentResult = currentResult(issue);
         validateDesiredState(currentResult, request.desiredResultStatus(),
                 request.desiredGunTimeMs(), request.desiredChipTimeMs());
         String desiredStatus = currentResult == null
                 ? null : factualMutationService.normalizeStatus(request.desiredResultStatus());
-        AdminUser assignee = assignee(request.assigneeUserId());
-        String comment = normalizeComment(request.internalComment());
-
         ResultIssueWorkItem item = workItemRepository.findByIssueIdForUpdate(issueId).orElse(null);
         validateVersion(item, request.expectedVersion());
-        if (item == null && !requiresPersistence(
-                currentResult, desiredStatus, request.desiredGunTimeMs(), request.desiredChipTimeMs(), assignee, comment)) {
-            return transientState(issue, currentResult, actor);
-        }
-
         boolean created = item == null;
         if (created) {
-            item = create(issue, currentResult, actor);
+            item = create(issue, currentResult, registration, actor);
             // Persist the base snapshot before applying the requested edit. This makes the first
             // successful edit advance the optimistic version from the public "not created" token
             // (0), so another client that also loaded an absent work item receives a controlled
             // version conflict instead of silently overwriting the first edit.
             item = workItemRepository.saveAndFlush(item);
         } else if (item.getSyncStatus() == ResultIssueWorkSyncStatus.SYNCED) {
-            rebase(item, currentResult);
+            rebase(item, currentResult, registration);
+        } else {
+            ensureRegistrationSnapshot(item, registration);
+        }
+
+        var desiredRegistration = desiredRegistration(item, registration, request);
+        AdminUser assignee = assignee(request.assigneeUserId());
+        String comment = normalizeComment(request.internalComment());
+        if (created && !requiresPersistence(
+                item, desiredStatus, request.desiredGunTimeMs(), request.desiredChipTimeMs(),
+                desiredRegistration, assignee, comment)) {
+            workItemRepository.delete(item);
+            workItemRepository.flush();
+            return transientState(issue, currentResult, registration, actor);
         }
 
         var statusChange = auditService.change("desiredResultStatus", item.getDesiredResultStatus(), desiredStatus);
@@ -87,10 +97,20 @@ public class ResultIssueWorkItemService {
                 request.desiredGunTimeMs());
         var chipChange = auditService.change("desiredChipTimeMs", milliseconds(item.getDesiredChipTime()),
                 request.desiredChipTimeMs());
+        var nameChange = auditService.change(
+                "desiredDisplayName", item.getDesiredDisplayName(), desiredRegistration.displayName());
+        var genderChange = auditService.change(
+                "desiredGender", item.getDesiredGender(), desiredRegistration.gender());
+        var birthDateChange = auditService.change(
+                "desiredBirthDate", item.getDesiredBirthDate(), desiredRegistration.birthDate());
+        var bibChange = auditService.change("desiredBib", item.getDesiredBib(), desiredRegistration.bib());
+        var raceChange = auditService.change(
+                "desiredRaceId", id(item.getDesiredRace()), desiredRegistration.race().getId());
         var assigneeChange = auditService.change("assigneeUserId", id(item.getAssignee()), id(assignee));
         var commentChange = auditService.change("internalComment", item.getInternalComment(), comment);
-        ResultIssueWorkSyncStatus nextSyncStatus = pending(
-                currentResult, desiredStatus, request.desiredGunTimeMs(), request.desiredChipTimeMs())
+        ResultIssueWorkSyncStatus nextSyncStatus = (pendingResult(
+                item, desiredStatus, request.desiredGunTimeMs(), request.desiredChipTimeMs())
+                || pendingRegistration(item, desiredRegistration))
                 ? ResultIssueWorkSyncStatus.PENDING : ResultIssueWorkSyncStatus.SYNCED;
         var syncChange = auditService.change("syncStatus", item.getSyncStatus(), nextSyncStatus);
 
@@ -98,22 +118,31 @@ public class ResultIssueWorkItemService {
         item.setDesiredResultStatus(desiredStatus);
         item.setDesiredGunTime(duration(request.desiredGunTimeMs()));
         item.setDesiredChipTime(duration(request.desiredChipTimeMs()));
+        item.setDesiredDisplayName(desiredRegistration.displayName());
+        item.setDesiredGender(desiredRegistration.gender());
+        item.setDesiredBirthDate(desiredRegistration.birthDate());
+        item.setDesiredBib(desiredRegistration.bib());
+        item.setDesiredRace(desiredRegistration.race());
         item.setAssignee(assignee);
         item.setInternalComment(comment);
         item.setSyncStatus(nextSyncStatus);
         item.setSyncErrorCode(null);
         item.setUpdatedBy(actor);
         if (nextSyncStatus == ResultIssueWorkSyncStatus.SYNCED) {
-            rebase(item, currentResult);
+            rebase(item, currentResult, registration);
         }
 
         boolean changed = created || statusChange != null || gunChange != null || chipChange != null
+                || nameChange != null || genderChange != null || birthDateChange != null
+                || bibChange != null || raceChange != null
                 || assigneeChange != null || commentChange != null || syncChange != null;
         if (!changed) {
             return toDto(item);
         }
         item = workItemRepository.saveAndFlush(item);
-        auditService.save(item, actor, statusChange, gunChange, chipChange, assigneeChange, commentChange, syncChange);
+        auditService.save(item, actor, statusChange, gunChange, chipChange,
+                nameChange, genderChange, birthDateChange, bibChange, raceChange,
+                assigneeChange, commentChange, syncChange);
         return toDto(item);
     }
 
@@ -124,11 +153,12 @@ public class ResultIssueWorkItemService {
             String actor
     ) {
         ResultIssueRequest issue = lockIssue(issueId);
+        Registration registration = issue.getRegistration();
         Result currentResult = currentResult(issue);
         ResultIssueWorkItem item = workItemRepository.findByIssueIdForUpdate(issueId).orElse(null);
         validateVersion(item, request.expectedVersion());
         if (item == null) {
-            return transientState(issue, currentResult, actor);
+            return transientState(issue, currentResult, registration, actor);
         }
 
         var statusChange = auditService.change("desiredResultStatus", item.getDesiredResultStatus(),
@@ -137,14 +167,23 @@ public class ResultIssueWorkItemService {
                 currentResult == null ? null : milliseconds(currentResult.getGunTime()));
         var chipChange = auditService.change("desiredChipTimeMs", milliseconds(item.getDesiredChipTime()),
                 currentResult == null ? null : milliseconds(currentResult.getChipTime()));
+        var nameChange = auditService.change("desiredDisplayName", item.getDesiredDisplayName(),
+                registration.getDisplayName());
+        var genderChange = auditService.change("desiredGender", item.getDesiredGender(), registration.getGender());
+        var birthDateChange = auditService.change(
+                "desiredBirthDate", item.getDesiredBirthDate(), registration.getBirthDate());
+        var bibChange = auditService.change("desiredBib", item.getDesiredBib(), registration.getBib());
+        var raceChange = auditService.change(
+                "desiredRaceId", id(item.getDesiredRace()), registration.getRace().getId());
         var syncChange = auditService.change("syncStatus", item.getSyncStatus(), ResultIssueWorkSyncStatus.SYNCED);
         item.setResult(currentResult);
-        rebase(item, currentResult);
+        rebase(item, currentResult, registration);
         item.setSyncStatus(ResultIssueWorkSyncStatus.SYNCED);
         item.setSyncErrorCode(null);
         item.setUpdatedBy(actor);
         item = workItemRepository.saveAndFlush(item);
-        auditService.save(item, actor, statusChange, gunChange, chipChange, syncChange);
+        auditService.save(item, actor, statusChange, gunChange, chipChange,
+                nameChange, genderChange, birthDateChange, bibChange, raceChange, syncChange);
         return toDto(item);
     }
 
@@ -201,33 +240,57 @@ public class ResultIssueWorkItemService {
     }
 
     private static boolean requiresPersistence(
-            Result result,
+            ResultIssueWorkItem resultSnapshot,
             String status,
             Long gunTime,
             Long chipTime,
+            RegistrationFactualMutationService.DesiredRegistration desiredRegistration,
             AdminUser assignee,
             String comment
     ) {
-        return pending(result, status, gunTime, chipTime) || assignee != null || comment != null;
+        return pendingResult(resultSnapshot, status, gunTime, chipTime)
+                || pendingRegistration(resultSnapshot, desiredRegistration)
+                || assignee != null || comment != null;
     }
 
-    private static boolean pending(Result result, String status, Long gunTime, Long chipTime) {
-        return result != null && (!Objects.equals(result.getStatus(), status)
-                || !Objects.equals(milliseconds(result.getGunTime()), gunTime)
-                || !Objects.equals(milliseconds(result.getChipTime()), chipTime));
+    private static boolean pendingResult(
+            ResultIssueWorkItem item,
+            String status,
+            Long gunTime,
+            Long chipTime
+    ) {
+        return item.getResult() != null && (!Objects.equals(item.getBaseResultStatus(), status)
+                || !Objects.equals(milliseconds(item.getBaseGunTime()), gunTime)
+                || !Objects.equals(milliseconds(item.getBaseChipTime()), chipTime));
     }
 
-    private static ResultIssueWorkItem create(ResultIssueRequest issue, Result result, String actor) {
+    private static boolean pendingRegistration(
+            ResultIssueWorkItem item,
+            RegistrationFactualMutationService.DesiredRegistration desired
+    ) {
+        return !Objects.equals(item.getBaseDisplayName(), desired.displayName())
+                || !Objects.equals(item.getBaseGender(), desired.gender())
+                || !Objects.equals(item.getBaseBirthDate(), desired.birthDate())
+                || !Objects.equals(item.getBaseBib(), desired.bib())
+                || !Objects.equals(id(item.getBaseRace()), desired.race().getId());
+    }
+
+    private ResultIssueWorkItem create(
+            ResultIssueRequest issue,
+            Result result,
+            Registration registration,
+            String actor
+    ) {
         ResultIssueWorkItem item = new ResultIssueWorkItem();
         item.setIssueRequest(issue);
         item.setResult(result);
         item.setUpdatedBy(actor);
-        rebase(item, result);
+        rebase(item, result, registration);
         item.setSyncStatus(ResultIssueWorkSyncStatus.SYNCED);
         return item;
     }
 
-    private static void rebase(ResultIssueWorkItem item, Result result) {
+    private static void rebase(ResultIssueWorkItem item, Result result, Registration registration) {
         String status = result == null ? null : result.getStatus();
         Duration gun = result == null ? null : result.getGunTime();
         Duration chip = result == null ? null : result.getChipTime();
@@ -237,11 +300,64 @@ public class ResultIssueWorkItemService {
         item.setDesiredResultStatus(status);
         item.setDesiredGunTime(gun);
         item.setDesiredChipTime(chip);
+        item.setBaseDisplayName(registration.getDisplayName());
+        item.setDesiredDisplayName(registration.getDisplayName());
+        item.setBaseGender(registration.getGender());
+        item.setDesiredGender(registration.getGender());
+        item.setBaseBirthDate(registration.getBirthDate());
+        item.setDesiredBirthDate(registration.getBirthDate());
+        item.setBaseBib(registration.getBib());
+        item.setDesiredBib(registration.getBib());
+        item.setBaseRace(registration.getRace());
+        item.setDesiredRace(registration.getRace());
+    }
+
+    private static void ensureRegistrationSnapshot(ResultIssueWorkItem item, Registration registration) {
+        if (item.getBaseRace() != null) {
+            return;
+        }
+        item.setBaseDisplayName(registration.getDisplayName());
+        item.setDesiredDisplayName(registration.getDisplayName());
+        item.setBaseGender(registration.getGender());
+        item.setDesiredGender(registration.getGender());
+        item.setBaseBirthDate(registration.getBirthDate());
+        item.setDesiredBirthDate(registration.getBirthDate());
+        item.setBaseBib(registration.getBib());
+        item.setDesiredBib(registration.getBib());
+        item.setBaseRace(registration.getRace());
+        item.setDesiredRace(registration.getRace());
+    }
+
+    private RegistrationFactualMutationService.DesiredRegistration desiredRegistration(
+            ResultIssueWorkItem item,
+            Registration registration,
+            UpdateResultIssueWorkItemRequest request
+    ) {
+        boolean registrationStateProvided = request.desiredDisplayName() != null || request.desiredRaceId() != null;
+        if (registrationStateProvided) {
+            return registrationMutationService.validate(
+                    registration,
+                    request.desiredDisplayName(),
+                    request.desiredGender(),
+                    request.desiredBirthDate(),
+                    request.desiredBib(),
+                    request.desiredRaceId()
+            );
+        }
+        return registrationMutationService.validate(
+                registration,
+                item.getDesiredDisplayName(),
+                item.getDesiredGender(),
+                item.getDesiredBirthDate(),
+                item.getDesiredBib(),
+                item.getDesiredRace().getId()
+        );
     }
 
     private static ResultIssueWorkItemDto transientState(
             ResultIssueRequest issue,
             Result result,
+            Registration registration,
             String actor
     ) {
         return new ResultIssueWorkItemDto(
@@ -251,6 +367,11 @@ public class ResultIssueWorkItemService {
                 result == null ? null : result.getStatus(),
                 result == null ? null : milliseconds(result.getGunTime()),
                 result == null ? null : milliseconds(result.getChipTime()),
+                registration.getDisplayName(),
+                registration.getGender(),
+                registration.getBirthDate(),
+                registration.getBib(),
+                registration.getRace().getId(),
                 null,
                 null,
                 null,
@@ -272,6 +393,11 @@ public class ResultIssueWorkItemService {
                 item.getDesiredResultStatus(),
                 milliseconds(item.getDesiredGunTime()),
                 milliseconds(item.getDesiredChipTime()),
+                item.getDesiredDisplayName(),
+                item.getDesiredGender(),
+                item.getDesiredBirthDate(),
+                item.getDesiredBib(),
+                id(item.getDesiredRace()),
                 id(item.getAssignee()),
                 item.getAssignee() == null ? null : item.getAssignee().getDisplayName(),
                 item.getInternalComment(),
@@ -292,6 +418,7 @@ public class ResultIssueWorkItemService {
     private static Long id(Object value) {
         if (value instanceof AdminUser user) return user.getId();
         if (value instanceof Result result) return result.getId();
+        if (value instanceof Race race) return race.getId();
         return null;
     }
 

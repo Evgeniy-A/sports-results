@@ -68,10 +68,13 @@ public class ResultIssueWorkspaceQueryRepository {
                        COALESCE(e.location, issue.snapshot_event_location) AS location,
                        race.id AS race_id,
                        race.name AS race_name,
+                       race.distance_meters AS race_distance_meters,
                        registration.id AS registration_id,
                        registration.retired_at IS NULL AS registration_current,
                        COALESCE(registration.bib, issue.snapshot_bib) AS bib,
                        COALESCE(registration.display_name, issue.snapshot_display_name) AS participant_name,
+                       registration.gender AS registration_gender,
+                       registration.birth_date AS registration_birth_date,
                        COALESCE(category.display_name, issue.snapshot_effective_category_name) AS category_name,
                        issue.issue_type,
                        issue.correction_reason,
@@ -88,6 +91,13 @@ public class ResultIssueWorkspaceQueryRepository {
                        work.desired_result_status,
                        work.desired_gun_time_ms,
                        work.desired_chip_time_ms,
+                       work.desired_display_name,
+                       work.desired_gender,
+                       work.desired_birth_date,
+                       work.desired_bib,
+                       work.desired_race_id,
+                       desired_race.name AS desired_race_name,
+                       desired_race.distance_meters AS desired_race_distance_meters,
                        assignee.id AS assignee_user_id,
                        assignee.display_name AS assignee_name,
                        work.internal_comment,
@@ -107,6 +117,7 @@ public class ResultIssueWorkspaceQueryRepository {
                 LEFT JOIN categories category ON category.id = registration.category_id
                 LEFT JOIN results result ON result.registration_id = registration.id
                 LEFT JOIN result_issue_work_items work ON work.issue_request_id = issue.id
+                LEFT JOIN races desired_race ON desired_race.id = work.desired_race_id
                 LEFT JOIN admin_users assignee ON assignee.id = work.assignee_user_id
                 WHERE series.id = :seriesId
                   AND %s = :year
@@ -162,6 +173,13 @@ public class ResultIssueWorkspaceQueryRepository {
                         rs.getString("desired_result_status"),
                         nullableLong(rs, "desired_gun_time_ms"),
                         nullableLong(rs, "desired_chip_time_ms"),
+                        rs.getString("desired_display_name"),
+                        rs.getString("desired_gender"),
+                        rs.getObject("desired_birth_date", java.time.LocalDate.class),
+                        rs.getString("desired_bib"),
+                        nullableLong(rs, "desired_race_id"),
+                        rs.getString("desired_race_name"),
+                        rs.getBigDecimal("desired_race_distance_meters"),
                         nullableLong(rs, "assignee_user_id"),
                         rs.getString("assignee_name"),
                         rs.getString("internal_comment"),
@@ -183,10 +201,13 @@ public class ResultIssueWorkspaceQueryRepository {
                 rs.getString("location"),
                 rs.getLong("race_id"),
                 rs.getString("race_name"),
+                rs.getBigDecimal("race_distance_meters"),
                 rs.getLong("registration_id"),
                 rs.getBoolean("registration_current"),
                 rs.getString("bib"),
                 rs.getString("participant_name"),
+                rs.getString("registration_gender"),
+                rs.getObject("registration_birth_date", java.time.LocalDate.class),
                 rs.getString("category_name"),
                 ResultIssueType.valueOf(rs.getString("issue_type")),
                 nullableEnum(rs, "correction_reason", ResultCorrectionReason.class),

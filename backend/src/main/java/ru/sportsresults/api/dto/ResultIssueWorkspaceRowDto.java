@@ -6,6 +6,8 @@ import ru.sportsresults.domain.ResultIssueType;
 import ru.sportsresults.domain.ResultIssueWorkSyncStatus;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.math.BigDecimal;
 
 public record ResultIssueWorkspaceRowDto(
         Long issueId,
@@ -15,13 +17,16 @@ public record ResultIssueWorkspaceRowDto(
         String eventName,
         int eventYear,
         String location,
-        Long raceId,
-        String raceName,
+        Long currentRaceId,
+        String currentRaceName,
+        BigDecimal currentDistanceMeters,
         Long registrationId,
         boolean registrationCurrent,
-        String bib,
-        String participantName,
-        String categoryName,
+        String currentBib,
+        String currentDisplayName,
+        String currentGender,
+        LocalDate currentBirthDate,
+        String currentCategoryName,
         ResultIssueType issueType,
         ResultCorrectionReason correctionReason,
         ResultIssueStatus issueStatus,
@@ -40,6 +45,13 @@ public record ResultIssueWorkspaceRowDto(
             String desiredResultStatus,
             Long desiredGunTimeMs,
             Long desiredChipTimeMs,
+            String desiredDisplayName,
+            String desiredGender,
+            LocalDate desiredBirthDate,
+            String desiredBib,
+            Long desiredRaceId,
+            String desiredRaceName,
+            BigDecimal desiredDistanceMeters,
             Long assigneeUserId,
             String assigneeName,
             String internalComment,

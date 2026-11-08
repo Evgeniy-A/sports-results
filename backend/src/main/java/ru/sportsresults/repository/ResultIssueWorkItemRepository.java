@@ -18,7 +18,7 @@ public interface ResultIssueWorkItemRepository extends JpaRepository<ResultIssue
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @EntityGraph(attributePaths = {
             "issueRequest", "issueRequest.event", "issueRequest.registration",
-            "issueRequest.registration.race", "result", "assignee"
+            "issueRequest.registration.race", "baseRace", "desiredRace", "result", "assignee"
     })
     @Query("select item from ResultIssueWorkItem item where item.issueRequest.id = :issueId")
     Optional<ResultIssueWorkItem> findByIssueIdForUpdate(@Param("issueId") Long issueId);
@@ -26,7 +26,7 @@ public interface ResultIssueWorkItemRepository extends JpaRepository<ResultIssue
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @EntityGraph(attributePaths = {
             "issueRequest", "issueRequest.event", "issueRequest.registration",
-            "issueRequest.registration.race", "result", "assignee"
+            "issueRequest.registration.race", "baseRace", "desiredRace", "result", "assignee"
     })
     @Query("select item from ResultIssueWorkItem item where item.id = :itemId")
     Optional<ResultIssueWorkItem> findByIdForUpdate(@Param("itemId") Long itemId);

@@ -21,7 +21,7 @@ class FlywayV34UpgradeTest {
             flyway.migrate();
             flyway.validate();
 
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("34");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("35");
             assertThat(tableCount(jdbc, "result_issue_work_items")).isOne();
             assertThat(columnCount(jdbc, "result_issue_requests", "claimed_gun_time_ms")).isOne();
             assertThat(columnCount(jdbc, "results", "gun_time_ms")).isOne();

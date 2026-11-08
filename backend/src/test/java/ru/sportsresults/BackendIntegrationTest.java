@@ -141,6 +141,7 @@ import ru.sportsresults.service.ResultIssueSnapshotService;
 import ru.sportsresults.service.ResultIssueJournalExportArtifact;
 import ru.sportsresults.service.ResultIssueJournalXlsxExportService;
 import ru.sportsresults.service.ResultIssueShareTokenService;
+import ru.sportsresults.service.ResultIssueWorkSyncExecutor;
 import ru.sportsresults.service.InvalidRequestException;
 import ru.sportsresults.service.ResourceNotFoundException;
 import ru.sportsresults.service.RequestConflictException;
@@ -240,6 +241,7 @@ class BackendIntegrationTest {
     private ResultIssueSnapshotService resultIssueSnapshotService;
     private ResultIssueJournalXlsxExportService resultIssueJournalXlsxExportService;
     private ResultIssueShareTokenService resultIssueShareTokenService;
+    private ResultIssueWorkSyncExecutor resultIssueWorkSyncExecutor;
     private RaceAdminService raceAdminService;
     private RaceResultsPublicationService raceResultsPublicationService;
     private CategoryAdminService categoryAdminService;
@@ -322,6 +324,7 @@ class BackendIntegrationTest {
         resultIssueSnapshotService = context.getBean(ResultIssueSnapshotService.class);
         resultIssueJournalXlsxExportService = context.getBean(ResultIssueJournalXlsxExportService.class);
         resultIssueShareTokenService = context.getBean(ResultIssueShareTokenService.class);
+        resultIssueWorkSyncExecutor = context.getBean(ResultIssueWorkSyncExecutor.class);
         raceAdminService = context.getBean(RaceAdminService.class);
         raceResultsPublicationService = context.getBean(RaceResultsPublicationService.class);
         categoryAdminService = context.getBean(CategoryAdminService.class);
@@ -9502,6 +9505,9 @@ class BackendIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("JOURNAL_WORK_ITEM_VERSION_CONFLICT"));
 
+        registration.setBib("Q-EXTERNAL");
+        registrationRepository.saveAndFlush(registration);
+
         mockMvc.perform(post(
                         "/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/sync", seriesId, 2027)
                         .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
@@ -9527,6 +9533,8 @@ class BackendIntegrationTest {
         assertThat(synchronizedResult.getChipTime()).isEqualTo(Duration.ofMillis(desiredChip));
         assertThat(synchronizedResult.getStatus()).isEqualTo(originalStatus);
         assertThat(synchronizedResult.getOverallPlace()).isEqualTo(originalOverallPlace);
+        assertThat(registrationRepository.findById(registration.getId()).orElseThrow().getBib())
+                .isEqualTo("Q-EXTERNAL");
         PageResponse<ResultListItemDto> authoritativeOrder = resultQueryService.search(
                 fixture.event().getId(), registration.getRace().getId(),
                 null, null, null, null, null, 0, 20, "gunTime", "asc"
@@ -9596,6 +9604,209 @@ class BackendIntegrationTest {
         assertThat(((Number) retained.get("version")).longValue()).isEqualTo(1);
         assertThat(resultRepository.findById(official.getId()).orElseThrow().getGunTime())
                 .isEqualTo(Duration.ofMillis(originalGun));
+    }
+
+    @Test
+    void resultIssueWorkspaceSynchronizesRegistrationAndResultFactsAtomically() throws Exception {
+        AdminIssueFixture fixture = createGlobalIssueFixture(
+                "Workspace registration", "workspace-registration", "Moscow", "2027-09-26T06:00:00Z", 1
+        );
+        ResultIssueRequest issue = fixture.issues().getFirst();
+        Registration registration = registrationRepository.findById(
+                fixture.registrations().getFirst().getId()).orElseThrow();
+        Result result = resultRepository.findByRegistrationId(registration.getId()).orElseThrow();
+        Race originalRace = registration.getRace();
+        Race targetRace = createDraftRace(fixture.event(), "workspace-target", 20);
+        Long targetCategoryId = categoryAdminService.create(
+                targetRace.getId(),
+                categoryRequest("ADULT_M", "Target adults", 18, 80, CategoryGender.MALE, 1, true),
+                ADMIN_USERNAME
+        ).id();
+        targetRace.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        targetRace = raceRepository.saveAndFlush(targetRace);
+        StartCluster cluster = new StartCluster();
+        cluster.setRace(originalRace);
+        cluster.setCode("OLD");
+        cluster.setDisplayName("Old race cluster");
+        cluster.setDisplayOrder(0);
+        registration.setCluster(startClusterRepository.saveAndFlush(cluster));
+        registration.setGender("male");
+        registration.setBirthDate(LocalDate.of(1991, 5, 14));
+        registrationRepository.saveAndFlush(registration);
+        long originalGun = result.getGunTime().toMillis();
+
+        Map<String, Object> combined = new LinkedHashMap<>();
+        combined.put("expectedVersion", 0);
+        combined.put("desiredResultStatus", result.getStatus());
+        combined.put("desiredGunTimeMs", originalGun - 1_000);
+        combined.put("desiredChipTimeMs", result.getChipTime() == null ? null : result.getChipTime().toMillis());
+        combined.put("desiredDisplayName", "Иванов Иван Петрович");
+        combined.put("desiredGender", "male");
+        combined.put("desiredBirthDate", "1981-05-14");
+        combined.put("desiredBib", "UAT-REG-NEW");
+        combined.put("desiredRaceId", targetRace.getId());
+
+        MvcResult pending = mockMvc.perform(put(
+                        "/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(combined)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.desiredDisplayName").value("Иванов Иван Петрович"))
+                .andExpect(jsonPath("$.desiredBirthDate").value("1981-05-14"))
+                .andExpect(jsonPath("$.desiredRaceId").value(targetRace.getId()))
+                .andExpect(jsonPath("$.syncStatus").value("PENDING"))
+                .andReturn();
+        long version = objectMapper.readTree(pending.getResponse().getContentAsByteArray()).path("version").asLong();
+
+        registration = registrationRepository.findById(registration.getId()).orElseThrow();
+        assertThat(registration.getDisplayName()).isNotEqualTo("Иванов Иван Петрович");
+        assertThat(registration.getBirthDate()).isEqualTo(LocalDate.of(1991, 5, 14));
+        assertThat(registration.getRace().getId()).isEqualTo(originalRace.getId());
+        assertThat(resultRepository.findById(result.getId()).orElseThrow().getGunTime())
+                .isEqualTo(Duration.ofMillis(originalGun));
+        mockMvc.perform(get("/api/events/{eventId}/results", fixture.event().getId())
+                        .param("raceId", originalRace.getId().toString())
+                        .param("bib", registration.getBib()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].displayName").value(registration.getDisplayName()))
+                .andExpect(jsonPath("$.content[0].bib").value(registration.getBib()));
+        mockMvc.perform(get("/api/events/{eventId}/results", fixture.event().getId())
+                        .param("raceId", targetRace.getId().toString())
+                        .param("bib", "UAT-REG-NEW"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0));
+        mockMvc.perform(get("/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/rows",
+                        fixture.event().getEventSeries().getId(), 2027)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].currentDisplayName").value(registration.getDisplayName()))
+                .andExpect(jsonPath("$[0].workItem.desiredDisplayName").value("Иванов Иван Петрович"))
+                .andExpect(jsonPath("$[0].currentRaceId").value(originalRace.getId()))
+                .andExpect(jsonPath("$[0].workItem.desiredRaceId").value(targetRace.getId()));
+
+        registration.setBirthDate(LocalDate.of(1992, 6, 15));
+        registrationRepository.saveAndFlush(registration);
+        mockMvc.perform(post("/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/sync",
+                        fixture.event().getEventSeries().getId(), 2027)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applied").value(0))
+                .andExpect(jsonPath("$.conflicts").value(1));
+        assertThat(registrationRepository.findById(registration.getId()).orElseThrow()).satisfies(current -> {
+            assertThat(current.getDisplayName()).isNotEqualTo("Иванов Иван Петрович");
+            assertThat(current.getRace().getId()).isEqualTo(originalRace.getId());
+            assertThat(current.getBirthDate()).isEqualTo(LocalDate.of(1992, 6, 15));
+        });
+        assertThat(resultRepository.findById(result.getId()).orElseThrow().getGunTime())
+                .isEqualTo(Duration.ofMillis(originalGun));
+
+        long conflictVersion = jdbcTemplate.queryForObject(
+                "SELECT version FROM result_issue_work_items WHERE issue_request_id=?",
+                Long.class, issue.getId());
+        mockMvc.perform(post("/api/admin/result-issue-workspace/issues/{issueId}/reset", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedVersion\":" + conflictVersion + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.syncStatus").value("SYNCED"))
+                .andExpect(jsonPath("$.desiredBirthDate").value("1992-06-15"));
+
+        combined.put("expectedVersion", conflictVersion + 1);
+        MvcResult retried = mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(combined)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.syncStatus").value("PENDING"))
+                .andReturn();
+        long workItemId = objectMapper.readTree(retried.getResponse().getContentAsByteArray())
+                .path("workItemId").asLong();
+
+        jdbcTemplate.execute("""
+                CREATE FUNCTION stage11_reject_result_update() RETURNS trigger
+                LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.id = %d THEN
+                        RAISE EXCEPTION 'Stage 1.1 induced Result mutation failure';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$
+                """.formatted(result.getId()));
+        jdbcTemplate.execute("""
+                CREATE TRIGGER stage11_reject_result_update
+                BEFORE UPDATE ON results
+                FOR EACH ROW EXECUTE FUNCTION stage11_reject_result_update()
+                """);
+        try {
+            assertThatThrownBy(() -> resultIssueWorkSyncExecutor.sync(workItemId, ADMIN_USERNAME))
+                    .isInstanceOf(RuntimeException.class);
+        } finally {
+            jdbcTemplate.execute("DROP TRIGGER stage11_reject_result_update ON results");
+            jdbcTemplate.execute("DROP FUNCTION stage11_reject_result_update()");
+        }
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT display_name FROM registrations WHERE id=?", String.class, registration.getId()))
+                .isNotEqualTo("Иванов Иван Петрович");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT birth_date FROM registrations WHERE id=?", LocalDate.class, registration.getId()))
+                .isEqualTo(LocalDate.of(1992, 6, 15));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT race_id FROM registrations WHERE id=?", Long.class, registration.getId()))
+                .isEqualTo(originalRace.getId());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT cluster_id FROM registrations WHERE id=?", Long.class, registration.getId()))
+                .isEqualTo(cluster.getId());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT gun_time_ms FROM results WHERE id=?", Long.class, result.getId()))
+                .isEqualTo(originalGun);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT sync_status FROM result_issue_work_items WHERE id=?", String.class, workItemId))
+                .isEqualTo("PENDING");
+
+        mockMvc.perform(post("/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/sync",
+                        fixture.event().getEventSeries().getId(), 2027)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applied").value(1))
+                .andExpect(jsonPath("$.errors").value(0));
+
+        Registration synchronizedRegistration = registrationRepository.findById(registration.getId()).orElseThrow();
+        assertThat(synchronizedRegistration.getDisplayName()).isEqualTo("Иванов Иван Петрович");
+        assertThat(synchronizedRegistration.getFirstName()).isEqualTo(fixture.registrations().getFirst().getFirstName());
+        assertThat(synchronizedRegistration.getLastName()).isEqualTo(fixture.registrations().getFirst().getLastName());
+        assertThat(synchronizedRegistration.getBirthDate()).isEqualTo(LocalDate.of(1981, 5, 14));
+        assertThat(synchronizedRegistration.getBib()).isEqualTo("UAT-REG-NEW");
+        assertThat(synchronizedRegistration.getRace().getId()).isEqualTo(targetRace.getId());
+        assertThat(synchronizedRegistration.getCluster()).isNull();
+        assertThat(synchronizedRegistration.getCategory().getId()).isEqualTo(targetCategoryId);
+        assertThat(resultRepository.findByRegistrationId(synchronizedRegistration.getId()).orElseThrow().getId())
+                .isEqualTo(result.getId());
+        assertThat(resultRepository.findById(result.getId()).orElseThrow().getGunTime())
+                .isEqualTo(Duration.ofMillis(originalGun - 1_000));
+        mockMvc.perform(get("/api/events/{eventId}/results", fixture.event().getId())
+                        .param("raceId", targetRace.getId().toString())
+                        .param("bib", "UAT-REG-NEW"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].displayName").value("Иванов Иван Петрович"));
+        assertThat(changeLogRepository.findAllByEntityTypeAndEntityIdOrderByChangedAtAsc(
+                AuditEntityType.REGISTRATION, registration.getId()))
+                .extracting(AdminChangeLog::getFieldName)
+                .contains("displayName", "birthDate", "bib", "raceId", "clusterId", "categoryId");
+
+        Event foreignEvent = createPublishedEvent("Foreign workspace", "foreign-workspace");
+        Race foreignRace = createDraftRace(foreignEvent, "foreign-race", 1);
+        Map<String, Object> crossEvent = new LinkedHashMap<>(combined);
+        crossEvent.put("expectedVersion", jdbcTemplate.queryForObject(
+                "SELECT version FROM result_issue_work_items WHERE issue_request_id=?", Long.class, issue.getId()));
+        crossEvent.put("desiredRaceId", foreignRace.getId());
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", issue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(crossEvent)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("JOURNAL_RACE_EVENT_MISMATCH"));
     }
 
     @Test
@@ -9674,6 +9885,31 @@ class BackendIntegrationTest {
                 .andExpect(jsonPath("$.resultId").doesNotExist())
                 .andExpect(jsonPath("$.internalComment").value("Результат отсутствует, требуется проверка"))
                 .andExpect(jsonPath("$.syncStatus").value("SYNCED"));
+        Registration missingRegistration = registrationRepository.findById(
+                fixture.registrations().get(1).getId()).orElseThrow();
+        Map<String, Object> missingRegistrationCorrection = new LinkedHashMap<>();
+        missingRegistrationCorrection.put("expectedVersion", 1);
+        missingRegistrationCorrection.put("desiredResultStatus", null);
+        missingRegistrationCorrection.put("desiredGunTimeMs", null);
+        missingRegistrationCorrection.put("desiredChipTimeMs", null);
+        missingRegistrationCorrection.put("desiredDisplayName", "Участник без результата — исправлено");
+        missingRegistrationCorrection.put("desiredGender", missingRegistration.getGender());
+        missingRegistrationCorrection.put("desiredBirthDate", missingRegistration.getBirthDate());
+        missingRegistrationCorrection.put("desiredBib", missingRegistration.getBib());
+        missingRegistrationCorrection.put("desiredRaceId", missingRegistration.getRace().getId());
+        missingRegistrationCorrection.put("internalComment", "Результат отсутствует, требуется проверка");
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}", missingIssue.getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(missingRegistrationCorrection)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.syncStatus").value("PENDING"));
+        mockMvc.perform(post("/api/admin/result-issue-workspace/sheets/{seriesId}/{year}/sync", seriesId, 2028)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applied").value(1));
+        assertThat(registrationRepository.findById(missingRegistration.getId()).orElseThrow().getDisplayName())
+                .isEqualTo("Участник без результата — исправлено");
         assertThat(resultRepository.findByRegistrationId(fixture.registrations().get(1).getId())).isEmpty();
     }
 
