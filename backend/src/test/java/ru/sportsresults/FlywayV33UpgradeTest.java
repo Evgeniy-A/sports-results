@@ -21,7 +21,7 @@ class FlywayV33UpgradeTest {
             flyway.migrate();
             flyway.validate();
 
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("35");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("36");
             assertThat(columnCount(jdbc, "info_block_id")).isOne();
             assertThat(jdbc.queryForObject("""
                     SELECT is_nullable

@@ -58,6 +58,24 @@ public class ResultIssueWorkItemService {
             UpdateResultIssueWorkItemRequest request,
             String actor
     ) {
+        return update(issueId, request, actor, true);
+    }
+
+    @Transactional
+    public ResultIssueWorkItemDto updateShared(
+            Long issueId,
+            UpdateResultIssueWorkItemRequest request,
+            String actor
+    ) {
+        return update(issueId, request, actor, false);
+    }
+
+    private ResultIssueWorkItemDto update(
+            Long issueId,
+            UpdateResultIssueWorkItemRequest request,
+            String actor,
+            boolean allowAssigneeChange
+    ) {
         ResultIssueRequest issue = lockIssue(issueId);
         Registration registration = issue.getRegistration();
         Result currentResult = currentResult(issue);
@@ -82,7 +100,7 @@ public class ResultIssueWorkItemService {
         }
 
         var desiredRegistration = desiredRegistration(item, registration, request);
-        AdminUser assignee = assignee(request.assigneeUserId());
+        AdminUser assignee = allowAssigneeChange ? assignee(request.assigneeUserId()) : item.getAssignee();
         String comment = normalizeComment(request.internalComment());
         if (created && !requiresPersistence(
                 item, desiredStatus, request.desiredGunTimeMs(), request.desiredChipTimeMs(),

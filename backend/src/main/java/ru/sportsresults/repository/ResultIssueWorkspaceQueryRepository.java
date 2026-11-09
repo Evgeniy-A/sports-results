@@ -12,6 +12,7 @@ import ru.sportsresults.domain.ResultIssueWorkSyncStatus;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.time.Instant;
 import java.util.List;
 
@@ -20,6 +21,8 @@ public class ResultIssueWorkspaceQueryRepository {
 
     private static final String EVENT_YEAR = "EXTRACT(YEAR FROM (COALESCE(e.starts_at, issue.snapshot_event_starts_at) "
             + "AT TIME ZONE COALESCE(e.time_zone, 'UTC')))::int";
+    private static final String CITY = "lower(regexp_replace(trim(COALESCE(e.location, "
+            + "issue.snapshot_event_location, '')), '[[:space:]]+', ' ', 'g'))";
 
     private final NamedParameterJdbcTemplate jdbc;
 
@@ -58,6 +61,10 @@ public class ResultIssueWorkspaceQueryRepository {
     }
 
     public List<ResultIssueWorkspaceRowDto> findRows(long seriesId, int year) {
+        return findRows(seriesId, year, null);
+    }
+
+    public List<ResultIssueWorkspaceRowDto> findRows(long seriesId, int year, String cityScope) {
         String sql = """
                 SELECT issue.id AS issue_id,
                        series.id AS series_id,
@@ -121,17 +128,23 @@ public class ResultIssueWorkspaceQueryRepository {
                 LEFT JOIN admin_users assignee ON assignee.id = work.assignee_user_id
                 WHERE series.id = :seriesId
                   AND %s = :year
+                  AND (:cityScope IS NULL OR %s = :cityScope)
                 ORDER BY lower(COALESCE(e.location, issue.snapshot_event_location, '')),
                          e.starts_at NULLS LAST,
                          issue.id
-                """.formatted(EVENT_YEAR, EVENT_YEAR);
+                """.formatted(EVENT_YEAR, EVENT_YEAR, CITY);
         MapSqlParameterSource parameters = new MapSqlParameterSource()
                 .addValue("seriesId", seriesId)
-                .addValue("year", year);
+                .addValue("year", year)
+                .addValue("cityScope", normalizeCity(cityScope), Types.VARCHAR);
         return jdbc.query(sql, parameters, (rs, rowNum) -> mapRow(rs));
     }
 
     public List<Long> findPendingWorkItemIds(long seriesId, int year, int limit) {
+        return findPendingWorkItemIds(seriesId, year, null, limit);
+    }
+
+    public List<Long> findPendingWorkItemIds(long seriesId, int year, String cityScope, int limit) {
         String sql = """
                 SELECT work.id
                 FROM result_issue_work_items work
@@ -139,17 +152,23 @@ public class ResultIssueWorkspaceQueryRepository {
                 JOIN events e ON e.id = issue.event_id
                 WHERE e.event_series_id = :seriesId
                   AND %s = :year
+                  AND (:cityScope IS NULL OR %s = :cityScope)
                   AND work.sync_status = 'PENDING'
                 ORDER BY work.updated_at, work.id
                 LIMIT :limit
-                """.formatted(EVENT_YEAR);
+                """.formatted(EVENT_YEAR, CITY);
         return jdbc.queryForList(sql, new MapSqlParameterSource()
                 .addValue("seriesId", seriesId)
                 .addValue("year", year)
+                .addValue("cityScope", normalizeCity(cityScope), Types.VARCHAR)
                 .addValue("limit", limit), Long.class);
     }
 
     public int countPending(long seriesId, int year) {
+        return countPending(seriesId, year, null);
+    }
+
+    public int countPending(long seriesId, int year, String cityScope) {
         String sql = """
                 SELECT COUNT(*)
                 FROM result_issue_work_items work
@@ -157,12 +176,105 @@ public class ResultIssueWorkspaceQueryRepository {
                 JOIN events e ON e.id = issue.event_id
                 WHERE e.event_series_id = :seriesId
                   AND %s = :year
+                  AND (:cityScope IS NULL OR %s = :cityScope)
                   AND work.sync_status = 'PENDING'
-                """.formatted(EVENT_YEAR);
+                """.formatted(EVENT_YEAR, CITY);
         Long count = jdbc.queryForObject(sql, new MapSqlParameterSource()
                 .addValue("seriesId", seriesId)
-                .addValue("year", year), Long.class);
+                .addValue("year", year)
+                .addValue("cityScope", normalizeCity(cityScope), Types.VARCHAR), Long.class);
         return count == null ? 0 : Math.toIntExact(count);
+    }
+
+    public ResultIssueWorkspaceSheetDto findSheet(long seriesId, int year, String cityScope) {
+        String sql = """
+                SELECT MAX(series.name) AS series_name,
+                       COUNT(*) AS issue_count,
+                       COUNT(*) FILTER (WHERE work.sync_status = 'PENDING') AS pending_sync_count,
+                       COUNT(*) FILTER (WHERE issue.status = 'NEW') AS new_count,
+                       COUNT(*) FILTER (WHERE issue.status = 'IN_PROGRESS') AS in_progress_count,
+                       MAX(work.synced_at) AS last_synced_at
+                FROM result_issue_requests issue
+                JOIN events e ON e.id = issue.event_id
+                JOIN event_series series ON series.id = e.event_series_id
+                LEFT JOIN result_issue_work_items work ON work.issue_request_id = issue.id
+                WHERE series.id = :seriesId
+                  AND %s = :year
+                  AND (:cityScope IS NULL OR %s = :cityScope)
+                HAVING COUNT(*) > 0
+                """.formatted(EVENT_YEAR, CITY);
+        List<ResultIssueWorkspaceSheetDto> result = jdbc.query(sql, new MapSqlParameterSource()
+                .addValue("seriesId", seriesId)
+                .addValue("year", year)
+                .addValue("cityScope", normalizeCity(cityScope), Types.VARCHAR), (rs, rowNum) ->
+                new ResultIssueWorkspaceSheetDto(
+                        seriesId, rs.getString("series_name"), year,
+                        rs.getLong("issue_count"), rs.getLong("pending_sync_count"),
+                        rs.getLong("new_count"), rs.getLong("in_progress_count"),
+                        instant(rs, "last_synced_at")
+                ));
+        return result.isEmpty() ? null : result.getFirst();
+    }
+
+    public List<String> findCities(long seriesId, int year) {
+        String sql = """
+                SELECT MIN(regexp_replace(trim(COALESCE(e.location, issue.snapshot_event_location, '')),
+                                          '[[:space:]]+', ' ', 'g')) AS city
+                FROM result_issue_requests issue
+                JOIN events e ON e.id = issue.event_id
+                WHERE e.event_series_id = :seriesId
+                  AND %s = :year
+                GROUP BY %s
+                ORDER BY lower(MIN(regexp_replace(trim(COALESCE(e.location, issue.snapshot_event_location, '')),
+                                                  '[[:space:]]+', ' ', 'g')))
+                """.formatted(EVENT_YEAR, CITY);
+        return jdbc.queryForList(sql, new MapSqlParameterSource()
+                .addValue("seriesId", seriesId)
+                .addValue("year", year), String.class);
+    }
+
+    public boolean issueInScope(long issueId, long seriesId, int year, String cityScope) {
+        String sql = """
+                SELECT COUNT(*)
+                FROM result_issue_requests issue
+                JOIN events e ON e.id = issue.event_id
+                WHERE issue.id = :issueId
+                  AND e.event_series_id = :seriesId
+                  AND %s = :year
+                  AND (:cityScope IS NULL OR %s = :cityScope)
+                """.formatted(EVENT_YEAR, CITY);
+        Integer count = jdbc.queryForObject(sql, new MapSqlParameterSource()
+                .addValue("issueId", issueId)
+                .addValue("seriesId", seriesId)
+                .addValue("year", year)
+                .addValue("cityScope", normalizeCity(cityScope), Types.VARCHAR), Integer.class);
+        return count != null && count == 1;
+    }
+
+    public boolean eventInScope(long eventId, long seriesId, int year, String cityScope) {
+        String normalizedEventCity = "lower(regexp_replace(trim(COALESCE(e.location, '')), "
+                + "'[[:space:]]+', ' ', 'g'))";
+        String sql = """
+                SELECT COUNT(*)
+                FROM events e
+                WHERE e.id = :eventId
+                  AND e.event_series_id = :seriesId
+                  AND EXTRACT(YEAR FROM (e.starts_at AT TIME ZONE e.time_zone))::int = :year
+                  AND (:cityScope IS NULL OR %s = :cityScope)
+                """.formatted(normalizedEventCity);
+        Integer count = jdbc.queryForObject(sql, new MapSqlParameterSource()
+                .addValue("eventId", eventId)
+                .addValue("seriesId", seriesId)
+                .addValue("year", year)
+                .addValue("cityScope", normalizeCity(cityScope), Types.VARCHAR), Integer.class);
+        return count != null && count == 1;
+    }
+
+    public static String normalizeCity(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.strip().replaceAll("\\s+", " ").toLowerCase(java.util.Locale.ROOT);
     }
 
     private static ResultIssueWorkspaceRowDto mapRow(ResultSet rs) throws SQLException {

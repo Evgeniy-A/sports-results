@@ -7896,6 +7896,409 @@ class BackendIntegrationTest {
         return Map.copyOf(achievements);
     }
 
+    @Test
+    void universalAppealCatalogGroupsOnlyCurrentlyOpenPublishedCitiesBySeriesAndLocalYear() throws Exception {
+        EventSeries series = new EventSeries();
+        series.setName("ЗаБег.РФ");
+        series.setSlug("appeal-catalog-series");
+        series.setActive(true);
+        series = eventSeriesRepository.saveAndFlush(series);
+
+        createAppealCatalogEvent(series, "Москва", "appeal-moscow", "Москва",
+                Instant.parse("2025-12-31T21:30:00Z"), "Asia/Yekaterinburg", true, false);
+        createAppealCatalogEvent(series, "Казань", "appeal-kazan", "  Казань  ",
+                Instant.now().minus(Duration.ofDays(2)), "Europe/Moscow", true, false);
+        createAppealCatalogEvent(series, "Самара", "appeal-samara", "Самара",
+                Instant.now().minus(Duration.ofDays(2)), "Europe/Samara", true, true);
+        createAppealCatalogEvent(series, "Скрытый", "appeal-disabled", "Омск",
+                Instant.now().minus(Duration.ofDays(2)), "Asia/Omsk", false, false);
+
+        String response = mockMvc.perform(get("/api/appeal-events"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("max-age=30")))
+                .andExpect(jsonPath("$[?(@.key == 'appeal-catalog-series:2026')]").exists())
+                .andExpect(jsonPath("$[?(@.key == 'appeal-catalog-series:2026')].cities.length()")
+                        .value(org.hamcrest.Matchers.hasItem(2)))
+                .andExpect(jsonPath("$..cities[?(@.city == 'Москва')]").exists())
+                .andExpect(jsonPath("$..cities[?(@.city == 'Казань')]").exists())
+                .andExpect(jsonPath("$..cities[?(@.city == 'Самара')]").doesNotExist())
+                .andExpect(jsonPath("$..cities[?(@.city == 'Омск')]").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(response)
+                .doesNotContain("resultInquiryEmail")
+                .doesNotContain("registration")
+                .doesNotContain("assignee")
+                .doesNotContain("internalComment");
+    }
+
+    @Test
+    void journalShareExchangeEnforcesViewEditSyncScopeAndImmediateRevocation() throws Exception {
+        AdminIssueFixture fixture = createGlobalIssueFixture(
+                "Stage 2 journal", "stage-2-journal", "Казань", "2026-06-15T06:00:00Z", 1
+        );
+        AdminIssueFixture outside = createGlobalIssueFixture(
+                "Stage 2 outside", "stage-2-outside", "Москва", "2026-06-15T06:00:00Z", 1
+        );
+        outside.event().setEventSeries(fixture.event().getEventSeries());
+        eventRepository.saveAndFlush(outside.event());
+        long seriesId = fixture.event().getEventSeries().getId();
+        long issueId = fixture.issues().getFirst().getId();
+        Result current = resultRepository.findByRegistrationId(
+                fixture.registrations().getFirst().getId()
+        ).orElseThrow();
+        Result outsideCurrent = resultRepository.findByRegistrationId(
+                outside.registrations().getFirst().getId()
+        ).orElseThrow();
+        ResultIssueAttachment safeAttachment = createAdminAttachment(
+                fixture.issues().getFirst(), "safe.pdf", AttachmentUploadStatus.UPLOADED,
+                AttachmentScanStatus.CLEAN
+        );
+        attachmentObjectStorage.recordUploadedObject(
+                safeAttachment.getStorageKey(), safeAttachment.getSizeBytes(),
+                safeAttachment.getDetectedContentType(), "safe-etag"
+        );
+        ResultIssueAttachment unsafeAttachment = createAdminAttachment(
+                fixture.issues().getFirst(), "unsafe.pdf", AttachmentUploadStatus.UPLOADED,
+                AttachmentScanStatus.INFECTED
+        );
+        ResultIssueAttachment deletedAttachment = createAdminAttachment(
+                fixture.issues().getFirst(), "deleted.pdf", AttachmentUploadStatus.DELETED,
+                AttachmentScanStatus.CLEAN
+        );
+        ResultIssueAttachment outsideAttachment = createAdminAttachment(
+                outside.issues().getFirst(), "outside.pdf", AttachmentUploadStatus.UPLOADED,
+                AttachmentScanStatus.CLEAN
+        );
+        attachmentObjectStorage.recordUploadedObject(
+                outsideAttachment.getStorageKey(), outsideAttachment.getSizeBytes(),
+                outsideAttachment.getDetectedContentType(), "outside-etag"
+        );
+
+        MvcResult viewCreated = mockMvc.perform(post("/api/admin/result-issue-journal-shares")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"eventSeriesId":%d,"year":2026,"cityScope":"  казань  ",
+                                 "permission":"VIEW","canSyncNow":false,"label":"Просмотр Казань",
+                                 "lifetimeDays":30,"noExpiry":false}
+                """.formatted(seriesId)))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")))
+                .andExpect(jsonPath("$.grant.cityScope").value("Казань"))
+                .andExpect(jsonPath("$.sharePath").isString())
+                .andReturn();
+        var viewJson = objectMapper.readTree(viewCreated.getResponse().getContentAsByteArray());
+        String viewToken = viewJson.path("sharePath").asText().substring("/journal-share/".length());
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT token_hash FROM result_issue_journal_share_grants WHERE id=?",
+                String.class, UUID.fromString(viewJson.path("grant").path("id").asText())))
+                .hasSize(64).isNotEqualTo(viewToken);
+
+        MvcResult viewExchange = mockMvc.perform(post("/api/shared/result-issue-workspace/exchange")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of("token", viewToken))))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")))
+                .andExpect(jsonPath("$.context.permission").value("VIEW"))
+                .andReturn();
+        var exchangeJson = objectMapper.readTree(viewExchange.getResponse().getContentAsByteArray());
+        String viewSession = exchangeJson.path("sessionToken").asText();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT session_token_hash FROM result_issue_journal_share_sessions WHERE grant_id=?",
+                String.class, UUID.fromString(viewJson.path("grant").path("id").asText())))
+                .hasSize(64).isNotEqualTo(viewSession);
+
+        mockMvc.perform(get("/api/shared/result-issue-workspace/rows")
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].issueId").value(issueId))
+                .andExpect(jsonPath("$[0].workItem.assigneeUserId").doesNotExist());
+        mockMvc.perform(put("/api/admin/events/{eventId}/result-issue-requests/{issueId}/status",
+                        fixture.event().getId(), issueId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedStatus\":\"NEW\",\"status\":\"IN_PROGRESS\"}"))
+                .andExpect(status().isOk());
+        String sharedDetail = mockMvc.perform(get("/api/shared/result-issue-workspace/issues/{issueId}", issueId)
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.history[0].actor").value("STAFF"))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(sharedDetail).doesNotContain(ADMIN_USERNAME);
+        mockMvc.perform(post("/api/shared/result-issue-workspace/issues/{issueId}/attachments/{attachmentId}/download-authorization",
+                        issueId, safeAttachment.getId())
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.downloadUrl").isString());
+        mockMvc.perform(post("/api/shared/result-issue-workspace/issues/{issueId}/attachments/{attachmentId}/download-authorization",
+                        issueId, unsafeAttachment.getId())
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isConflict());
+        mockMvc.perform(post("/api/shared/result-issue-workspace/issues/{issueId}/attachments/{attachmentId}/download-authorization",
+                        issueId, deletedAttachment.getId())
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isConflict());
+        mockMvc.perform(put("/api/shared/result-issue-workspace/issues/{issueId}", issueId)
+                        .header("X-Journal-Share-Session", viewSession)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"expectedVersion":0,"desiredResultStatus":"%s",
+                                 "desiredGunTimeMs":%d,"desiredChipTimeMs":%d,
+                                 "desiredDisplayName":"Участник","desiredRaceId":%d}
+                                """.formatted(current.getStatus(), current.getGunTime().toMillis(),
+                                current.getChipTime().toMillis(), fixture.registrations().getFirst().getRace().getId())))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/shared/result-issue-workspace/issues/{issueId}",
+                        outside.issues().getFirst().getId())
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/shared/result-issue-workspace/events/{eventId}/races", outside.event().getId())
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/shared/result-issue-workspace/issues/{issueId}/attachments/{attachmentId}/download-authorization",
+                        outside.issues().getFirst().getId(), outsideAttachment.getId())
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/shared/result-issue-workspace/issues/{issueId}/reset", issueId)
+                        .header("X-Journal-Share-Session", viewSession)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedVersion\":0}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/shared/result-issue-workspace/sync")
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isForbidden());
+
+        MvcResult editCreated = createJournalShare(seriesId, "EDIT", false, "Редактор Казань");
+        var editJson = objectMapper.readTree(editCreated.getResponse().getContentAsByteArray());
+        String editSession = exchangeShare(editJson.path("sharePath").asText());
+        mockMvc.perform(put("/api/shared/result-issue-workspace/issues/{issueId}",
+                        outside.issues().getFirst().getId())
+                        .header("X-Journal-Share-Session", editSession)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedVersion\":0}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(put("/api/shared/result-issue-workspace/issues/{issueId}", issueId)
+                        .header("X-Journal-Share-Session", editSession)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"expectedVersion":0,"desiredResultStatus":"%s",
+                                 "desiredGunTimeMs":%d,"desiredChipTimeMs":%d,
+                                 "desiredDisplayName":"Исправленный участник","desiredRaceId":%d,
+                                 "assigneeUserId":999999,"internalComment":"Проверено поддержкой"}
+                                """.formatted(current.getStatus(), current.getGunTime().toMillis(),
+                                current.getChipTime().toMillis(), fixture.registrations().getFirst().getRace().getId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.syncStatus").value("PENDING"))
+                .andExpect(jsonPath("$.assigneeUserId").doesNotExist());
+        assertThat(registrationRepository.findById(fixture.registrations().getFirst().getId()).orElseThrow()
+                .getDisplayName()).isNotEqualTo("Исправленный участник");
+        mockMvc.perform(post("/api/shared/result-issue-workspace/sync")
+                        .header("X-Journal-Share-Session", editSession))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(put("/api/admin/result-issue-workspace/issues/{issueId}",
+                        outside.issues().getFirst().getId())
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"expectedVersion":0,"desiredResultStatus":"%s",
+                                 "desiredGunTimeMs":%d,"desiredChipTimeMs":%d,
+                                 "desiredDisplayName":"Outside pending","desiredRaceId":%d}
+                                """.formatted(outsideCurrent.getStatus(), outsideCurrent.getGunTime().toMillis(),
+                                outsideCurrent.getChipTime().toMillis(),
+                                outside.registrations().getFirst().getRace().getId())))
+                .andExpect(status().isOk());
+
+        MvcResult syncCreated = createJournalShare(seriesId, "EDIT", true, "Синхронизация Казань");
+        var syncJson = objectMapper.readTree(syncCreated.getResponse().getContentAsByteArray());
+        String syncSession = exchangeShare(syncJson.path("sharePath").asText());
+        mockMvc.perform(post("/api/shared/result-issue-workspace/sync")
+                        .header("X-Journal-Share-Session", syncSession))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applied").value(1));
+        assertThat(registrationRepository.findById(fixture.registrations().getFirst().getId()).orElseThrow()
+                .getDisplayName()).isEqualTo("Исправленный участник");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT sync_status FROM result_issue_work_items WHERE issue_request_id=?",
+                String.class, outside.issues().getFirst().getId())).isEqualTo("PENDING");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT updated_by FROM result_issue_work_items WHERE issue_request_id=?",
+                String.class, issueId)).startsWith("SHARE:");
+
+        String grantId = syncJson.path("grant").path("id").asText();
+        mockMvc.perform(post("/api/admin/result-issue-journal-shares/{grantId}/revoke", grantId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revokedAt").isNotEmpty());
+        mockMvc.perform(get("/api/shared/result-issue-workspace/context")
+                        .header("X-Journal-Share-Session", syncSession))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/admin/result-issue-journal-shares/{grantId}/revoke", grantId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk());
+
+        String viewGrantId = viewJson.path("grant").path("id").asText();
+        mockMvc.perform(post("/api/admin/result-issue-journal-shares/{grantId}/revoke", viewGrantId)
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/shared/result-issue-workspace/issues/{issueId}/attachments/{attachmentId}/download-authorization",
+                        issueId, safeAttachment.getId())
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/shared/result-issue-workspace/context")
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/shared/result-issue-workspace/exchange")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of("token", viewToken))))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(put("/api/shared/result-issue-workspace/issues/{issueId}", issueId)
+                        .header("X-Journal-Share-Session", viewSession)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedVersion\":0}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/shared/result-issue-workspace/issues/{issueId}/reset", issueId)
+                        .header("X-Journal-Share-Session", viewSession)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedVersion\":0}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/shared/result-issue-workspace/sync")
+                        .header("X-Journal-Share-Session", viewSession))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void journalShareCredentialsFailClosedAndNeverReturnRecoverableSecrets() throws Exception {
+        AdminIssueFixture fixture = createGlobalIssueFixture(
+                "Stage 2 access", "stage-2-access", "Казань", "2026-07-15T06:00:00Z", 1
+        );
+        long seriesId = fixture.event().getEventSeries().getId();
+
+        mockMvc.perform(get("/api/admin/result-issue-journal-shares"))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(post("/api/shared/result-issue-workspace/exchange")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of("token", "A".repeat(43)))))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/admin/result-issue-journal-shares")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"eventSeriesId":%d,"year":2026,"permission":"VIEW",
+                                 "canSyncNow":false,"lifetimeDays":null,"noExpiry":false}
+                                """.formatted(seriesId)))
+                .andExpect(status().isBadRequest());
+
+        MvcResult created = createJournalShare(seriesId, "VIEW", false, "Fail closed");
+        var createdJson = objectMapper.readTree(created.getResponse().getContentAsByteArray());
+        String grantId = createdJson.path("grant").path("id").asText();
+        String rawGrantToken = createdJson.path("sharePath").asText().substring("/journal-share/".length());
+        String grantList = mockMvc.perform(get("/api/admin/result-issue-journal-shares")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(grantList).doesNotContain(rawGrantToken, "tokenHash", "sessionToken", "sharePath");
+
+        String session = exchangeShare(createdJson.path("sharePath").asText());
+        mockMvc.perform(get("/api/admin/result-issue-journal-shares")
+                        .header("X-Journal-Share-Session", session))
+                .andExpect(status().isUnauthorized());
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT session.expires_at <= share_grant.expires_at
+                FROM result_issue_journal_share_sessions session
+                JOIN result_issue_journal_share_grants share_grant ON share_grant.id=session.grant_id
+                WHERE share_grant.id=?
+                """, Boolean.class, UUID.fromString(grantId))).isTrue();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT session_token_hash FROM result_issue_journal_share_sessions WHERE grant_id=?",
+                String.class, UUID.fromString(grantId))).hasSize(64).isNotEqualTo(session);
+        mockMvc.perform(get("/api/shared/result-issue-workspace/context")
+                        .header("X-Journal-Share-Session", session))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")));
+        mockMvc.perform(get("/api/admin/me").header("X-Journal-Share-Session", session))
+                .andExpect(status().isUnauthorized());
+
+        jdbcTemplate.update("""
+                UPDATE result_issue_journal_share_sessions
+                SET created_at=now()-interval '2 days', expires_at=now()-interval '1 day'
+                WHERE grant_id=?
+                """,
+                UUID.fromString(grantId));
+        mockMvc.perform(get("/api/shared/result-issue-workspace/context")
+                        .header("X-Journal-Share-Session", session))
+                .andExpect(status().isNotFound());
+
+        MvcResult expired = createJournalShare(seriesId, "VIEW", false, "Expired");
+        var expiredJson = objectMapper.readTree(expired.getResponse().getContentAsByteArray());
+        UUID expiredGrantId = UUID.fromString(expiredJson.path("grant").path("id").asText());
+        jdbcTemplate.update("""
+                UPDATE result_issue_journal_share_grants
+                SET created_at=now()-interval '2 seconds', expires_at=now()-interval '1 second'
+                WHERE id=?
+                """,
+                expiredGrantId);
+        String expiredToken = expiredJson.path("sharePath").asText().substring("/journal-share/".length());
+        mockMvc.perform(post("/api/shared/result-issue-workspace/exchange")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of("token", expiredToken))))
+                .andExpect(status().isNotFound());
+    }
+
+    private MvcResult createJournalShare(long seriesId, String permission, boolean canSyncNow, String label)
+            throws Exception {
+        return mockMvc.perform(post("/api/admin/result-issue-journal-shares")
+                        .with(httpBasic(ADMIN_USERNAME, ADMIN_PASSWORD))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"eventSeriesId":%d,"year":2026,"cityScope":"Казань",
+                                 "permission":"%s","canSyncNow":%s,"label":"%s",
+                                 "lifetimeDays":30,"noExpiry":false}
+                                """.formatted(seriesId, permission, canSyncNow, label)))
+                .andExpect(status().isOk()).andReturn();
+    }
+
+    private String exchangeShare(String sharePath) throws Exception {
+        String token = sharePath.substring("/journal-share/".length());
+        MvcResult exchange = mockMvc.perform(post("/api/shared/result-issue-workspace/exchange")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(Map.of("token", token))))
+                .andExpect(status().isOk()).andReturn();
+        return objectMapper.readTree(exchange.getResponse().getContentAsByteArray())
+                .path("sessionToken").asText();
+    }
+
+    private Event createAppealCatalogEvent(
+            EventSeries series,
+            String name,
+            String slug,
+            String city,
+            Instant startsAt,
+            String zone,
+            boolean enabled,
+            boolean closed
+    ) {
+        Event event = new Event();
+        event.setEventSeries(series);
+        event.setName(name);
+        event.setSlug(slug);
+        event.setLocation(city);
+        event.setStartsAt(startsAt);
+        event.setEndsAt(startsAt.plus(Duration.ofHours(3)));
+        event.setTimeZone(zone);
+        event.setPublicationStatus(EventPublicationStatus.PUBLISHED);
+        event.setResultsPublicationStatus(ResultsPublicationStatus.PUBLISHED);
+        event.setResultInquiryEnabled(enabled);
+        event.setResultInquiryDeadlineMode(ResultInquiryDeadlineMode.FIXED_DATE);
+        event.setResultInquiryFixedDate(closed
+                ? LocalDate.now(java.time.ZoneId.of(zone)).minusDays(1)
+                : LocalDate.now(java.time.ZoneId.of(zone)).plusDays(30));
+        event.setResultInquiryEmail(enabled ? "appeal@example.org" : null);
+        return eventRepository.saveAndFlush(event);
+    }
+
     private AdminIssueFixture createAdminIssueFixture(String name, String slug, int count) {
         Event event = createPublishedEvent(name, slug);
         assertThat(importPublishedFixture(

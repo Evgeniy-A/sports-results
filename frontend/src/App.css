@@ -11,6 +11,18 @@
   --shadow: 0 18px 55px rgba(18, 53, 38, .09);
 }
 
+.appeal-page { min-height: 100vh; background: var(--surface-muted, #f4f6f8); padding-bottom: 48px; }
+.appeal-header { display: flex; justify-content: space-between; gap: 16px; padding: 18px clamp(18px, 5vw, 72px); background: #fff; border-bottom: 1px solid #dfe4e8; }
+.appeal-header a { color: inherit; font-weight: 800; text-decoration: none; }
+.appeal-card { width: min(780px, calc(100% - 32px)); margin: 36px auto; padding: clamp(22px, 4vw, 40px); border-radius: 24px; background: #fff; box-shadow: 0 18px 50px rgba(24, 36, 48, .09); }
+.appeal-card h1 { margin: 6px 0 12px; }
+.appeal-steps { display: grid; gap: 18px; margin-top: 28px; }
+.appeal-steps label, .appeal-bib-form label { display: grid; gap: 8px; font-weight: 700; }
+.appeal-steps select, .appeal-steps input { width: 100%; min-height: 48px; padding: 10px 12px; border: 1px solid #bfc8cf; border-radius: 10px; background: #fff; font: inherit; }
+.appeal-bib-form { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 12px; }
+.appeal-bib-form button { min-height: 48px; padding: 0 22px; }
+@media (max-width: 560px) { .appeal-header { align-items: flex-start; flex-direction: column; } .appeal-card { margin: 18px auto; border-radius: 18px; } .appeal-bib-form { grid-template-columns: 1fr; } .appeal-bib-form button { width: 100%; } }
+
 main { min-height: 100vh; background: #f4f7f4; }
 .site-header, .landing-shell, .catalog-hero, .catalog-panel, .event-hero, .results-panel { max-width: 1480px; margin-inline: auto; }
 .site-header { height: 72px; padding: 0 42px; display: flex; align-items: center; justify-content: space-between; background: #102b20; color: white; }

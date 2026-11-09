@@ -20,6 +20,7 @@ import type {
   VerifyResultInquiryRequest,
   CertificateAvailability,
   CertificateField,
+  PublicAppealEvent,
 } from './types'
 import { apiUrl } from './baseUrl.ts'
 
@@ -91,6 +92,8 @@ function queryString(query: object): string {
 }
 
 export const api = {
+  appealEvents: (signal?: AbortSignal) =>
+    request<PublicAppealEvent[]>('/appeal-events', signal),
   events: (query: EventQuery, signal?: AbortSignal) =>
     request<PageResponse<EventSummary>>(`/events?${queryString(query)}`, signal),
   eventFilterOptions: (query: EventQuery, signal?: AbortSignal) =>

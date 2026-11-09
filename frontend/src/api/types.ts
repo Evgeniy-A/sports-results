@@ -29,6 +29,19 @@ export interface EventFilterOptions {
   cities: string[]
 }
 
+export interface PublicAppealEvent {
+  key: string
+  title: string
+  year: number
+  cities: Array<{
+    city: string
+    eventSlug: string
+    eventName: string
+    eventDate: string | null
+    timeZone: string
+  }>
+}
+
 export interface EventQuery {
   year?: number
   eventSeriesId?: number

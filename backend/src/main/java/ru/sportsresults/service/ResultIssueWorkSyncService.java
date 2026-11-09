@@ -24,7 +24,11 @@ public class ResultIssueWorkSyncService {
     }
 
     public ResultIssueWorkspaceSyncDto syncSheet(long seriesId, int year, String actor) {
-        List<Long> ids = queryRepository.findPendingWorkItemIds(seriesId, year, MANUAL_BATCH_SIZE);
+        return syncSheet(seriesId, year, null, actor);
+    }
+
+    public ResultIssueWorkspaceSyncDto syncSheet(long seriesId, int year, String cityScope, String actor) {
+        List<Long> ids = queryRepository.findPendingWorkItemIds(seriesId, year, cityScope, MANUAL_BATCH_SIZE);
         int applied = 0;
         int conflicts = 0;
         int errors = 0;
@@ -46,7 +50,7 @@ public class ResultIssueWorkSyncService {
                 applied,
                 conflicts,
                 errors,
-                queryRepository.countPending(seriesId, year),
+                queryRepository.countPending(seriesId, year, cityScope),
                 Instant.now()
         );
     }

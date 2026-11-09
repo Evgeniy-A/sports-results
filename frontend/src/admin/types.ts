@@ -723,6 +723,49 @@ export interface JournalSyncSummary {
   completedAt: string
 }
 
+export type JournalSharePermission = 'VIEW' | 'EDIT'
+
+export interface JournalShareGrant {
+  id: string
+  eventSeriesId: number
+  eventSeriesName: string
+  year: number
+  cityScope: string | null
+  permission: JournalSharePermission
+  canSyncNow: boolean
+  label: string | null
+  expiresAt: string | null
+  createdAt: string
+  createdBy: string
+  revokedAt: string | null
+  revokedBy: string | null
+  lastAccessedAt: string | null
+  accessCount: number
+}
+
+export interface JournalShareCreated {
+  grant: JournalShareGrant
+  sharePath: string
+}
+
+export interface JournalShareContext {
+  grantId: string
+  label: string | null
+  eventSeriesId: number
+  eventSeriesName: string
+  year: number
+  cityScope: string | null
+  permission: JournalSharePermission
+  canSyncNow: boolean
+  grantExpiresAt: string | null
+}
+
+export interface JournalShareExchange {
+  sessionToken: string
+  sessionExpiresAt: string
+  context: JournalShareContext
+}
+
 export interface ShareBatch {
   batchId: string
   createdBy: string

@@ -20,7 +20,7 @@ class FlywayV35UpgradeTest {
             flyway.migrate();
             flyway.validate();
 
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("35");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("36");
             assertThat(jdbc.queryForList("""
                     SELECT column_name
                     FROM information_schema.columns

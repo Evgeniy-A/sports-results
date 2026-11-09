@@ -33,6 +33,7 @@ public class SecurityConfiguration {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/appeal-events").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/events/**", "/api/results/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/results/*/certificates/*/generate").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/result-issue-attachments/capabilities").permitAll()
@@ -45,6 +46,7 @@ public class SecurityConfiguration {
                                 "/api/result-issues/*/attachments/*/confirm",
                                 "/api/result-issues/*/attachments/*/authorize").permitAll()
                         .requestMatchers(HttpMethod.GET, "/share/attachments/**").permitAll()
+                        .requestMatchers("/api/shared/result-issue-workspace/**").permitAll()
                         .requestMatchers("/api/admin/me").hasAnyRole("ORGANIZER", "TIMEKEEPER")
                         .requestMatchers(HttpMethod.POST,
                                 "/api/admin/events",
@@ -87,7 +89,8 @@ public class SecurityConfiguration {
         configuration.setAllowedOrigins(properties.allowedOrigins());
         configuration.setAllowedMethods(List.of("GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of(
-                "Accept", "Authorization", "Content-Type", "X-Result-Issue-Upload-Token"
+                "Accept", "Authorization", "Content-Type", "X-Result-Issue-Upload-Token",
+                "X-Journal-Share-Session"
         ));
         configuration.setExposedHeaders(List.of(
                 "Content-Disposition", "X-Share-Batch-Id", "X-Share-Expires-At"

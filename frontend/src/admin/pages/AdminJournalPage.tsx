@@ -13,6 +13,8 @@ import type {
   JournalWorkspaceSheet,
   JournalWorkItem,
   JournalWorkItemResponse,
+  JournalShareContext,
+  JournalShareGrant,
   Race,
   ShareBatch,
 } from '../types'
@@ -26,7 +28,35 @@ import { AdminNotice, AdminPagination, ConfirmDialog, Drawer, Field, Loadable, S
 const PAGE_SIZE = 100
 const RESULT_STATUSES = ['finished', 'running', 'notstarted', 'disqualified', 'quarantine']
 
+export interface JournalWorkspaceClient {
+  journalSheets: AdminApi['journalSheets']
+  journalWorkspaceRows: AdminApi['journalWorkspaceRows']
+  races: AdminApi['races']
+  updateJournalWorkItem: AdminApi['updateJournalWorkItem']
+  resetJournalWorkItem: AdminApi['resetJournalWorkItem']
+  syncJournalSheet: AdminApi['syncJournalSheet']
+  updateIssueStatus: AdminApi['updateIssueStatus']
+  journalDetail: AdminApi['journalDetail']
+  authorizeAttachment: AdminApi['authorizeAttachment']
+  events?: AdminApi['events']
+  users?: AdminApi['users']
+  exportJournal?: AdminApi['exportJournal']
+  shareBatch?: AdminApi['shareBatch']
+  revokeShareBatch?: AdminApi['revokeShareBatch']
+  journalShares?: AdminApi['journalShares']
+  createJournalShare?: AdminApi['createJournalShare']
+  revokeJournalShare?: AdminApi['revokeJournalShare']
+}
+
 export function AdminJournalPage({ api }: { api: AdminApi }) {
+  return <JournalWorkspacePage api={api} />
+}
+
+export function SharedJournalWorkspacePage({ api, context }: { api: JournalWorkspaceClient; context: JournalShareContext }) {
+  return <JournalWorkspacePage api={api} shared={context} />
+}
+
+function JournalWorkspacePage({ api, shared = null }: { api: JournalWorkspaceClient; shared?: JournalShareContext | null }) {
   const [filters, setFilters] = useState<JournalFilters>(() => filtersFromUrl())
   const [draft, setDraft] = useState<JournalFilters>(() => filtersFromUrl())
   const [sheets, setSheets] = useState<JournalWorkspaceSheet[]>([])
@@ -45,6 +75,7 @@ export function AdminJournalPage({ api }: { api: AdminApi }) {
   const [syncing, setSyncing] = useState(false)
   const [selected, setSelected] = useState<number | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
+  const [accessOpen, setAccessOpen] = useState(false)
   const [shareBatch, setShareBatch] = useState<ShareBatch | null>(null)
 
   const selectedSheetData = useMemo(
@@ -78,12 +109,16 @@ export function AdminJournalPage({ api }: { api: AdminApi }) {
   }, [api, selectedSheetData])
 
   useEffect(() => {
-    Promise.all([loadSheets(), api.events({ size: 100 }), api.users()])
+    Promise.all([
+      loadSheets(),
+      api.events ? api.events({ size: 100 }) : Promise.resolve({ content: [] } as { content: EventSummary[] }),
+      api.users ? api.users() : Promise.resolve([]),
+    ])
       .then(([, eventPage, adminUsers]) => { setEvents(eventPage.content); setUsers(adminUsers.filter((user) => user.active)) })
       .catch((reason) => setError(adminErrorMessage(reason)))
   }, [api, loadSheets])
   useEffect(() => { void loadRows() }, [loadRows])
-  useEffect(() => { writeFiltersToUrl(filters); setPageNumber(0) }, [filters])
+  useEffect(() => { if (!shared) writeFiltersToUrl(filters); setPageNumber(0) }, [filters, shared])
   useEffect(() => {
     if (!draft.eventId) { setRaces([]); return }
     api.races(draft.eventId).then(setRaces).catch((reason) => setError(adminErrorMessage(reason)))
@@ -93,6 +128,8 @@ export function AdminJournalPage({ api }: { api: AdminApi }) {
   const totalPages = Math.ceil(filteredRows.length / PAGE_SIZE)
   const visibleRows = filteredRows.slice(pageNumber * PAGE_SIZE, (pageNumber + 1) * PAGE_SIZE)
   const groups = cityGroups(visibleRows)
+  const editable = !shared || shared.permission === 'EDIT'
+  const canSync = !shared || shared.canSyncNow
 
   const apply = (event: FormEvent) => {
     event.preventDefault()
@@ -169,12 +206,12 @@ export function AdminJournalPage({ api }: { api: AdminApi }) {
   }
 
   return <div className="admin-stack admin-journal-workspace">
-    <div className="admin-page-heading"><div><p className="admin-eyebrow">Поддержка</p><h1>Журнал обращений</h1><p>Рабочая таблица обращений и ожидающих синхронизации исправлений.</p></div><div className="admin-heading-actions"><button className="admin-button-secondary" type="button" onClick={() => void loadRows()}>Обновить</button><button className="admin-button-secondary" type="button" onClick={() => setExportOpen(true)}>Выгрузить XLSX</button></div></div>
+    <div className="admin-page-heading"><div><p className="admin-eyebrow">{shared ? 'Доступ по защищённой ссылке' : 'Поддержка'}</p><h1>Журнал обращений</h1><p>{shared ? `${shared.eventSeriesName} ${shared.year}${shared.cityScope ? ` · ${shared.cityScope}` : ''}` : 'Рабочая таблица обращений и ожидающих синхронизации исправлений.'}</p></div><div className="admin-heading-actions"><button className="admin-button-secondary" type="button" onClick={() => void loadRows()}>Обновить</button>{!shared && <><button className="admin-button-secondary" type="button" onClick={() => setAccessOpen(true)}>Доступ по ссылке</button><button className="admin-button-secondary" type="button" onClick={() => setExportOpen(true)}>Выгрузить XLSX</button></>}</div></div>
     <form className="admin-journal-filters" onSubmit={apply}>
       <Field label="ID обращения"><input type="number" min="1" value={draft.issueId ?? ''} onChange={(change) => setDraft({ ...draft, issueId: change.target.value ? Number(change.target.value) : undefined })} /></Field>
-      <Field label="Мероприятие"><select value={draft.eventId ?? ''} onChange={(change) => setDraft({ ...draft, eventId: change.target.value ? Number(change.target.value) : undefined, raceId: undefined })}><option value="">Все мероприятия</option>{events.map((event) => <option key={event.id} value={event.id}>{event.name}</option>)}</select></Field>
+      {!shared && <Field label="Мероприятие"><select value={draft.eventId ?? ''} onChange={(change) => setDraft({ ...draft, eventId: change.target.value ? Number(change.target.value) : undefined, raceId: undefined })}><option value="">Все мероприятия</option>{events.map((event) => <option key={event.id} value={event.id}>{event.name}</option>)}</select></Field>}
       <Field label="Город"><input value={draft.location ?? ''} onChange={(change) => setDraft({ ...draft, location: change.target.value || undefined })} /></Field>
-      <Field label="Старт"><select disabled={!draft.eventId} value={draft.raceId ?? ''} onChange={(change) => setDraft({ ...draft, raceId: change.target.value ? Number(change.target.value) : undefined })}><option value="">Все старты</option>{races.map((race) => <option key={race.id} value={race.id}>{race.name}</option>)}</select></Field>
+      {!shared && <Field label="Старт"><select disabled={!draft.eventId} value={draft.raceId ?? ''} onChange={(change) => setDraft({ ...draft, raceId: change.target.value ? Number(change.target.value) : undefined })}><option value="">Все старты</option>{races.map((race) => <option key={race.id} value={race.id}>{race.name}</option>)}</select></Field>}
       <Field label="Стартовый номер"><input value={draft.bib ?? ''} onChange={(change) => setDraft({ ...draft, bib: change.target.value || undefined })} /></Field>
       <Field label="Участник"><input value={draft.participant ?? ''} onChange={(change) => setDraft({ ...draft, participant: change.target.value || undefined })} /></Field>
       <Field label="Тип"><select value={draft.issueType ?? ''} onChange={(change) => setDraft({ ...draft, issueType: change.target.value as JournalFilters['issueType'] || undefined })}><option value="">Все</option><option value="MISSING_RESULT">Нет результата</option><option value="RESULT_CORRECTION">Исправление</option></select></Field>
@@ -187,49 +224,52 @@ export function AdminJournalPage({ api }: { api: AdminApi }) {
     {error && <AdminNotice tone="danger">{error}</AdminNotice>}
     <section className="admin-journal-syncbar">
       <div><strong>Несинхронизированных изменений: {selectedSheetData?.pendingSyncCount ?? 0}</strong><small>Последняя синхронизация: {selectedSheetData?.lastSyncedAt ? new Date(selectedSheetData.lastSyncedAt).toLocaleString('ru-RU') : 'ещё не выполнялась'}</small></div>
-      <button className="admin-button-primary" type="button" disabled={syncing || !selectedSheetData?.pendingSyncCount} onClick={() => void syncSheet()}>{syncing ? 'Синхронизируем…' : 'Синхронизировать сейчас'}</button>
+      {canSync && <button className="admin-button-primary" type="button" disabled={syncing || !selectedSheetData?.pendingSyncCount} onClick={() => void syncSheet()}>{syncing ? 'Синхронизируем…' : 'Синхронизировать сейчас'}</button>}
     </section>
     <Loadable loading={loading} error={null} empty={!visibleRows.length}>
-      <div className="admin-table-wrap admin-journal-table-wrap"><table className="admin-table admin-journal-table"><thead><tr><th>№</th><th>Город</th><th>ФИО</th><th>Пол</th><th>Дата рождения</th><th>Bib</th><th>Формат / дистанция</th><th>Текущий Gun</th><th>Корректировка Gun</th><th>Текущий Chip</th><th>Корректировка Chip</th><th>Категория</th><th>Result Status</th><th>Причина</th><th>Статус обращения</th><th>Ответственный</th><th>Внутренний комментарий</th><th>Синхр.</th><th>Изменено</th><th /></tr></thead><tbody>{groups.map((group) => <CityGroup key={group.city} group={group} collapsed={collapsedCities.has(group.city)} toggle={() => setCollapsedCities((current) => toggleSet(current, group.city))} users={users} raceOptionsByEvent={raceOptionsByEvent} busyIssue={busyIssue} onSaveWork={saveWork} onSaveIssueStatus={saveIssueStatus} onReset={resetWork} onOpen={setSelected} />)}</tbody></table></div>
+      <div className="admin-table-wrap admin-journal-table-wrap"><table className="admin-table admin-journal-table"><thead><tr><th>№</th><th>Город</th><th>ФИО</th><th>Пол</th><th>Дата рождения</th><th>Bib</th><th>Формат / дистанция</th><th>Текущий Gun</th><th>Корректировка Gun</th><th>Текущий Chip</th><th>Корректировка Chip</th><th>Категория</th><th>Result Status</th><th>Причина</th><th>Статус обращения</th>{!shared && <th>Ответственный</th>}<th>Внутренний комментарий</th><th>Синхр.</th><th>Изменено</th><th /></tr></thead><tbody>{groups.map((group) => <CityGroup key={group.city} group={group} collapsed={collapsedCities.has(group.city)} toggle={() => setCollapsedCities((current) => toggleSet(current, group.city))} users={users} raceOptionsByEvent={raceOptionsByEvent} busyIssue={busyIssue} editable={editable} shared={Boolean(shared)} onSaveWork={saveWork} onSaveIssueStatus={saveIssueStatus} onReset={resetWork} onOpen={setSelected} />)}</tbody></table></div>
       <AdminPagination page={pageNumber} totalPages={totalPages} onChange={setPageNumber} />
     </Loadable>
     <nav className="admin-journal-sheets" aria-label="Листы журнала">{sheets.map((sheet) => <button key={sheetKey(sheet)} className={selectedSheet === sheetKey(sheet) ? 'active' : ''} type="button" onClick={() => { setSelectedSheet(sheetKey(sheet)); setPageNumber(0) }}>{sheet.seriesName} {sheet.year}<small>{sheet.issueCount} · ожидают {sheet.pendingSyncCount}</small></button>)}</nav>
     {selected && <JournalDrawer api={api} issueId={selected} onClose={() => setSelected(null)} />}
-    {exportOpen && <ExportDialog api={api} filters={filters} total={filteredRows.length} onClose={() => setExportOpen(false)} onBatch={setShareBatch} />}
+    {exportOpen && api.exportJournal && api.shareBatch && api.revokeShareBatch && <ExportDialog api={api as AdminApi} filters={filters} total={filteredRows.length} onClose={() => setExportOpen(false)} onBatch={setShareBatch} />}
+    {accessOpen && !shared && selectedSheetData && api.journalShares && api.createJournalShare && api.revokeJournalShare && <JournalShareDialog api={api as AdminApi} sheet={selectedSheetData} cities={cityGroups(rows).map((group) => group.city)} onClose={() => setAccessOpen(false)} />}
   </div>
 }
 
-function CityGroup({ group, collapsed, toggle, users, raceOptionsByEvent, busyIssue, onSaveWork, onSaveIssueStatus, onReset, onOpen }: {
+function CityGroup({ group, collapsed, toggle, users, raceOptionsByEvent, busyIssue, editable, shared, onSaveWork, onSaveIssueStatus, onReset, onOpen }: {
   group: CityGroupData
   collapsed: boolean
   toggle: () => void
   users: AdminUser[]
   raceOptionsByEvent: Record<number, Race[]>
   busyIssue: number | null
+  editable: boolean
+  shared: boolean
   onSaveWork: (row: JournalWorkspaceRow, patch: Partial<WorkDraft>) => Promise<void>
   onSaveIssueStatus: (row: JournalWorkspaceRow, status: IssueStatus) => Promise<void>
   onReset: (row: JournalWorkspaceRow) => Promise<void>
   onOpen: (issueId: number) => void
 }) {
-  return <><tr className="admin-journal-city-row"><td colSpan={20}><button type="button" onClick={toggle}>{collapsed ? '▶' : '▼'} {group.city} — {group.rows.length} обращений</button></td></tr>{!collapsed && group.rows.map((row) => <tr key={row.issueId} className={row.workItem?.syncStatus === 'PENDING' ? 'admin-journal-pending-row' : undefined}>
+  return <><tr className="admin-journal-city-row"><td colSpan={shared ? 19 : 20}><button type="button" onClick={toggle}>{collapsed ? '▶' : '▼'} {group.city} — {group.rows.length} обращений</button></td></tr>{!collapsed && group.rows.map((row) => <tr key={row.issueId} className={row.workItem?.syncStatus === 'PENDING' ? 'admin-journal-pending-row' : undefined}>
     <td className="admin-journal-sticky-number"><button className="admin-row-link" type="button" onClick={() => onOpen(row.issueId)}>#{row.issueId}</button>{row.attachmentCount > 0 && <small>📎 {row.attachmentCount}</small>}</td>
     <td className="admin-journal-sticky-city">{row.location ?? '—'}</td>
-    <td className="admin-journal-sticky-name"><TextFactCell label={`ФИО ${row.issueId}`} value={row.workItem?.desiredDisplayName ?? row.currentDisplayName} current={row.currentDisplayName} maxLength={320} required disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredDisplayName: value })} /></td>
-    <td><GenderFactCell value={row.workItem?.desiredGender ?? row.currentGender} current={row.currentGender} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredGender: value })} /></td>
-    <td><DateFactCell value={row.workItem?.desiredBirthDate ?? row.currentBirthDate} current={row.currentBirthDate} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredBirthDate: value })} /></td>
-    <td><TextFactCell label={`Bib ${row.issueId}`} value={row.workItem?.desiredBib ?? row.currentBib} current={row.currentBib} maxLength={64} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredBib: value || null })} /></td>
-    <td><RaceFactCell value={row.workItem?.desiredRaceId ?? row.currentRaceId} current={row.currentRaceId} options={raceOptionsByEvent[row.eventId] ?? []} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredRaceId: value })} /></td>
+    <td className="admin-journal-sticky-name"><TextFactCell label={`ФИО ${row.issueId}`} value={row.workItem?.desiredDisplayName ?? row.currentDisplayName} current={row.currentDisplayName} maxLength={320} required disabled={!editable || busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredDisplayName: value })} /></td>
+    <td><GenderFactCell value={row.workItem?.desiredGender ?? row.currentGender} current={row.currentGender} disabled={!editable || busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredGender: value })} /></td>
+    <td><DateFactCell value={row.workItem?.desiredBirthDate ?? row.currentBirthDate} current={row.currentBirthDate} disabled={!editable || busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredBirthDate: value })} /></td>
+    <td><TextFactCell label={`Bib ${row.issueId}`} value={row.workItem?.desiredBib ?? row.currentBib} current={row.currentBib} maxLength={64} disabled={!editable || busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredBib: value || null })} /></td>
+    <td><RaceFactCell value={row.workItem?.desiredRaceId ?? row.currentRaceId} current={row.currentRaceId} options={raceOptionsByEvent[row.eventId] ?? []} disabled={!editable || busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredRaceId: value })} /></td>
     <td className="admin-current-fact">{formatResultTime(row.currentGunTimeMs) || '—'}</td>
-    <td>{row.currentResultId ? <TimeCorrectionCell value={row.workItem?.desiredGunTimeMs ?? row.currentGunTimeMs} current={row.currentGunTimeMs} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredGunTimeMs: value })} /> : <MissingResult />}</td>
+    <td>{row.currentResultId ? <TimeCorrectionCell value={row.workItem?.desiredGunTimeMs ?? row.currentGunTimeMs} current={row.currentGunTimeMs} disabled={!editable || busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredGunTimeMs: value })} /> : <MissingResult />}</td>
     <td className="admin-current-fact">{formatResultTime(row.currentChipTimeMs) || '—'}</td>
-    <td>{row.currentResultId ? <TimeCorrectionCell value={row.workItem?.desiredChipTimeMs ?? row.currentChipTimeMs} current={row.currentChipTimeMs} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredChipTimeMs: value })} /> : <MissingResult />}</td>
+    <td>{row.currentResultId ? <TimeCorrectionCell value={row.workItem?.desiredChipTimeMs ?? row.currentChipTimeMs} current={row.currentChipTimeMs} disabled={!editable || busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredChipTimeMs: value })} /> : <MissingResult />}</td>
     <td>{row.currentCategoryName ?? '—'}</td>
-    <td>{row.currentResultId ? <ResultStatusCell value={row.workItem?.desiredResultStatus ?? row.currentResultStatus ?? ''} current={row.currentResultStatus} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredResultStatus: value })} /> : <MissingResult />}</td>
+    <td>{row.currentResultId ? <ResultStatusCell value={row.workItem?.desiredResultStatus ?? row.currentResultStatus ?? ''} current={row.currentResultStatus} disabled={!editable || busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { desiredResultStatus: value })} /> : <MissingResult />}</td>
     <td>{statusRussian(row.correctionReason)}</td>
-    <td><select aria-label={`Статус обращения ${row.issueId}`} disabled={busyIssue === row.issueId} value={row.issueStatus} onChange={(change) => { void onSaveIssueStatus(row, change.target.value as IssueStatus).catch(() => undefined) }}>{(['NEW', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'] as IssueStatus[]).map((status) => <option key={status} value={status}>{statusRussian(status)}</option>)}</select></td>
-    <td><select aria-label={`Ответственный ${row.issueId}`} disabled={busyIssue === row.issueId} value={row.workItem?.assigneeUserId ?? ''} onChange={(change) => { void onSaveWork(row, { assigneeUserId: change.target.value ? Number(change.target.value) : null }).catch(() => undefined) }}><option value="">Не назначен</option>{users.map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}</select></td>
-    <td><CommentCell value={row.workItem?.internalComment ?? ''} disabled={busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { internalComment: value || null })} /></td>
-    <td><SyncState work={row.workItem} />{row.workItem && ['PENDING', 'CONFLICT', 'FAILED'].includes(row.workItem.syncStatus) && <button className="admin-link-button" type="button" disabled={busyIssue === row.issueId} onClick={() => void onReset(row)}>Сбросить изменения</button>}</td>
+    <td><select aria-label={`Статус обращения ${row.issueId}`} disabled={!editable || busyIssue === row.issueId} value={row.issueStatus} onChange={(change) => { void onSaveIssueStatus(row, change.target.value as IssueStatus).catch(() => undefined) }}>{(['NEW', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'] as IssueStatus[]).map((status) => <option key={status} value={status}>{statusRussian(status)}</option>)}</select></td>
+    {!shared && <td><select aria-label={`Ответственный ${row.issueId}`} disabled={busyIssue === row.issueId} value={row.workItem?.assigneeUserId ?? ''} onChange={(change) => { void onSaveWork(row, { assigneeUserId: change.target.value ? Number(change.target.value) : null }).catch(() => undefined) }}><option value="">Не назначен</option>{users.map((user) => <option key={user.id} value={user.id}>{user.displayName}</option>)}</select></td>}
+    <td><CommentCell value={row.workItem?.internalComment ?? ''} disabled={!editable || busyIssue === row.issueId} onSave={(value) => onSaveWork(row, { internalComment: value || null })} /></td>
+    <td><SyncState work={row.workItem} />{editable && row.workItem && ['PENDING', 'CONFLICT', 'FAILED'].includes(row.workItem.syncStatus) && <button className="admin-link-button" type="button" disabled={busyIssue === row.issueId} onClick={() => void onReset(row)}>Сбросить изменения</button>}</td>
     <td>{new Date(row.workItem?.updatedAt ?? row.updatedAt).toLocaleString('ru-RU')}<small>{row.workItem?.updatedBy ?? ''}</small></td>
     <td><button className="admin-row-link" type="button" onClick={() => onOpen(row.issueId)}>Открыть</button></td>
   </tr>)}</>
@@ -318,6 +358,60 @@ function SyncState({ work }: { work: JournalWorkItem | null }) {
 
 function MissingResult() { return <span className="admin-missing-result">Текущий результат отсутствует.</span> }
 
+function JournalShareDialog({ api, sheet, cities, onClose }: { api: AdminApi; sheet: JournalWorkspaceSheet; cities: string[]; onClose: () => void }) {
+  const [grants, setGrants] = useState<JournalShareGrant[]>([])
+  const [label, setLabel] = useState('')
+  const [cityScope, setCityScope] = useState('')
+  const [permission, setPermission] = useState<'VIEW' | 'EDIT'>('EDIT')
+  const [canSyncNow, setCanSyncNow] = useState(false)
+  const [lifetimeDays, setLifetimeDays] = useState('30')
+  const [noExpiry, setNoExpiry] = useState(false)
+  const [createdUrl, setCreatedUrl] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [openedAt] = useState(() => Date.now())
+  const lifetimeValue = Number(lifetimeDays)
+  const lifetimeInvalid = !noExpiry
+    && (!Number.isInteger(lifetimeValue) || lifetimeValue < 1 || lifetimeValue > 365)
+  const load = useCallback(() => api.journalShares().then((items) => setGrants(items.filter((item) => item.eventSeriesId === sheet.seriesId && item.year === sheet.year))).catch((reason) => setError(adminErrorMessage(reason))), [api, sheet.seriesId, sheet.year])
+  useEffect(() => { void load() }, [load])
+  const create = async () => {
+    setBusy(true); setError(null); setCreatedUrl(null)
+    try {
+      const result = await api.createJournalShare({
+        eventSeriesId: sheet.seriesId,
+        year: sheet.year,
+        cityScope: cityScope || null,
+        permission,
+        canSyncNow: permission === 'EDIT' && canSyncNow,
+        label: label.trim() || null,
+        lifetimeDays: noExpiry ? null : lifetimeValue,
+        noExpiry,
+      })
+      setCreatedUrl(`${window.location.origin}${result.sharePath}`)
+      await load()
+    } catch (reason) { setError(adminErrorMessage(reason)) }
+    finally { setBusy(false) }
+  }
+  const revoke = async (id: string) => {
+    setBusy(true); setError(null)
+    try { await api.revokeJournalShare(id); await load() }
+    catch (reason) { setError(adminErrorMessage(reason)) }
+    finally { setBusy(false) }
+  }
+  return <Drawer title="Доступ к журналу по ссылке" onClose={onClose}><div className="admin-stack">
+    <AdminNotice tone="info">Лист: <strong>{sheet.seriesName} {sheet.year}</strong>. Ссылка является секретом и показывается только после создания.</AdminNotice>
+    {error && <AdminNotice tone="danger">{error}</AdminNotice>}
+    <div className="admin-form-grid"><Field label="Название ссылки"><input maxLength={160} placeholder="Поддержка Казань" value={label} onChange={(event) => setLabel(event.target.value)} /></Field><Field label="Город"><select value={cityScope} onChange={(event) => setCityScope(event.target.value)}><option value="">Все города</option>{cities.map((city) => <option key={city} value={city}>{city}</option>)}</select></Field><Field label="Доступ"><select value={permission} onChange={(event) => { const value = event.target.value as 'VIEW' | 'EDIT'; setPermission(value); if (value === 'VIEW') setCanSyncNow(false) }}><option value="VIEW">Просмотр</option><option value="EDIT">Редактирование</option></select></Field><Field label="Срок, дней"><input type="number" min="1" max="365" disabled={noExpiry} value={lifetimeDays} onChange={(event) => setLifetimeDays(event.target.value)} /></Field></div>
+    <label className="admin-checkbox"><input type="checkbox" checked={noExpiry} onChange={(event) => setNoExpiry(event.target.checked)} />Без срока действия</label>
+    <label className="admin-checkbox"><input type="checkbox" disabled={permission !== 'EDIT'} checked={canSyncNow} onChange={(event) => setCanSyncNow(event.target.checked)} />Разрешить синхронизацию официальных данных</label>
+    {lifetimeInvalid && <AdminNotice tone="danger">Укажите срок от 1 до 365 дней.</AdminNotice>}
+    <button className="admin-button-primary" disabled={busy || lifetimeInvalid} onClick={() => void create()}>{busy ? 'Создаём…' : 'Создать ссылку'}</button>
+    {createdUrl && <AdminNotice tone="success"><strong>Ссылка создана и больше не будет показана:</strong><input readOnly value={createdUrl} aria-label="Созданная ссылка" /><button type="button" onClick={() => void navigator.clipboard.writeText(createdUrl)}>Копировать</button></AdminNotice>}
+    <section className="admin-detail-section"><h3>Созданные доступы</h3>{grants.length === 0 ? <p>Ссылок пока нет.</p> : <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Название</th><th>Город</th><th>Права</th><th>Создана</th><th>Истекает</th><th>Статус</th><th>Доступы</th><th /></tr></thead><tbody>{grants.map((grant) => <tr key={grant.id}><td>{grant.label ?? 'Без названия'}</td><td>{grant.cityScope ?? 'Все города'}</td><td>{grant.permission === 'VIEW' ? 'Просмотр' : `Редактирование${grant.canSyncNow ? ' + синхронизация' : ''}`}</td><td>{new Date(grant.createdAt).toLocaleString('ru-RU')}</td><td>{grant.expiresAt ? new Date(grant.expiresAt).toLocaleString('ru-RU') : 'Без срока'}</td><td>{grant.revokedAt ? 'Отозвана' : grant.expiresAt && new Date(grant.expiresAt).getTime() <= openedAt ? 'Истекла' : 'Активна'}</td><td>{grant.accessCount}{grant.lastAccessedAt ? ` · ${new Date(grant.lastAccessedAt).toLocaleString('ru-RU')}` : ''}</td><td>{!grant.revokedAt && <button className="admin-button-danger" disabled={busy} onClick={() => void revoke(grant.id)}>Отозвать</button>}</td></tr>)}</tbody></table></div>}</section>
+  </div></Drawer>
+}
+
 function ExportDialog({ api, filters, total, onClose, onBatch }: { api: AdminApi; filters: JournalFilters; total: number; onClose: () => void; onBatch: (batch: ShareBatch) => void }) {
   const [lifetime, setLifetime] = useState('30')
   const [busy, setBusy] = useState(false)
@@ -343,7 +437,7 @@ function ExportDialog({ api, filters, total, onClose, onBatch }: { api: AdminApi
   return <Drawer title="Выгрузить журнал в XLSX" onClose={onClose}><div className="admin-stack"><AdminNotice tone="info">В экспорт попадут все обращения по текущим фильтрам: <strong>{total}</strong>. Пагинация страницы на экспорт не влияет.</AdminNotice>{error && <AdminNotice tone="danger">{error}</AdminNotice>}<fieldset className="admin-radio-list"><legend>Срок действия ссылок на вложения</legend>{[['7', '7 дней'], ['30', '30 дней'], ['90', '90 дней'], ['none', 'Без срока действия']].map(([value, label]) => <label key={value}><input type="radio" name="lifetime" checked={lifetime === value} onChange={() => setLifetime(value)} />{label}</label>)}</fieldset><button className="admin-button-primary" disabled={busy} onClick={() => void exportFile()}>{busy ? 'Формируем…' : 'Сформировать XLSX'}</button>{batch && <section className="admin-card"><h3>Файл сформирован</h3><p>Доступ к вложениям создан. Batch: <code>{batch.batchId}</code></p>{batch.revokedAt ? <AdminNotice tone="warning">Доступ уже отозван.</AdminNotice> : <button className="admin-button-danger" onClick={() => setRevokeConfirm(true)}>Отозвать доступ</button>}</section>}{revokeConfirm && <ConfirmDialog title="Отозвать доступ?" description="Все ссылки на вложения, созданные этой выгрузкой, перестанут работать." confirmLabel="Отозвать все ссылки" danger busy={busy} onConfirm={() => void revoke()} onClose={() => setRevokeConfirm(false)} />}</div></Drawer>
 }
 
-function JournalDrawer({ api, issueId, onClose }: { api: AdminApi; issueId: number; onClose: () => void }) {
+function JournalDrawer({ api, issueId, onClose }: { api: JournalWorkspaceClient; issueId: number; onClose: () => void }) {
   const [detail, setDetail] = useState<JournalDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

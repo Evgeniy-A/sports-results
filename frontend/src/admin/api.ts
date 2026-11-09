@@ -39,6 +39,8 @@ import type {
   JournalWorkspaceRow,
   JournalWorkspaceSheet,
   JournalWorkItemResponse,
+  JournalShareCreated,
+  JournalShareGrant,
   PageResponse,
   ParticipantInfo,
   Race,
@@ -493,6 +495,15 @@ export function createAdminApi(credentials: AdminCredentials, onUnauthorized?: (
     ),
     syncJournalSheet: (seriesId: number, year: number) => request<JournalSyncSummary>(
       `/admin/result-issue-workspace/sheets/${seriesId}/${year}/sync`,
+      { method: 'POST' },
+    ),
+    journalShares: () => request<JournalShareGrant[]>('/admin/result-issue-journal-shares'),
+    createJournalShare: (body: object) => request<JournalShareCreated>(
+      '/admin/result-issue-journal-shares',
+      { method: 'POST', ...json(body) },
+    ),
+    revokeJournalShare: (grantId: string) => request<JournalShareGrant>(
+      `/admin/result-issue-journal-shares/${encodeURIComponent(grantId)}/revoke`,
       { method: 'POST' },
     ),
     exportJournal: async (
