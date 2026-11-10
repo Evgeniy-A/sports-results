@@ -1,11 +1,6 @@
 import type { ResultCorrectionReason, ResultInquiryAvailability } from '../api/types'
 import { formatInquiryDeadline } from './resultInquiry.ts'
 
-export type ResultIssueVerificationDecision =
-  | { state: 'VERIFICATION_FAILED' }
-  | { state: 'FORM' }
-  | { state: 'DUPLICATE'; issueId: number }
-
 export interface CorrectionReasonOption {
   value: Exclude<ResultCorrectionReason, 'PARTICIPANT_DATA'>
   label: string
@@ -18,15 +13,6 @@ export const PUBLIC_CORRECTION_REASONS: readonly CorrectionReasonOption[] = [
   { value: 'RACE_OR_FORMAT', label: 'Старт / дистанция' },
   { value: 'OTHER', label: 'Другое' },
 ]
-
-export function decideResultIssueVerification(
-  verifiedForFlow: boolean,
-  activeIssue: { issueId: number } | null | undefined,
-): ResultIssueVerificationDecision {
-  if (!verifiedForFlow) return { state: 'VERIFICATION_FAILED' }
-  if (activeIssue) return { state: 'DUPLICATE', issueId: activeIssue.issueId }
-  return { state: 'FORM' }
-}
 
 export function parseClaimedTime(value: string): number | null {
   const match = value.trim().match(/^(\d{1,3}):([0-5]\d):([0-5]\d)(?:[.,](\d{1,3}))?$/)

@@ -37,7 +37,6 @@ public class SecurityConfiguration {
                         .requestMatchers(HttpMethod.GET, "/api/events/**", "/api/results/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/results/*/certificates/*/generate").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/result-issue-attachments/capabilities").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/events/*/result-inquiry/verify").permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 "/api/events/*/result-issue-requests/missing",
                                 "/api/events/*/results/*/result-issue-requests").permitAll()

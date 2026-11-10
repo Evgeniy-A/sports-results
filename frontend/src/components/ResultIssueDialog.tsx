@@ -5,16 +5,13 @@ import type {
   ResultIssueAttachmentUpload,
   ResultCorrectionReason,
   ResultDetails,
-  ResultInquiryAvailability,
   ResultInquiryLookup,
   ResultIssueCreated,
 } from '../api/types'
 import { DirectUploadError, uploadFileDirectly } from '../api/directUpload'
 import { formatDuration, statusLabel } from '../utils/format'
-import { formatDateInput, formatDurationInput } from '../utils/inputFormatting'
-import { parseRussianBirthDate } from '../utils/resultInquiry'
+import { formatDurationInput } from '../utils/inputFormatting'
 import {
-  decideResultIssueVerification,
   localDateTimeToInstant,
   parseClaimedTime,
   PUBLIC_CORRECTION_REASONS,
@@ -25,14 +22,12 @@ import {
   ResultIssueAttachmentField,
 } from './ResultIssueAttachmentField'
 import { DigitAutoformatInput } from './DigitAutoformatInput'
-import { ResultIssueSupportFallback } from './ResultIssueSupportFallback'
 
 interface CommonProps {
   eventId: number
   eventName: string
   eventTimeZone: string
   inquiry: ResultInquiryLookup
-  initialVerifiedBirthDate?: string | null
   onClose: () => void
 }
 
@@ -46,7 +41,7 @@ interface CorrectionProps extends CommonProps {
 }
 
 type Props = MissingProps | CorrectionProps
-type DialogState = 'VERIFY' | 'FORM' | 'UPLOADS' | 'SUCCESS' | 'DUPLICATE'
+type DialogState = 'FORM' | 'UPLOADS' | 'SUCCESS' | 'DUPLICATE'
 
 interface LocalAttachment extends PreparedAttachment {
   file: File
@@ -94,24 +89,12 @@ export function ResultIssueDialog(props: Props) {
     eventName,
     eventTimeZone,
     inquiry,
-    initialVerifiedBirthDate = null,
     onClose,
   } = props
   const dialogRef = useRef<HTMLElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const submitLockRef = useRef(false)
-  const initialActiveIssueId = initialVerifiedBirthDate ? inquiry.activeIssue?.issueId ?? null : null
-  const [dialogState, setDialogState] = useState<DialogState>(
-    initialActiveIssueId !== null ? 'DUPLICATE' : initialVerifiedBirthDate ? 'FORM' : 'VERIFY',
-  )
-  const [duplicateIssueId, setDuplicateIssueId] = useState<number | null>(initialActiveIssueId)
-  const [verifiedBirthDate, setVerifiedBirthDate] = useState<string | null>(initialVerifiedBirthDate)
-  const [birthDate, setBirthDate] = useState('')
-  const [birthDateError, setBirthDateError] = useState<string | null>(null)
-  const [verificationFailed, setVerificationFailed] = useState(false)
-  const [verificationAvailability, setVerificationAvailability] = useState<ResultInquiryAvailability | null>(null)
-  const [verificationDeadline, setVerificationDeadline] = useState<string | null>(null)
-  const [verifying, setVerifying] = useState(false)
+  const [dialogState, setDialogState] = useState<DialogState>('FORM')
   const [contactEmail, setContactEmail] = useState('')
   const [message, setMessage] = useState('')
   const [estimatedStartAt, setEstimatedStartAt] = useState('')
@@ -170,8 +153,6 @@ export function ResultIssueDialog(props: Props) {
   }, [onClose])
 
   const closeDialog = () => {
-    setBirthDate('')
-    setVerifiedBirthDate(null)
     onClose()
   }
 
@@ -263,49 +244,9 @@ export function ResultIssueDialog(props: Props) {
     await uploadAttachment(createdIssue, attachment, Boolean(attachment.authorization))
   }
 
-  const submitVerification = async (event: FormEvent) => {
-    event.preventDefault()
-    const apiBirthDate = parseRussianBirthDate(birthDate)
-    if (!apiBirthDate) {
-      setBirthDateError('Введите корректную дату в формате ДД.ММ.ГГГГ.')
-      return
-    }
-    setVerifying(true)
-    setBirthDateError(null)
-    setVerificationFailed(false)
-    try {
-      const verified = await api.verifyResultInquiry(eventId, { bib: inquiry.bib, birthDate: apiBirthDate })
-      setVerificationAvailability(verified.inquiryAvailability)
-      setVerificationDeadline(verified.deadline ?? null)
-      const expectedResultId = props.kind === 'RESULT_CORRECTION' ? props.result.resultId : null
-      const verifiedForFlow = props.kind === 'MISSING_RESULT'
-        ? verified.lookupState === 'RESULT_NOT_PUBLIC'
-        : verified.lookupState === 'RESULT_PUBLIC' && verified.publicResultId === expectedResultId
-      const decision = decideResultIssueVerification(verifiedForFlow, verified.activeIssue)
-      if (decision.state === 'VERIFICATION_FAILED') {
-        setVerificationFailed(true)
-        return
-      }
-      setVerifiedBirthDate(apiBirthDate)
-      if (decision.state === 'DUPLICATE') {
-        setDuplicateIssueId(decision.issueId)
-        setVerifiedBirthDate(null)
-        setDialogState('DUPLICATE')
-        return
-      }
-      setDialogState('FORM')
-    } catch (reason: unknown) {
-      console.error('Result issue identity verification failed', reason)
-      setFormError('Не удалось выполнить проверку. Проверьте подключение и попробуйте ещё раз.')
-    } finally {
-      setBirthDate('')
-      setVerifying(false)
-    }
-  }
-
   const submitIssue = async (event: FormEvent) => {
     event.preventDefault()
-    if (submitLockRef.current || submitting || !verifiedBirthDate) return
+    if (submitLockRef.current || submitting) return
     if (attachments.some((attachment) => attachment.state === 'ERROR' && !attachment.retryable)) {
       setFormError('Уберите файлы, которые превышают допустимый размер.')
       return
@@ -334,14 +275,13 @@ export function ResultIssueDialog(props: Props) {
       const created = props.kind === 'MISSING_RESULT'
         ? await api.createMissingResultIssue(eventId, {
           bib: inquiry.bib,
-          birthDate: verifiedBirthDate,
+          raceId: inquiry.raceId ?? null,
           contactEmail,
           message,
           estimatedStartAt: startAt,
           estimatedFinishAt: finishAt,
         })
         : await api.createResultCorrectionIssue(eventId, props.result.resultId, {
-          birthDate: verifiedBirthDate,
           correctionReason,
           claimedGunTimeMs: correctionReason === 'OFFICIAL_TIME' ? claimedTimeMs : null,
           claimedChipTimeMs: correctionReason === 'CHIP_TIME' ? claimedTimeMs : null,
@@ -349,7 +289,6 @@ export function ResultIssueDialog(props: Props) {
           message,
         })
       setCreatedIssue(created)
-      setVerifiedBirthDate(null)
       const selectedAttachments = attachments.filter((attachment) => attachment.state === 'SELECTED')
       if (selectedAttachments.length === 0) {
         setDialogState('SUCCESS')
@@ -359,13 +298,7 @@ export function ResultIssueDialog(props: Props) {
       }
     } catch (reason: unknown) {
       if (reason instanceof ApiError && reason.code === 'ACTIVE_RESULT_ISSUE_EXISTS') {
-        setDuplicateIssueId(null)
-        setVerifiedBirthDate(null)
         setDialogState('DUPLICATE')
-      } else if (reason instanceof ApiError && reason.code === 'IDENTITY_VERIFICATION_FAILED') {
-        setVerifiedBirthDate(null)
-        setVerificationFailed(true)
-        setDialogState('VERIFY')
       } else {
         console.error('Result issue request failed', reason)
         setFormError(technicalErrorMessage(reason))
@@ -377,18 +310,11 @@ export function ResultIssueDialog(props: Props) {
   }
 
   const availabilityMessage = resultIssueAvailabilityMessage(
-    verificationAvailability ?? inquiry.inquiryAvailability,
-    verificationDeadline ?? inquiry.deadline,
+    inquiry.inquiryAvailability,
+    inquiry.deadline,
     eventTimeZone,
   )
   const contextRace = inquiry.startDisplayName ?? inquiry.raceDisplayName
-  const retryBirthDateVerification = () => {
-    setBirthDate('')
-    setBirthDateError(null)
-    setFormError(null)
-    setVerificationFailed(false)
-  }
-
   return <div className="modal-backdrop" role="presentation" onMouseDown={closeDialog}>
     <section
       ref={dialogRef}
@@ -404,52 +330,15 @@ export function ResultIssueDialog(props: Props) {
 
       {availabilityMessage && <div className="issue-notice" role="status">{availabilityMessage}</div>}
 
-      {!availabilityMessage && dialogState === 'VERIFY' && (verificationFailed
-        ? <div className="verification-help" role="alert">
-          <p>Дата рождения не совпала с данными регистрации. Проверьте введённую дату и попробуйте ещё раз.</p>
-          <ResultIssueSupportFallback
-            availability={verificationAvailability ?? inquiry.inquiryAvailability}
-            issueKind={props.kind}
-            eventName={eventName}
-            startLabel={contextRace ?? 'Старт не указан'}
-            bib={inquiry.bib}
-            participantName={inquiry.participantDisplayName
-              ?? (props.kind === 'RESULT_CORRECTION' ? props.result.displayName : null)}
-            onRetryVerification={retryBirthDateVerification}
-          />
-        </div>
-        : <>
-          <p className="issue-lead">Подтвердите дату рождения участника. Она используется только для проверки и не добавляется в обращение.</p>
-          <form className="issue-form compact-form" onSubmit={submitVerification}>
-            <label>
-              <span>Дата рождения</span>
-              <DigitAutoformatInput
-                aria-label="Дата рождения"
-                aria-describedby={birthDateError ? 'issue-birth-date-error' : undefined}
-                autoComplete="off"
-                formatter={formatDateInput}
-                maxLength={10}
-                placeholder="ДД.ММ.ГГГГ"
-                value={birthDate}
-                onValueChange={(value) => {
-                  setBirthDate(value)
-                  setBirthDateError(null)
-                  setFormError(null)
-                }}
-              />
-            </label>
-            <button className="issue-submit" type="submit" disabled={verifying}>{verifying ? 'Проверяем…' : 'Продолжить'}</button>
-          </form>
-          {birthDateError && <p id="issue-birth-date-error" className="form-error" role="alert">{birthDateError}</p>}
-          {formError && <p className="form-error" role="alert">{formError}</p>}
-        </>)}
-
       {!availabilityMessage && dialogState === 'FORM' && <form className="issue-form" onSubmit={submitIssue}>
         <dl className="issue-context">
           <div><dt>Мероприятие</dt><dd>{eventName}</dd></div>
           <div><dt>Старт</dt><dd>{contextRace || '—'}</dd></div>
           <div><dt>Стартовый номер</dt><dd>№ {inquiry.bib}</dd></div>
-          <div><dt>Участник</dt><dd>{inquiry.participantDisplayName ?? (props.kind === 'RESULT_CORRECTION' ? props.result.displayName : '—')}</dd></div>
+          {(inquiry.participantDisplayName || props.kind === 'RESULT_CORRECTION') && <div>
+            <dt>Участник</dt>
+            <dd>{inquiry.participantDisplayName ?? (props.kind === 'RESULT_CORRECTION' ? props.result.displayName : '')}</dd>
+          </div>}
         </dl>
 
         {props.kind === 'RESULT_CORRECTION' && <>
@@ -540,9 +429,7 @@ export function ResultIssueDialog(props: Props) {
 
       {dialogState === 'DUPLICATE' && <div className="issue-outcome issue-duplicate" role="status">
         <h3>Обращение уже отправлено</h3>
-        <p>{duplicateIssueId !== null
-          ? <>По этому результату уже есть активное обращение №{duplicateIssueId}. Повторное обращение можно отправить после завершения его рассмотрения.</>
-          : <>По этому результату уже есть активное обращение. Повторное обращение можно отправить после завершения его рассмотрения.</>}</p>
+        <p>По этому результату уже есть активное обращение. Повторное обращение можно отправить после завершения его рассмотрения.</p>
         <button type="button" onClick={closeDialog}>Закрыть</button>
       </div>}
     </section>

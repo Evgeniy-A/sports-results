@@ -41,7 +41,9 @@ export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startN
       })
       if (!loadedResult.bib) return
       try {
-        const lookup = await api.resultInquiry(loadedResult.eventId, loadedResult.bib, controller.signal)
+        const lookup = await api.resultInquiry(
+          loadedResult.eventId, loadedResult.bib, loadedResult.raceId, controller.signal,
+        )
         if (!controller.signal.aborted) setInquiry(lookup)
       } catch (reason: unknown) {
         if (!controller.signal.aborted) {

@@ -60,8 +60,11 @@ public class ResultIssueRequestService {
         mutationGuard.lock(eventId);
         PublicResultIdentityService.RegistrationBibLookup lookup = identityService.lookupByBib(eventId, request.bib());
         requireOpen(lookup.event());
-        Registration registration = identityService.verifyByBirthDate(lookup, request.birthDate())
-                .orElseThrow(ResultIssueRequestService::verificationFailed);
+        java.util.List<Registration> candidates = identityService.publicCandidates(lookup, request.raceId());
+        if (candidates.size() != 1) {
+            throw participantContextNotFound();
+        }
+        Registration registration = candidates.getFirst();
         Result result = resultRepository.findByRegistrationId(registration.getId()).orElse(null);
         if (result != null && PublicResultVisibility.isResultPublic(result)) {
             throw new RequestConflictException(
@@ -90,8 +93,8 @@ public class ResultIssueRequestService {
         mutationGuard.lock(eventId);
         Event event = identityService.requirePublicEvent(eventId);
         requireOpen(event);
-        Result result = identityService.verifyPublicResult(event, resultId, request.birthDate())
-                .orElseThrow(ResultIssueRequestService::verificationFailed);
+        Result result = identityService.findPublicResult(event, resultId)
+                .orElseThrow(ResultIssueRequestService::participantContextNotFound);
 
         ResultIssueRequest issue = baseIssue(
                 event, result.getRegistration(), ResultIssueType.RESULT_CORRECTION,
@@ -174,10 +177,10 @@ public class ResultIssueRequestService {
         return milliseconds == null ? null : Duration.ofMillis(milliseconds);
     }
 
-    private static InvalidRequestException verificationFailed() {
+    private static InvalidRequestException participantContextNotFound() {
         return new InvalidRequestException(
-                "IDENTITY_VERIFICATION_FAILED",
-                "Participant data could not be verified"
+                "PARTICIPANT_CONTEXT_NOT_FOUND",
+                "Public participant context could not be resolved"
         );
     }
 

@@ -31,7 +31,8 @@ test('appeal flow reuses the established inquiry and correction components', () 
   assert.match(appealSource, /<ResultIssueDialog/)
   assert.match(appealSource, /kind="RESULT_CORRECTION"/)
   assert.match(appealSource, /api\.resultInquiry/)
-  assert.match(appealSource, /api\.verifyResultInquiry/)
+  assert.match(appealSource, /onSelectRace=\{runLookup\}/)
+  assert.doesNotMatch(appealSource, /verifyResultInquiry|birthDate|Дата рождения/)
 })
 
 test('shared grant exchange is a POST and session requests use only the short-lived session header', () => {

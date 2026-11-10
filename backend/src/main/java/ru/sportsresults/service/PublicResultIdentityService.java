@@ -11,7 +11,6 @@ import ru.sportsresults.repository.EventRepository;
 import ru.sportsresults.repository.RegistrationRepository;
 import ru.sportsresults.repository.ResultRepository;
 
-import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -41,37 +40,28 @@ public class PublicResultIdentityService {
                 exactBib,
                 registrationRepository.findAllByRaceEventIdAndBib(eventId, exactBib).stream()
                         // Draft races must not disclose hidden duplicate-bib candidates. The
-                        // existing visibility check is still applied after DOB verification.
+                        // public candidate filter is applied before any lookup context is returned.
                         .filter(registration -> registration.getRace().getResultsPublicationStatus()
                                 == ResultsPublicationStatus.PUBLISHED)
                         .toList()
         );
     }
 
-    public Optional<Registration> verifyByBirthDate(
-            RegistrationBibLookup lookup,
-            LocalDate birthDate
-    ) {
-        requireBirthDate(birthDate);
-        List<Registration> matches = lookup.registrations().stream()
-                .filter(registration -> birthDate.equals(registration.getBirthDate()))
+    public List<Registration> publicCandidates(RegistrationBibLookup lookup, Long raceId) {
+        return lookup.registrations().stream()
+                .filter(PublicResultVisibility::isRegistrationPublic)
+                .filter(registration -> raceId == null || registration.getRace().getId().equals(raceId))
                 .toList();
-        if (matches.size() != 1 || !PublicResultVisibility.isRegistrationPublic(matches.getFirst())) {
-            return Optional.empty();
-        }
-        return Optional.of(matches.getFirst());
     }
 
     @Transactional(readOnly = true)
-    public Optional<Result> verifyPublicResult(Event event, Long resultId, LocalDate birthDate) {
-        requireBirthDate(birthDate);
+    public Optional<Result> findPublicResult(Event event, Long resultId) {
         if (resultId == null) {
             return Optional.empty();
         }
         return resultRepository.findById(resultId)
                 .filter(result -> result.getRegistration().getRace().getEvent().getId().equals(event.getId()))
-                .filter(PublicResultVisibility::isResultPublic)
-                .filter(result -> birthDate.equals(result.getRegistration().getBirthDate()));
+                .filter(PublicResultVisibility::isResultPublic);
     }
 
     @Transactional(readOnly = true)
@@ -84,12 +74,6 @@ public class PublicResultIdentityService {
             throw new ResourceNotFoundException("EVENT_NOT_FOUND", "Published event not found");
         }
         return event;
-    }
-
-    private static void requireBirthDate(LocalDate birthDate) {
-        if (birthDate == null) {
-            throw new InvalidRequestException("BIRTH_DATE_REQUIRED", "birthDate is required");
-        }
     }
 
     private static String normalizeBib(String bib) {

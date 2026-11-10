@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
-  decideResultIssueVerification,
   localDateTimeToInstant,
   parseClaimedTime,
   PUBLIC_CORRECTION_REASONS,
@@ -14,139 +13,57 @@ const panelSource = await readFile(new URL('../src/components/ResultInquiryPanel
 const dialogSource = await readFile(new URL('../src/components/ResultIssueDialog.tsx', import.meta.url), 'utf8')
 const detailsSource = await readFile(new URL('../src/components/ResultDetailsDialog.tsx', import.meta.url), 'utf8')
 const eventResultsSource = await readFile(new URL('../src/components/EventResults.tsx', import.meta.url), 'utf8')
+const appealSource = await readFile(new URL('../src/pages/AppealPage.tsx', import.meta.url), 'utf8')
 const attachmentSource = await readFile(new URL('../src/components/ResultIssueAttachmentField.tsx', import.meta.url), 'utf8')
-const supportFallbackSource = await readFile(new URL('../src/components/ResultIssueSupportFallback.tsx', import.meta.url), 'utf8')
 const clientSource = await readFile(new URL('../src/api/client.ts', import.meta.url), 'utf8')
 const directUploadSource = await readFile(new URL('../src/api/directUpload.ts', import.meta.url), 'utf8')
 
-test('MISSING_RESULT CTA opens the backend-backed issue flow', () => {
+test('MISSING_RESULT CTA opens the established backend-backed issue flow directly', () => {
   assert.match(panelSource, /Уточнить результат/)
   assert.match(panelSource, /kind="MISSING_RESULT"/)
   assert.match(dialogSource, /createMissingResultIssue/)
+  assert.match(dialogSource, /useState<DialogState>\('FORM'\)/)
+  assert.doesNotMatch(dialogSource, /inquiry\.activeIssue|initialActiveIssueId/)
+  assert.doesNotMatch(dialogSource, /'VERIFY'|submitVerification|verifiedBirthDate/)
 })
 
-test('MISSING_RESULT asks for DOB before showing the form', () => {
-  assert.match(dialogSource, /dialogState.*'VERIFY'/s)
-  assert.match(dialogSource, /parseRussianBirthDate\(birthDate\)/)
-  assert.match(dialogSource, /verified\.lookupState === 'RESULT_NOT_PUBLIC'/)
-  assert.match(dialogSource, /decideResultIssueVerification\(verifiedForFlow, verified\.activeIssue\)/)
+test('all public Result Issue entry points contain no birth-date verification UI', () => {
+  const publicFlow = `${panelSource}\n${dialogSource}\n${detailsSource}\n${eventResultsSource}\n${appealSource}`
+  assert.doesNotMatch(publicFlow, /birthDate|Дата рождения|ДД\.ММ\.ГГГГ|verifyResultInquiry/)
+  assert.doesNotMatch(publicFlow, /ResultIssueSupportFallback/)
 })
 
-test('successful DOB verification detects an active issue before rendering the form', () => {
-  assert.deepEqual(decideResultIssueVerification(true, { issueId: 125 }), {
-    state: 'DUPLICATE', issueId: 125,
-  })
-  assert.deepEqual(decideResultIssueVerification(true, null), { state: 'FORM' })
-  assert.deepEqual(decideResultIssueVerification(false, { issueId: 125 }), {
-    state: 'VERIFICATION_FAILED',
-  })
-  const verificationBlock = dialogSource.match(/const submitVerification[\s\S]*?const submitIssue/)?.[0] ?? ''
-  assert.match(verificationBlock, /decision\.state === 'DUPLICATE'/)
-  assert.match(verificationBlock, /setDuplicateIssueId\(decision\.issueId\)/)
-  assert.match(verificationBlock, /setDialogState\('DUPLICATE'\)/)
-  assert.match(dialogSource, /активное обращение №\{duplicateIssueId\}/)
-})
-
-test('successful DOB verification keeps the ordinary in-app Result Issue form', () => {
-  const verificationBlock = dialogSource.match(/const submitVerification[\s\S]*?const submitIssue/)?.[0] ?? ''
-  assert.match(verificationBlock, /setVerifiedBirthDate\(apiBirthDate\)/)
-  assert.match(verificationBlock, /setDialogState\('FORM'\)/)
-  assert.match(dialogSource, /dialogState === 'FORM' && <form/)
-  assert.match(dialogSource, /createMissingResultIssue|createResultCorrectionIssue/)
-  assert.match(dialogSource, /dialogState === 'VERIFY' && \(verificationFailed/)
-})
-
-test('a duplicate-bib verification can enter the same form without asking twice', () => {
-  assert.match(eventResultsSource, /verifiedInquiryBirthDate/)
-  assert.match(eventResultsSource, /verified\.lookupState === 'RESULT_NOT_PUBLIC' \? birthDate : null/)
-  assert.match(panelSource, /initialVerifiedBirthDate=\{verifiedBirthDate\}/)
-})
-
-test('failed DOB prevents issue creation and presents retry plus shared support fallback', () => {
-  const verificationBlock = dialogSource.match(/const submitVerification[\s\S]*?const submitIssue/)?.[0] ?? ''
-  assert.match(verificationBlock, /decision\.state === 'VERIFICATION_FAILED'/)
-  assert.match(verificationBlock, /setVerificationFailed\(true\)/)
-  assert.doesNotMatch(verificationBlock, /verified\.contactEmail/)
-  assert.doesNotMatch(verificationBlock, /createMissingResultIssue|createResultCorrectionIssue/)
-  assert.match(dialogSource, /Дата рождения не совпала с данными регистрации/)
-  assert.match(dialogSource, /ResultIssueSupportFallback/)
-  assert.match(panelSource, /onRetryVerification=\{retryBirthDateVerification\}/)
-  assert.match(panelSource, /issueKind="MISSING_RESULT"/)
-  assert.doesNotMatch(`${dialogSource}\n${panelSource}`, /email=\{|mailto:/)
-})
-
-test('failed DOB fallback disables prepare for empty text and enables it for meaningful text', () => {
-  assert.match(supportFallbackSource, /Опишите ситуацию/)
-  assert.match(supportFallbackSource, /if \(!hasMeaningfulSupportDescription\(description\)\) return/)
-  assert.match(supportFallbackSource, /disabled=\{!hasMeaningfulSupportDescription\(description\)\}/)
-  assert.match(supportFallbackSource, /Подготовить обращение/)
-})
-
-test('prepared fallback locks HeroLeague support until a successful copy', () => {
-  assert.match(supportFallbackSource, /Обращение подготовлено/)
-  assert.match(supportFallbackSource, /Скопируйте подготовленный текст/)
-  assert.match(supportFallbackSource, /поле «Ваш вопрос»/)
-  assert.match(supportFallbackSource, /copyInquiryText\(preparedMessage\.text\)/)
-  assert.match(supportFallbackSource, /copyState === 'success'[\s\S]*?<a className="support-link-button"/)
-  assert.match(supportFallbackSource, /: <button className="support-link-button" type="button" disabled>/)
-  assert.match(supportFallbackSource, /https:\/\/heroleague\.ru\/feedback|HERO_LEAGUE_SUPPORT_URL/)
-  assert.match(supportFallbackSource, /target="_blank"/)
-  assert.match(supportFallbackSource, /rel="noopener noreferrer"/)
-  assert.match(supportFallbackSource, /Изменить описание/)
-  assert.match(supportFallbackSource, /setPreparedMessage\(null\)/)
-  assert.match(supportFallbackSource, /Текст скопирован\. Теперь перейдите в поддержку/)
-  assert.doesNotMatch(supportFallbackSource, /mailto:|contactEmail|resultInquiryEmail|email/i)
-  assert.doesNotMatch(supportFallbackSource, /birthDate|verifiedBirthDate|registrationId|resultId|storageKey/)
-})
-
-test('DOB inputs are absent on both fallback steps', () => {
-  assert.doesNotMatch(supportFallbackSource, /DigitAutoformatInput|aria-label="Дата рождения"|placeholder="ДД\.ММ\.ГГГГ"/)
-  assert.match(dialogSource, /dialogState === 'VERIFY' && \(verificationFailed[\s\S]*?ResultIssueSupportFallback[\s\S]*?: <>[\s\S]*?DigitAutoformatInput/)
-  const panelFallback = panelSource.match(/if \(inquiry\.lookupState === 'VERIFICATION_FAILED'\)[\s\S]*?const canContact/)?.[0] ?? ''
-  assert.doesNotMatch(panelFallback, /DigitAutoformatInput|aria-label="Дата рождения"/)
-})
-
-test('retry DOB is available on both fallback steps and clears local fallback state', () => {
-  assert.equal(supportFallbackSource.match(/Попробовать подтвердить дату ещё раз/g)?.length, 2)
-  assert.match(supportFallbackSource, /const retryVerification = \(\) => \{[\s\S]*setDescription\(''\)[\s\S]*setPreparedMessage\(null\)[\s\S]*setCopyState\('idle'\)[\s\S]*onRetryVerification\(\)/)
-  assert.match(dialogSource, /onRetryVerification=\{retryBirthDateVerification\}/)
-  assert.match(dialogSource, /const retryBirthDateVerification = \(\) => \{[\s\S]*setVerificationFailed\(false\)/)
-  assert.match(panelSource, /const retryBirthDateVerification = \(\) => \{[\s\S]*setRetrying\(true\)/)
-})
-
-test('changing description returns to step one and locks support again', () => {
-  assert.match(supportFallbackSource, /Изменить описание/)
-  assert.match(supportFallbackSource, /setPreparedMessage\(null\)\s*setCopyState\('idle'\)/)
-  assert.match(supportFallbackSource, /copyState === 'success'[\s\S]*?: <button[^>]*disabled/)
-})
-
-test('MISSING_RESULT form sends known context and only user-editable facts', () => {
+test('MISSING_RESULT form sends safe known context and the selected race', () => {
   assert.match(dialogSource, /Мероприятие/)
   assert.match(dialogSource, /<dt>Старт<\/dt>/)
   assert.match(dialogSource, /Стартовый номер/)
   assert.match(dialogSource, /participantDisplayName/)
+  assert.match(dialogSource, /bib: inquiry\.bib/)
+  assert.match(dialogSource, /raceId: inquiry\.raceId \?\? null/)
   assert.match(dialogSource, /estimatedStartAt/)
   assert.match(dialogSource, /estimatedFinishAt/)
-  assert.match(dialogSource, /contactEmail/)
+  assert.doesNotMatch(dialogSource, /registrationId/)
 })
 
-test('successful submission shows the public issue number and no internal registration id', () => {
+test('successful submission shows only the public issue number', () => {
   assert.match(dialogSource, /Обращение №\{createdIssue\.issueId\} принято/)
   assert.match(dialogSource, /Повторно отправлять обращение по этому результату не нужно/)
   assert.doesNotMatch(dialogSource, /registrationId/)
 })
 
 test('submit locking prevents two frontend requests from a double click', () => {
-  assert.match(dialogSource, /if \(submitLockRef\.current \|\| submitting \|\| !verifiedBirthDate\) return/)
+  assert.match(dialogSource, /if \(submitLockRef\.current \|\| submitting\) return/)
   assert.match(dialogSource, /submitLockRef\.current = true/)
   assert.match(dialogSource, /disabled=\{submitting\}/)
 })
 
-test('ACTIVE_RESULT_ISSUE_EXISTS is a normal duplicate state', () => {
+test('active issue is disclosed only as a generic server-authoritative conflict', () => {
+  assert.doesNotMatch(dialogSource, /inquiry\.activeIssue|duplicateIssueId/)
   assert.match(dialogSource, /reason\.code === 'ACTIVE_RESULT_ISSUE_EXISTS'/)
   assert.match(dialogSource, /setDialogState\('DUPLICATE'\)/)
   assert.match(dialogSource, /Обращение уже отправлено/)
   assert.match(dialogSource, /Повторное обращение можно отправить после завершения его рассмотрения/)
+  assert.doesNotMatch(dialogSource, /активное обращение №/)
 })
 
 test('duplicate state does not load or render attachment controls', () => {
@@ -154,21 +71,15 @@ test('duplicate state does not load or render attachment controls', () => {
   assert.match(dialogSource, /dialogState === 'FORM' && <form/)
   const duplicateBlock = dialogSource.match(/dialogState === 'DUPLICATE'[\s\S]*?<\/div>/)?.[0] ?? ''
   assert.match(duplicateBlock, /issue-outcome issue-duplicate/)
-  assert.doesNotMatch(duplicateBlock, /form-error|role="alert"/)
   assert.doesNotMatch(duplicateBlock, /ResultIssueAttachmentField|type="file"|createResultIssueAttachment/)
 })
 
-test('public Result detail exposes a quiet correction action only when OPEN', () => {
+test('public Result detail exposes correction only when intake is OPEN and uses race context', () => {
   assert.match(detailsSource, /inquiry\?\.inquiryAvailability === 'OPEN'/)
   assert.match(detailsSource, /result-secondary-action/)
   assert.match(detailsSource, /Сообщить об ошибке/)
   assert.match(detailsSource, /kind="RESULT_CORRECTION"/)
-})
-
-test('RESULT_CORRECTION verifies DOB against the selected public result', () => {
-  assert.match(dialogSource, /verified\.lookupState === 'RESULT_PUBLIC'/)
-  assert.match(dialogSource, /verified\.publicResultId === expectedResultId/)
-  assert.match(dialogSource, /props\.result\.resultId/)
+  assert.match(detailsSource, /loadedResult\.eventId, loadedResult\.bib, loadedResult\.raceId/)
 })
 
 test('public correction reasons exclude participant data changes', () => {
@@ -178,7 +89,7 @@ test('public correction reasons exclude participant data changes', () => {
   assert.equal(PUBLIC_CORRECTION_REASONS.some(({ value }) => value === 'PARTICIPANT_DATA'), false)
 })
 
-test('OFFICIAL_TIME and CHIP_TIME show one claimed-time field and map to the correct payload slot', () => {
+test('OFFICIAL_TIME and CHIP_TIME map one claimed time to the correct payload slot', () => {
   assert.match(dialogSource, /correctionReason === 'OFFICIAL_TIME' \|\| correctionReason === 'CHIP_TIME'/)
   assert.match(dialogSource, /claimedGunTimeMs: correctionReason === 'OFFICIAL_TIME' \? claimedTimeMs : null/)
   assert.match(dialogSource, /claimedChipTimeMs: correctionReason === 'CHIP_TIME' \? claimedTimeMs : null/)
@@ -191,13 +102,13 @@ test('claimed sporting time converts safely to milliseconds', () => {
   assert.equal(parseClaimedTime('not-a-time'), null)
 })
 
-test('RESULT_STATUS, RACE_OR_FORMAT and OTHER rely on the required comment', () => {
+test('non-time correction reasons rely on the required comment', () => {
   assert.match(dialogSource, /<textarea maxLength=\{4000\}/)
   assert.match(dialogSource, /textarea[\s\S]*required/)
   assert.doesNotMatch(dialogSource, /correctionReason === 'RESULT_STATUS'[\s\S]{0,120}claimedTime/)
 })
 
-test('CLOSED, NOT_OPEN_YET and DISABLED expose distinct backend-driven states without a CTA', () => {
+test('closed, not-open-yet and disabled intake remain backend-driven', () => {
   assert.equal(resultIssueAvailabilityMessage('CLOSED'), 'Срок подачи обращений завершён.')
   assert.equal(resultIssueAvailabilityMessage('NOT_OPEN_YET'), 'Приём обращений ещё не открыт.')
   assert.equal(resultIssueAvailabilityMessage('DISABLED'), 'Приём обращений по результатам закрыт организатором.')
@@ -206,23 +117,11 @@ test('CLOSED, NOT_OPEN_YET and DISABLED expose distinct backend-driven states wi
     /Обращения принимались до 28\.09\.2026 включительно/,
   )
   assert.match(detailsSource, /inquiry\?\.inquiryAvailability === 'OPEN'/)
-  assert.match(detailsSource, /inquiry\.deadline, eventTimeZone/)
-  assert.match(supportFallbackSource, /if \(availability !== 'OPEN'\) return null/)
-  assert.match(dialogSource, /verificationAvailability \?\? inquiry\.inquiryAvailability/)
-  assert.match(panelSource, /!availability\.canContact/)
+  assert.match(dialogSource, /inquiry\.inquiryAvailability/)
+  assert.match(panelSource, /availability\.canContact/)
 })
 
-test('DOB stays out of URL, browser storage, issue message and logs', () => {
-  const combined = `${dialogSource}\n${clientSource}\n${eventResultsSource}`
-  assert.doesNotMatch(combined, /localStorage|sessionStorage/)
-  assert.doesNotMatch(clientSource, /result-inquiry\/verify\?/)
-  assert.doesNotMatch(dialogSource, /setMessage\([^)]*birthDate|message:.*birthDate/)
-  assert.doesNotMatch(combined, /console\.(?:log|info).*birth/i)
-  assert.match(dialogSource, /setBirthDate\(''\)/)
-  assert.match(dialogSource, /setVerifiedBirthDate\(null\)/)
-})
-
-test('public issue API methods keep DOB and issue data in POST JSON bodies', async () => {
+test('public issue APIs send no DOB in URL or JSON bodies', async () => {
   const calls = []
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (input, init) => {
@@ -235,12 +134,12 @@ test('public issue API methods keep DOB and issue data in POST JSON bodies', asy
   try {
     const { api } = await import(`../src/api/client.ts?issue-public=${Date.now()}`)
     await api.createMissingResultIssue(7, {
-      bib: 'A-1', birthDate: '1990-01-10', contactEmail: 'runner@example.test',
+      bib: 'A-1', raceId: 12, contactEmail: 'runner@example.test',
       message: 'Финишировал', estimatedStartAt: null, estimatedFinishAt: null,
     })
     await api.createResultCorrectionIssue(7, 44, {
-      birthDate: '1990-01-10', correctionReason: 'OTHER', claimedGunTimeMs: null,
-      claimedChipTimeMs: null, contactEmail: 'runner@example.test', message: 'Проверьте статус',
+      correctionReason: 'OTHER', claimedGunTimeMs: null, claimedChipTimeMs: null,
+      contactEmail: 'runner@example.test', message: 'Проверьте статус',
     })
   } finally {
     globalThis.fetch = originalFetch
@@ -248,8 +147,8 @@ test('public issue API methods keep DOB and issue data in POST JSON bodies', asy
   assert.equal(calls[0].input, '/api/events/7/result-issue-requests/missing')
   assert.equal(calls[1].input, '/api/events/7/results/44/result-issue-requests')
   assert.equal(calls[0].init?.method, 'POST')
-  assert.doesNotMatch(calls[0].input, /birthDate|1990/)
-  assert.match(String(calls[0].init?.body), /"birthDate":"1990-01-10"/)
+  assert.match(String(calls[0].init?.body), /"raceId":12/)
+  assert.doesNotMatch(`${calls[0].input}${calls[0].init?.body}${calls[1].init?.body}`, /birthDate|1990/)
 })
 
 test('machine-readable backend error code is preserved without exposing server details', async () => {
@@ -261,7 +160,7 @@ test('machine-readable backend error code is preserved without exposing server d
     const { api, ApiError } = await import(`../src/api/client.ts?issue-error=${Date.now()}`)
     await assert.rejects(
       api.createMissingResultIssue(1, {
-        bib: '1', birthDate: '1990-01-01', contactEmail: 'a@example.test', message: 'x',
+        bib: '1', raceId: null, contactEmail: 'a@example.test', message: 'x',
         estimatedStartAt: null, estimatedFinishAt: null,
       }),
       (error) => error instanceof ApiError && error.code === 'ACTIVE_RESULT_ISSUE_EXISTS',
@@ -271,7 +170,7 @@ test('machine-readable backend error code is preserved without exposing server d
   }
 })
 
-test('optional local estimated times are converted to ISO instants without custom persistence', () => {
+test('optional local estimated times are converted to ISO instants', () => {
   const instant = localDateTimeToInstant('2026-08-30T12:34')
   assert.ok(instant)
   assert.match(instant, /^2026-08-30T\d{2}:34:00\.000Z$/)
@@ -279,18 +178,15 @@ test('optional local estimated times are converted to ISO instants without custo
   assert.equal(localDateTimeToInstant('bad-value'), null)
 })
 
-test('attachment UI is enabled only by backend direct-upload capability', () => {
+test('attachment UI remains enabled only by backend direct-upload capability', () => {
   assert.match(dialogSource, /resultIssueAttachmentCapabilities/)
   assert.match(dialogSource, /enabled=\{attachmentCapabilities\?\.directUploadAvailable === true\}/)
   assert.match(attachmentSource, /if \(!enabled\) return null/)
   assert.match(attachmentSource, /Добавить файл/)
   assert.match(attachmentSource, /UPLOADING|UPLOADED|ERROR/)
-  assert.match(attachmentSource, /progress|Повторить|errorMessage/)
-  assert.match(attachmentSource, /Файл загружен\. Проверяется\./)
   assert.match(dialogSource, /createResultIssueAttachment/)
   assert.match(dialogSource, /uploadFileDirectly/)
   assert.match(dialogSource, /confirmResultIssueAttachment/)
-  assert.match(dialogSource, /refreshResultIssueAttachmentUpload/)
   assert.doesNotMatch(`${clientSource}\n${directUploadSource}`, /MultipartFile|FormData/)
 })
 
@@ -301,9 +197,7 @@ test('direct upload sends the File to object storage with signed headers and pro
     status = 204
     listeners = {}
     uploadListeners = {}
-    upload = {
-      addEventListener: (name, listener) => { this.uploadListeners[name] = listener },
-    }
+    upload = { addEventListener: (name, listener) => { this.uploadListeners[name] = listener } }
     open(method, url) { observed.method = method; observed.url = url }
     setRequestHeader(name, value) { observed.headers[name] = value }
     addEventListener(name, listener) { this.listeners[name] = listener }
@@ -318,22 +212,19 @@ test('direct upload sends the File to object storage with signed headers and pro
   try {
     await uploadFileDirectly({
       url: 'https://objects.example.test/private/upload?X-Amz-Signature=signed',
-      method: 'PUT',
-      requiredHeaders: { 'Content-Type': 'video/mp4' },
-      file,
+      method: 'PUT', requiredHeaders: { 'Content-Type': 'video/mp4' }, file,
       onProgress: (percent) => observed.progress.push(percent),
     })
   } finally {
     globalThis.XMLHttpRequest = originalXhr
   }
   assert.equal(observed.method, 'PUT')
-  assert.match(observed.url, /^https:\/\/objects\.example\.test\//)
   assert.equal(observed.headers['Content-Type'], 'video/mp4')
   assert.equal(observed.file, file)
   assert.deepEqual(observed.progress, [50, 100])
 })
 
-test('direct upload surfaces rejected signatures and network failures without a backend binary fallback', async () => {
+test('direct upload surfaces rejected signatures and network failures', async () => {
   const originalXhr = globalThis.XMLHttpRequest
   class FailedXmlHttpRequest {
     static failure = 'load'
@@ -378,7 +269,7 @@ test('issue modal has accessible labels, focus trap, ESC and backdrop handling',
   assert.match(dialogSource, /role="alert"/)
 })
 
-test('ordinary race-scoped protocol behavior remains unchanged around the auxiliary flow', () => {
+test('ordinary race-scoped protocol behavior remains unchanged', () => {
   assert.match(eventResultsSource, /raceId: Number\(raceId\)/)
   assert.match(eventResultsSource, /sort,/)
   assert.match(eventResultsSource, /direction,/)

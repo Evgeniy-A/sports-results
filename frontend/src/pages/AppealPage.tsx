@@ -11,11 +11,10 @@ export function AppealPage() {
   const [event, setEvent] = useState<EventDetails | null>(null)
   const [bib, setBib] = useState('')
   const [inquiry, setInquiry] = useState<ResultInquiryLookup | null>(null)
-  const [verifiedBirthDate, setVerifiedBirthDate] = useState<string | null>(null)
   const [result, setResult] = useState<ResultDetails | null>(null)
   const [correctionOpen, setCorrectionOpen] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [verifying, setVerifying] = useState(false)
+  const [searching, setSearching] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const selectedGroup = useMemo(
@@ -42,33 +41,27 @@ export function AppealPage() {
   }, [selectedSlug])
 
   const chooseGroup = (key: string) => {
-    setSelectedKey(key); setEvent(null); setInquiry(null); setVerifiedBirthDate(null); setResult(null); setError(null)
+    setSelectedKey(key); setEvent(null); setInquiry(null); setResult(null); setError(null)
     const group = events.find((candidate) => candidate.key === key)
     setSelectedSlug(group?.cities.length === 1 ? group.cities[0].eventSlug : '')
   }
 
-  const lookup = async (submit: FormEvent) => {
-    submit.preventDefault()
+  const runLookup = async (raceId?: number) => {
     if (!event || !bib.trim()) return
-    setVerifying(true); setError(null); setInquiry(null); setResult(null); setVerifiedBirthDate(null)
+    setSearching(true); setError(null); setInquiry(null); setResult(null)
     try {
-      const found = await api.resultInquiry(event.id, bib.trim())
+      const found = await api.resultInquiry(event.id, bib.trim(), raceId)
       setInquiry(found)
       if (found.lookupState === 'RESULT_PUBLIC' && found.publicResultId) {
         setResult(await api.result(found.publicResultId))
       }
     } catch { setError('Не удалось найти участника. Проверьте подключение и попробуйте ещё раз.') }
-    finally { setVerifying(false) }
+    finally { setSearching(false) }
   }
 
-  const verify = async (birthDate: string) => {
-    if (!event || !inquiry) return
-    setVerifying(true); setError(null)
-    try {
-      const verified = await api.verifyResultInquiry(event.id, { bib: inquiry.bib, birthDate })
-      setInquiry(verified); setVerifiedBirthDate(birthDate)
-    } catch { setError('Не удалось проверить данные участника.') }
-    finally { setVerifying(false) }
+  const lookup = async (submit: FormEvent) => {
+    submit.preventDefault()
+    await runLookup()
   }
 
   return <main className="appeal-page">
@@ -81,8 +74,8 @@ export function AppealPage() {
       {!loading && events.length === 0 && <div className="state-message">Сейчас нет мероприятий с открытым приёмом обращений.</div>}
       {events.length > 0 && <div className="appeal-steps">
         <label><span>1. Мероприятие</span><select value={selectedKey} onChange={(change) => chooseGroup(change.target.value)}><option value="">Выберите мероприятие</option>{events.map((candidate) => <option key={candidate.key} value={candidate.key}>{candidate.title}</option>)}</select></label>
-        {selectedGroup && selectedGroup.cities.length > 1 && <label><span>2. Город</span><select value={selectedSlug} onChange={(change) => { setSelectedSlug(change.target.value); setEvent(null); setInquiry(null); setError(null) }}><option value="">Выберите город</option>{selectedGroup.cities.map((city) => <option key={city.eventSlug} value={city.eventSlug}>{city.city}</option>)}</select></label>}
-        {event && <form className="appeal-bib-form" onSubmit={lookup}><label><span>{selectedGroup?.cities.length === 1 ? '2' : '3'}. Стартовый номер</span><input required maxLength={64} value={bib} onChange={(change) => setBib(change.target.value)} /></label><button type="submit" disabled={verifying}>{verifying ? 'Ищем…' : 'Найти участника'}</button></form>}
+        {selectedGroup && selectedGroup.cities.length > 1 && <label><span>2. Город</span><select value={selectedSlug} onChange={(change) => { setSelectedSlug(change.target.value); setEvent(null); setInquiry(null); setResult(null); setError(null) }}><option value="">Выберите город</option>{selectedGroup.cities.map((city) => <option key={city.eventSlug} value={city.eventSlug}>{city.city}</option>)}</select></label>}
+        {event && <form className="appeal-bib-form" onSubmit={lookup}><label><span>{selectedGroup?.cities.length === 1 ? '2' : '3'}. Стартовый номер</span><input required maxLength={64} value={bib} onChange={(change) => setBib(change.target.value)} /></label><button type="submit" disabled={searching}>{searching ? 'Ищем…' : 'Найти участника'}</button></form>}
       </div>}
       {error && <p className="form-error" role="alert">{error}</p>}
       {event && inquiry?.lookupState === 'RESULT_PUBLIC' && result && <section className="inquiry-followup-card"><div><strong>{inquiry.participantDisplayName}</strong><p>{inquiry.startDisplayName ?? inquiry.raceDisplayName} · стартовый номер {inquiry.bib}</p></div><button type="button" onClick={() => setCorrectionOpen(true)}>Сообщить об ошибке</button></section>}
@@ -91,11 +84,8 @@ export function AppealPage() {
         eventName={event.name}
         eventTimeZone={event.timeZone}
         inquiry={inquiry}
-        verifiedBirthDate={verifiedBirthDate}
-        verifying={verifying}
-        verificationError={error}
-        onVerify={verify}
-        onClearVerification={() => setVerifiedBirthDate(null)}
+        selectingRace={searching}
+        onSelectRace={runLookup}
       />}
     </section>
     {event && inquiry && result && correctionOpen && <ResultIssueDialog

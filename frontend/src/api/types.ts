@@ -250,16 +250,11 @@ export interface ResultQuery {
 
 export type ResultInquiryLookupState =
   | 'NOT_FOUND'
-  | 'NEEDS_VERIFICATION'
-  | 'VERIFICATION_FAILED'
+  | 'AMBIGUOUS'
   | 'RESULT_PUBLIC'
   | 'RESULT_NOT_PUBLIC'
 
 export type ResultInquiryAvailability = 'DISABLED' | 'NOT_OPEN_YET' | 'OPEN' | 'CLOSED'
-
-export interface ActiveResultIssue {
-  issueId: number
-}
 
 export interface ResultInquiryLookup {
   lookupState: ResultInquiryLookupState
@@ -272,13 +267,11 @@ export interface ResultInquiryLookup {
   publicResultId?: number
   missingResultActionAvailable: boolean
   deadline?: string
-  contactEmail?: string
-  activeIssue?: ActiveResultIssue
-}
-
-export interface VerifyResultInquiryRequest {
-  bib: string
-  birthDate: string
+  candidates: Array<{
+    raceId: number
+    raceDisplayName: string
+    startDisplayName: string
+  }>
 }
 
 export type ResultIssueType = 'MISSING_RESULT' | 'RESULT_CORRECTION'
@@ -293,7 +286,7 @@ export type ResultCorrectionReason =
 
 export interface CreateMissingResultIssueRequest {
   bib: string
-  birthDate: string
+  raceId: number | null
   contactEmail: string
   message: string
   estimatedStartAt: string | null
@@ -301,7 +294,6 @@ export interface CreateMissingResultIssueRequest {
 }
 
 export interface CreateResultCorrectionIssueRequest {
-  birthDate: string
   correctionReason: Exclude<ResultCorrectionReason, 'PARTICIPANT_DATA'>
   claimedGunTimeMs: number | null
   claimedChipTimeMs: number | null

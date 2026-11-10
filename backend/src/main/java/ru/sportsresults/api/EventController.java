@@ -1,11 +1,8 @@
 package ru.sportsresults.api;
 
-import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import ru.sportsresults.api.dto.EventDto;
@@ -19,7 +16,6 @@ import ru.sportsresults.service.EventDetailsService;
 import ru.sportsresults.service.EventDocumentService;
 import ru.sportsresults.service.ResultInquiryService;
 import ru.sportsresults.api.dto.ResultInquiryLookupDto;
-import ru.sportsresults.api.dto.VerifyResultInquiryRequest;
 import ru.sportsresults.domain.EventPhase;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -97,17 +93,10 @@ public class EventController {
     @GetMapping("/{eventId}/result-inquiry")
     public ResultInquiryLookupDto resultInquiry(
             @PathVariable Long eventId,
-            @RequestParam String bib
+            @RequestParam String bib,
+            @RequestParam(required = false) Long raceId
     ) {
-        return resultInquiryService.lookup(eventId, bib);
-    }
-
-    @PostMapping("/{eventId}/result-inquiry/verify")
-    public ResultInquiryLookupDto verifyResultInquiry(
-            @PathVariable Long eventId,
-            @Valid @RequestBody VerifyResultInquiryRequest request
-    ) {
-        return resultInquiryService.verify(eventId, request.bib(), request.birthDate());
+        return resultInquiryService.lookup(eventId, bib, raceId);
     }
 
     @GetMapping("/{eventId}/documents")

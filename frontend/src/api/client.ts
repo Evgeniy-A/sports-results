@@ -17,7 +17,6 @@ import type {
   ResultInquiryLookup,
   ResultListItem,
   ResultQuery,
-  VerifyResultInquiryRequest,
   CertificateAvailability,
   CertificateField,
   PublicAppealEvent,
@@ -126,20 +125,11 @@ export const api = {
     }
     return response.blob()
   },
-  resultInquiry: (eventId: number, bib: string, signal?: AbortSignal) =>
+  resultInquiry: (eventId: number, bib: string, raceId?: number, signal?: AbortSignal) =>
     request<ResultInquiryLookup>(
-      `/events/${eventId}/result-inquiry?${queryString({ bib })}`,
+      `/events/${eventId}/result-inquiry?${queryString({ bib, raceId })}`,
       signal,
     ),
-  verifyResultInquiry: (
-    eventId: number,
-    verification: VerifyResultInquiryRequest,
-    signal?: AbortSignal,
-  ) => request<ResultInquiryLookup>(`/events/${eventId}/result-inquiry/verify`, signal, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(verification),
-  }),
   createMissingResultIssue: (
     eventId: number,
     issue: CreateMissingResultIssueRequest,

@@ -42,11 +42,8 @@ export function EventResults({ event }: { event: EventDetails }) {
   const [selectedResultId, setSelectedResultId] = useState<number | null>(null)
   const [inquiry, setInquiry] = useState<ResultInquiryLookup | null>(null)
   const [inquiryLoading, setInquiryLoading] = useState(false)
-  const [verifying, setVerifying] = useState(false)
-  const [verificationError, setVerificationError] = useState<string | null>(null)
-  const [verifiedInquiryBirthDate, setVerifiedInquiryBirthDate] = useState<string | null>(null)
   const protocolRequestRef = useRef<AbortController | null>(null)
-  const verificationRequestRef = useRef<AbortController | null>(null)
+  const inquirySelectionRequestRef = useRef<AbortController | null>(null)
   const [protocolRequestGate] = useState(() => new LatestRequestGate())
   const debouncedName = useDebouncedValue(name, 350)
   const debouncedBib = useDebouncedValue(bib, 350)
@@ -67,13 +64,10 @@ export function EventResults({ event }: { event: EventDetails }) {
   const clearInquiryState = () => {
     protocolRequestGate.invalidate()
     protocolRequestRef.current?.abort()
-    verificationRequestRef.current?.abort()
+    inquirySelectionRequestRef.current?.abort()
     setInquiry(null)
     setInquiryError(null)
     setInquiryLoading(false)
-    setVerifying(false)
-    setVerificationError(null)
-    setVerifiedInquiryBirthDate(null)
   }
 
   const selectPublicResultRace = useCallback((lookup: ResultInquiryLookup) => {
@@ -107,13 +101,10 @@ export function EventResults({ event }: { event: EventDetails }) {
   useEffect(() => {
     protocolRequestGate.invalidate()
     protocolRequestRef.current?.abort()
-    verificationRequestRef.current?.abort()
+    inquirySelectionRequestRef.current?.abort()
     // oxlint-disable-next-line react/set-state-in-effect -- an Event change invalidates all personal lookup state.
     setInquiry(null)
     setInquiryError(null)
-    setVerificationError(null)
-    setVerifying(false)
-    setVerifiedInquiryBirthDate(null)
     setBib('')
   }, [event.id, protocolRequestGate])
 
@@ -131,8 +122,6 @@ export function EventResults({ event }: { event: EventDetails }) {
     setInquiry(null)
     setInquiryError(null)
     setInquiryLoading(false)
-    setVerificationError(null)
-    setVerifiedInquiryBirthDate(null)
     const filters = {
       name: debouncedName || undefined,
       bib: debouncedBib.trim() || undefined,
@@ -153,7 +142,7 @@ export function EventResults({ event }: { event: EventDetails }) {
         page,
         size: 50,
       }, controller.signal),
-      () => api.resultInquiry(event.id, debouncedBib.trim(), controller.signal),
+      () => api.resultInquiry(event.id, debouncedBib.trim(), Number(raceId), controller.signal),
     ).then((outcome) => {
       if (!isCurrentRequest()) return
       const resolution = resolvePublicResultsAndInquiry(outcome)
@@ -194,37 +183,34 @@ export function EventResults({ event }: { event: EventDetails }) {
     }
   }, [event.id, raceId, debouncedName, debouncedBib, gender, categoryId, clusterId, status, sort, direction, page, protocolRequestGate, selectPublicResultRace])
 
-  const verifyBirthDate = async (birthDate: string) => {
+  const selectInquiryRace = async (selectedRaceId: number) => {
     if (!inquiry) return
-    verificationRequestRef.current?.abort()
+    inquirySelectionRequestRef.current?.abort()
     const controller = new AbortController()
-    verificationRequestRef.current = controller
-    setVerifying(true)
-    setVerificationError(null)
+    inquirySelectionRequestRef.current = controller
+    setInquiryLoading(true)
     try {
-      const verified = await api.verifyResultInquiry(
+      const selected = await api.resultInquiry(
         event.id,
-        { bib: inquiry.bib, birthDate },
+        inquiry.bib,
+        selectedRaceId,
         controller.signal,
       )
       if (controller.signal.aborted) return
-      if (verified.lookupState === 'RESULT_PUBLIC') {
-        selectPublicResultRace(verified)
+      if (selected.lookupState === 'RESULT_PUBLIC') {
+        selectPublicResultRace(selected)
         setInquiry(null)
       } else {
-        setVerifiedInquiryBirthDate(
-          verified.lookupState === 'RESULT_NOT_PUBLIC' ? birthDate : null,
-        )
-        setInquiry(verified)
+        setInquiry(selected)
       }
     } catch (reason: unknown) {
       if (!controller.signal.aborted) {
-        console.error('Result inquiry verification failed', reason)
-        setVerificationError('Не удалось выполнить проверку. Попробуйте ещё раз.')
+        console.error('Result inquiry race selection failed', reason)
+        setInquiryError('Не удалось выбрать старт. Попробуйте ещё раз.')
       }
     } finally {
-      if (!controller.signal.aborted) setVerifying(false)
-      if (verificationRequestRef.current === controller) verificationRequestRef.current = null
+      if (!controller.signal.aborted) setInquiryLoading(false)
+      if (inquirySelectionRequestRef.current === controller) inquirySelectionRequestRef.current = null
     }
   }
 
@@ -302,11 +288,8 @@ export function EventResults({ event }: { event: EventDetails }) {
       eventName={event.name}
       eventTimeZone={event.timeZone}
       inquiry={inquiry}
-      verifiedBirthDate={verifiedInquiryBirthDate}
-      verifying={verifying}
-      verificationError={verificationError}
-      onVerify={verifyBirthDate}
-      onClearVerification={() => setVerifiedInquiryBirthDate(null)}
+      selectingRace={inquiryLoading}
+      onSelectRace={selectInquiryRace}
     />}
 
     {selectedRace && !loading && !error && protocol.content.length > 0 && <>

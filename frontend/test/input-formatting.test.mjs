@@ -7,16 +7,11 @@ import {
   formatInputEdit,
   separatorNavigationCaret,
 } from '../src/utils/inputFormatting.ts'
-import { parseRussianBirthDate } from '../src/utils/resultInquiry.ts'
 import { parseClaimedTime } from '../src/utils/resultIssue.ts'
 import { formatDuration, formatLeaderGap } from '../src/utils/format.ts'
 
 const autoformatSource = await readFile(
   new URL('../src/components/DigitAutoformatInput.tsx', import.meta.url),
-  'utf8',
-)
-const panelSource = await readFile(
-  new URL('../src/components/ResultInquiryPanel.tsx', import.meta.url),
   'utf8',
 )
 const dialogSource = await readFile(
@@ -28,15 +23,15 @@ const resultEditorSource = await readFile(
   'utf8',
 )
 
-test('DOB digits are progressively formatted without becoming a default value', () => {
+test('date digits are progressively formatted without becoming a default value', () => {
   assert.equal(formatDateInput('1'), '1')
   assert.equal(formatDateInput('16'), '16')
   assert.equal(formatDateInput('160'), '16.0')
   assert.equal(formatDateInput('1608'), '16.08')
   assert.equal(formatDateInput('160819'), '16.08.19')
   assert.equal(formatDateInput('16081990'), '16.08.1990')
-  assert.match(panelSource, /useState\(''\)/)
-  assert.match(dialogSource, /const \[birthDate, setBirthDate\] = useState\(''\)/)
+  assert.match(resultEditorSource, /birthDate/)
+  assert.match(resultEditorSource, /label="Дата рождения"/)
 })
 
 test('DOB paste, letters, backspace, selection and clearing remain editable', () => {
@@ -49,11 +44,6 @@ test('DOB paste, letters, backspace, selection and clearing remain editable', ()
   assert.equal(separatorNavigationCaret('16.08.1990', 3, 3, 'Backspace'), 2)
   assert.equal(separatorNavigationCaret('16.08.1990', 2, 2, 'Delete'), 3)
   assert.equal(separatorNavigationCaret('16.08.1990', 0, 10, 'Backspace'), null)
-})
-
-test('DOB mask keeps calendar validation and ISO backend conversion', () => {
-  assert.equal(parseRussianBirthDate(formatDateInput('31022000')), null)
-  assert.equal(parseRussianBirthDate(formatDateInput('16081990')), '1990-08-16')
 })
 
 test('sporting duration digits and formatted paste use HH:MM:SS[.mmm]', () => {
@@ -97,14 +87,13 @@ test('duration validation rejects invalid minutes and seconds and preserves mill
   assert.equal(parseClaimedTime(formatDurationInput('012345678')), 5_025_678)
 })
 
-test('both DOB surfaces and claimed duration share the numeric-friendly input', () => {
-  assert.match(panelSource, /DigitAutoformatInput[\s\S]*formatter=\{formatDateInput\}/)
-  assert.match(dialogSource, /DigitAutoformatInput[\s\S]*formatter=\{formatDateInput\}/)
+test('claimed duration keeps the numeric-friendly input while admin DOB remains editable', () => {
   assert.match(dialogSource, /DigitAutoformatInput[\s\S]*formatter=\{formatDurationInput\}/)
   assert.match(autoformatSource, /inputMode="numeric"/)
   assert.match(autoformatSource, /selectionStart/)
   assert.match(autoformatSource, /setSelectionRange/)
   assert.match(dialogSource, /placeholder="ЧЧ:ММ:СС\.ммм"/)
   assert.match(resultEditorSource, /DigitAutoformatInput[\s\S]*formatter=\{formatDurationInput\}/)
+  assert.match(resultEditorSource, /<input type="date" value=\{registration\.birthDate\}/)
   assert.doesNotMatch(resultEditorSource, /aria-label="Официальное время"[\s\S]*onChange=/)
 })

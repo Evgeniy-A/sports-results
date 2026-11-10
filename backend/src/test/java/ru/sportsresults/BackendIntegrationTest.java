@@ -42,6 +42,7 @@ import ru.sportsresults.api.dto.RaceDto;
 import ru.sportsresults.api.dto.RankingAchievementDto;
 import ru.sportsresults.api.dto.ResultListItemDto;
 import ru.sportsresults.api.dto.ResultIssueJournalExportRequest;
+import ru.sportsresults.api.dto.ResultInquiryLookupDto;
 import ru.sportsresults.domain.AuditEntityType;
 import ru.sportsresults.domain.AgeCalculationMode;
 import ru.sportsresults.domain.AdminChangeLog;
@@ -2653,7 +2654,7 @@ class BackendIntegrationTest {
                 .findAllByRaceEventIdAndBib(event.getId(), "817").getFirst();
         Result publicResult = resultRepository.findByRegistrationId(publicRegistration.getId()).orElseThrow();
         String correction = """
-                {"birthDate":"1990-01-01","correctionReason":"OTHER",
+                {"correctionReason":"OTHER",
                  "contactEmail":"runner@example.org","message":"Проверьте результат"}
                 """;
         MvcResult created = mockMvc.perform(post(
@@ -2714,7 +2715,7 @@ class BackendIntegrationTest {
         );
         assertThat(reopened.availability()).isEqualTo(ResultInquiryAvailability.OPEN);
         String missing = """
-                {"bib":"0817","birthDate":"1991-02-03","contactEmail":"runner@example.org",
+                {"bib":"0817","contactEmail":"runner@example.org",
                  "message":"Результат отсутствует"}
                 """;
         mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
@@ -2760,7 +2761,6 @@ class BackendIntegrationTest {
         assertThat(publicResult.inquiryAvailability()).isEqualTo(ResultInquiryAvailability.OPEN);
         assertThat(publicResult.publicResultId()).isNotNull();
         assertThat(publicResult.missingResultActionAvailable()).isFalse();
-        assertThat(publicResult.contactEmail()).isNull();
 
         var notFound = resultInquiryService.lookup(event.getId(), "1817");
         assertThat(notFound.lookupState()).isEqualTo(ResultInquiryLookupState.NOT_FOUND);
@@ -2768,12 +2768,11 @@ class BackendIntegrationTest {
         var leadingZero = resultInquiryService.lookup(event.getId(), "0817");
         assertThat(leadingZero.lookupState()).isEqualTo(ResultInquiryLookupState.RESULT_NOT_PUBLIC);
         assertThat(leadingZero.bib()).isEqualTo("0817");
-        assertThat(leadingZero.participantDisplayName()).isEqualTo("Скрытый Статус");
+        assertThat(leadingZero.participantDisplayName()).isNull();
         assertThat(leadingZero.raceDisplayName()).isEqualTo("10 km");
         assertThat(leadingZero.startDisplayName()).isEqualTo("10 km");
         assertThat(leadingZero.publicResultId()).isNull();
         assertThat(leadingZero.missingResultActionAvailable()).isTrue();
-        assertThat(leadingZero.contactEmail()).isEqualTo("timing@example.org");
         var absentResult = resultInquiryService.lookup(event.getId(), "8170");
         assertThat(absentResult.lookupState()).isEqualTo(ResultInquiryLookupState.RESULT_NOT_PUBLIC);
         assertThat(absentResult.missingResultActionAvailable()).isTrue();
@@ -2790,7 +2789,10 @@ class BackendIntegrationTest {
                 .andExpect(jsonPath("$.inquiryAvailability").value("OPEN"))
                 .andReturn().getResponse().getContentAsString();
         assertThat(response)
-                .doesNotContainIgnoringCase("quarantine", "birthDate", "sourceCategory", "importBatch", "audit");
+                .doesNotContainIgnoringCase(
+                        "Скрытый Статус", "timing@example.org", "contactEmail", "activeIssue",
+                        "quarantine", "birthDate", "sourceCategory", "importBatch", "audit"
+                );
         mockMvc.perform(get("/api/events/{eventId}/result-inquiry", event.getId())
                         .param("name", "Скрытый Статус"))
                 .andExpect(status().isBadRequest());
@@ -2834,73 +2836,71 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void duplicateInquiryBibRequiresDobAndDoesNotLeakCandidates() throws Exception {
+    void duplicateInquiryBibUsesRaceContextAndDoesNotLeakPrivateData() throws Exception {
         Event event = createOpenInquiryEvent("Duplicate inquiry bib", "duplicate-inquiry-bib");
         assertThat(importPublishedFixture(
                 event.getId(), "duplicate-inquiry.csv",
                 duplicateInquiryBibCsv().getBytes(StandardCharsets.UTF_8)
         ).status()).isEqualTo(ImportBatchStatus.SUCCEEDED);
-        long auditEntriesBeforeVerification = changeLogRepository.count();
+        Race missingRace = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
+        Race publicRace = raceRepository.findByEventIdAndSourceCode(event.getId(), "10 km").orElseThrow();
 
         var response = resultInquiryService.lookup(event.getId(), "1100");
-        assertThat(response.lookupState()).isEqualTo(ResultInquiryLookupState.NEEDS_VERIFICATION);
+        assertThat(response.lookupState()).isEqualTo(ResultInquiryLookupState.AMBIGUOUS);
         assertThat(response.participantDisplayName()).isNull();
         assertThat(response.raceId()).isNull();
         assertThat(response.publicResultId()).isNull();
         assertThat(response.missingResultActionAvailable()).isTrue();
+        assertThat(response.candidates()).extracting(ResultInquiryLookupDto.ResultInquiryCandidateDto::raceId)
+                .containsExactlyInAnyOrder(missingRace.getId(), publicRace.getId());
 
         String initialJson = mockMvc.perform(get("/api/events/{eventId}/result-inquiry", event.getId())
                         .param("bib", "1100"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.lookupState").value("NEEDS_VERIFICATION"))
+                .andExpect(jsonPath("$.lookupState").value("AMBIGUOUS"))
                 .andExpect(jsonPath("$.missingResultActionAvailable").value(true))
                 .andExpect(jsonPath("$.participantDisplayName").doesNotExist())
                 .andExpect(jsonPath("$.raceId").doesNotExist())
                 .andExpect(jsonPath("$.publicResultId").doesNotExist())
                 .andExpect(jsonPath("$.activeIssue").doesNotExist())
+                .andExpect(jsonPath("$.candidates.length()").value(2))
+                .andExpect(jsonPath("$.candidates[*].raceId").exists())
+                .andExpect(jsonPath("$.candidates[*].raceDisplayName").exists())
                 .andReturn().getResponse().getContentAsString();
         assertThat(initialJson).doesNotContain(
                 "Первый Дубль", "Второй Дубль", "1990-01-10", "1991-02-20",
-                "birthDate", "candidateCount", "registrationId", "status"
+                "birthDate", "registrationId", "status", "sourceCategory"
         );
 
-        mockMvc.perform(get("/api/events/{eventId}/result-inquiry", event.getId())
-                        .param("bib", "1100")
-                        .param("birthDate", "1990-01-10"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.lookupState").value("NEEDS_VERIFICATION"));
-
-        var nonPublic = resultInquiryService.verify(event.getId(), "1100", LocalDate.parse("1990-01-10"));
+        var nonPublic = resultInquiryService.lookup(event.getId(), "1100", missingRace.getId());
         assertThat(nonPublic.lookupState()).isEqualTo(ResultInquiryLookupState.RESULT_NOT_PUBLIC);
-        assertThat(nonPublic.participantDisplayName()).isEqualTo("Первый Дубль");
+        assertThat(nonPublic.participantDisplayName()).isNull();
         assertThat(nonPublic.raceDisplayName()).isEqualTo("5 km");
         assertThat(nonPublic.startDisplayName()).isEqualTo("5 km");
 
-        String publicJson = mockMvc.perform(post("/api/events/{eventId}/result-inquiry/verify", event.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"bib\":\"1100\",\"birthDate\":\"1991-02-20\"}"))
+        String publicJson = mockMvc.perform(get("/api/events/{eventId}/result-inquiry", event.getId())
+                        .param("bib", "1100")
+                        .param("raceId", publicRace.getId().toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.lookupState").value("RESULT_PUBLIC"))
                 .andExpect(jsonPath("$.participantDisplayName").value("Второй Дубль"))
                 .andReturn().getResponse().getContentAsString();
         assertThat(publicJson).doesNotContain("birthDate", "1991-02-20", "status", "sourceCategory");
 
-        mockMvc.perform(post("/api/events/{eventId}/result-inquiry/verify", event.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"bib\":\"1100\"}"))
-                .andExpect(status().isBadRequest());
-
-        var wrongDob = resultInquiryService.verify(event.getId(), "1100", LocalDate.parse("1980-03-15"));
-        assertThat(wrongDob.lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
-        assertThat(wrongDob.contactEmail()).isEqualTo("timing@example.org");
-        assertThat(wrongDob.participantDisplayName()).isNull();
-        assertThat(wrongDob.raceId()).isNull();
-        assertThat(wrongDob.publicResultId()).isNull();
-        assertThat(changeLogRepository.count()).isEqualTo(auditEntriesBeforeVerification);
+        Event otherEvent = createOpenInquiryEvent("Other inquiry event", "other-inquiry-event");
+        importPublishedFixture(otherEvent.getId(), "other-inquiry.csv",
+                singleInquiryBibCsv("Другой", "finished").getBytes(StandardCharsets.UTF_8));
+        Race otherRace = registrationRepository.findAllByRaceEventIdAndBib(otherEvent.getId(), "1100")
+                .getFirst().getRace();
+        mockMvc.perform(get("/api/events/{eventId}/result-inquiry", event.getId())
+                        .param("bib", "1100").param("raceId", otherRace.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lookupState").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.participantDisplayName").doesNotExist());
     }
 
     @Test
-    void successfulDobVerificationReturnsOnlyActiveIssueIdAndClosedHistoryDoesNotBlock() throws Exception {
+    void publicLookupHidesActiveIssueAndDuplicateCreationRemainsAuthoritative() throws Exception {
         Event event = createOpenInquiryEvent("Early active issue check", "early-active-issue-check");
         assertThat(importPublishedFixture(
                 event.getId(), "early-active-issue-check.csv",
@@ -2909,126 +2909,40 @@ class BackendIntegrationTest {
         List<Registration> registrations = registrationRepository
                 .findAllByRaceEventIdAndBib(event.getId(), "1100");
         Registration missingRegistration = registrations.stream()
-                .filter(registration -> LocalDate.parse("1990-01-10").equals(registration.getBirthDate()))
+                .filter(registration -> registration.getRace().getSourceCode().equals("5 km"))
                 .findFirst()
                 .orElseThrow();
-        Registration correctionRegistration = registrations.stream()
-                .filter(registration -> LocalDate.parse("1991-02-20").equals(registration.getBirthDate()))
-                .findFirst()
-                .orElseThrow();
-
         ResultIssueRequest missingIssue = createAdminIssue(
                 event, missingRegistration, ResultIssueType.MISSING_RESULT,
                 ResultIssueStatus.NEW, null, 41
         );
 
         mockMvc.perform(get("/api/events/{eventId}/result-inquiry", event.getId())
-                        .param("bib", "1100"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.lookupState").value("NEEDS_VERIFICATION"))
-                .andExpect(jsonPath("$.activeIssue").doesNotExist());
-        mockMvc.perform(post("/api/events/{eventId}/result-inquiry/verify", event.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"bib\":\"1100\",\"birthDate\":\"1980-01-01\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.lookupState").value("VERIFICATION_FAILED"))
-                .andExpect(jsonPath("$.contactEmail").value("timing@example.org"))
-                .andExpect(jsonPath("$.activeIssue").doesNotExist());
-
-        String newIssueJson = mockMvc.perform(post(
-                        "/api/events/{eventId}/result-inquiry/verify", event.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"bib\":\"1100\",\"birthDate\":\"1990-01-10\"}"))
+                        .param("bib", "1100")
+                        .param("raceId", missingRegistration.getRace().getId().toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.lookupState").value("RESULT_NOT_PUBLIC"))
-                .andExpect(jsonPath("$.activeIssue.issueId").value(missingIssue.getId()))
-                .andReturn().getResponse().getContentAsString();
-        assertThat(newIssueJson).doesNotContain(
-                "runner41@example.org", "message", "Проверка обращения",
-                "attachments", "claimedGunTime", "storageKey", "issueType", "status"
-        );
+                .andExpect(jsonPath("$.participantDisplayName").doesNotExist())
+                .andExpect(jsonPath("$.contactEmail").doesNotExist())
+                .andExpect(jsonPath("$.activeIssue").doesNotExist());
 
-        missingIssue.setStatus(ResultIssueStatus.IN_PROGRESS);
-        resultIssueRequestRepository.saveAndFlush(missingIssue);
-        mockMvc.perform(post("/api/events/{eventId}/result-inquiry/verify", event.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"bib\":\"1100\",\"birthDate\":\"1990-01-10\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.activeIssue.issueId").value(missingIssue.getId()));
+        String request = """
+                {"bib":"1100","raceId":%d,"contactEmail":"runner@example.org",
+                 "message":"Результат отсутствует"}
+                """.formatted(missingRegistration.getRace().getId());
+        mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ACTIVE_RESULT_ISSUE_EXISTS"))
+                .andExpect(jsonPath("$.message").exists());
 
         missingIssue.setStatus(ResultIssueStatus.RESOLVED);
         missingIssue.setResolvedAt(Instant.now());
         resultIssueRequestRepository.saveAndFlush(missingIssue);
-        mockMvc.perform(post("/api/events/{eventId}/result-inquiry/verify", event.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"bib\":\"1100\",\"birthDate\":\"1990-01-10\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.activeIssue").doesNotExist());
-
-        missingIssue.setStatus(ResultIssueStatus.REJECTED);
-        resultIssueRequestRepository.saveAndFlush(missingIssue);
-        mockMvc.perform(post("/api/events/{eventId}/result-inquiry/verify", event.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"bib\":\"1100\",\"birthDate\":\"1990-01-10\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.activeIssue").doesNotExist());
-
-        ResultIssueRequest correctionIssueOnMissingResult = createAdminIssue(
-                event, missingRegistration, ResultIssueType.RESULT_CORRECTION,
-                ResultIssueStatus.NEW, ResultCorrectionReason.OTHER, 42
-        );
-        mockMvc.perform(post("/api/events/{eventId}/result-inquiry/verify", event.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"bib\":\"1100\",\"birthDate\":\"1990-01-10\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.lookupState").value("RESULT_NOT_PUBLIC"))
-                .andExpect(jsonPath("$.activeIssue.issueId").value(correctionIssueOnMissingResult.getId()));
-
-        ResultIssueRequest missingIssueOnPublicResult = createAdminIssue(
-                event, correctionRegistration, ResultIssueType.MISSING_RESULT,
-                ResultIssueStatus.NEW, null, 43
-        );
-        mockMvc.perform(post("/api/events/{eventId}/result-inquiry/verify", event.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"bib\":\"1100\",\"birthDate\":\"1991-02-20\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.lookupState").value("RESULT_PUBLIC"))
-                .andExpect(jsonPath("$.activeIssue.issueId").value(missingIssueOnPublicResult.getId()));
-
-        correctionIssueOnMissingResult.setStatus(ResultIssueStatus.RESOLVED);
-        correctionIssueOnMissingResult.setResolvedAt(Instant.now());
-        resultIssueRequestRepository.saveAndFlush(correctionIssueOnMissingResult);
-        missingIssueOnPublicResult.setStatus(ResultIssueStatus.RESOLVED);
-        missingIssueOnPublicResult.setResolvedAt(Instant.now());
-        resultIssueRequestRepository.saveAndFlush(missingIssueOnPublicResult);
-        ResultIssueRequest correctionIssue = createAdminIssue(
-                event, correctionRegistration, ResultIssueType.RESULT_CORRECTION,
-                ResultIssueStatus.NEW, ResultCorrectionReason.OTHER, 44
-        );
-        mockMvc.perform(post("/api/events/{eventId}/result-inquiry/verify", event.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"bib\":\"1100\",\"birthDate\":\"1991-02-20\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.lookupState").value("RESULT_PUBLIC"))
-                .andExpect(jsonPath("$.activeIssue.issueId").value(correctionIssue.getId()));
-
-        Event uniqueEvent = createOpenInquiryEvent("Unique active issue privacy", "unique-active-issue-privacy");
-        importPublishedFixture(
-                uniqueEvent.getId(), "unique-active-issue-privacy.csv",
-                singleInquiryBibCsv("Один", "finished").getBytes(StandardCharsets.UTF_8)
-        );
-        Registration uniqueRegistration = registrationRepository
-                .findAllByRaceEventIdAndBib(uniqueEvent.getId(), "1100").getFirst();
-        ResultIssueRequest uniqueIssue = createAdminIssue(
-                uniqueEvent, uniqueRegistration, ResultIssueType.RESULT_CORRECTION,
-                ResultIssueStatus.NEW, ResultCorrectionReason.OTHER, 45
-        );
-        mockMvc.perform(get("/api/events/{eventId}/result-inquiry", uniqueEvent.getId())
-                        .param("bib", "1100"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.lookupState").value("RESULT_PUBLIC"))
-                .andExpect(jsonPath("$.activeIssue").doesNotExist());
-        assertThat(uniqueIssue.getId()).isPositive();
+        mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
+                        .contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.issueId").isNumber());
     }
 
     @Test
@@ -3044,7 +2958,7 @@ class BackendIntegrationTest {
                 0, 20, "bib", "asc"
         ).content()).hasSize(2);
         var allPublicLookup = resultInquiryService.lookup(allPublic.getId(), "4400");
-        assertThat(allPublicLookup.lookupState()).isEqualTo(ResultInquiryLookupState.NEEDS_VERIFICATION);
+        assertThat(allPublicLookup.lookupState()).isEqualTo(ResultInquiryLookupState.AMBIGUOUS);
         assertThat(allPublicLookup.missingResultActionAvailable()).isFalse();
 
         Event allNonPublic = createOpenInquiryEvent("All non-public duplicate", "all-non-public-duplicate");
@@ -3060,7 +2974,7 @@ class BackendIntegrationTest {
                 0, 20, "bib", "asc"
         ).content()).isEmpty();
         var allNonPublicLookup = resultInquiryService.lookup(allNonPublic.getId(), "5500");
-        assertThat(allNonPublicLookup.lookupState()).isEqualTo(ResultInquiryLookupState.NEEDS_VERIFICATION);
+        assertThat(allNonPublicLookup.lookupState()).isEqualTo(ResultInquiryLookupState.AMBIGUOUS);
         assertThat(allNonPublicLookup.missingResultActionAvailable()).isTrue();
 
         Event threeCandidates = createOpenInquiryEvent("Three duplicate candidates", "three-duplicate-candidates");
@@ -3076,48 +2990,33 @@ class BackendIntegrationTest {
                 0, 20, "bib", "asc"
         ).content()).singleElement().satisfies(item -> assertThat(item.displayName()).isEqualTo("Первый Три"));
         var threeLookup = resultInquiryService.lookup(threeCandidates.getId(), "6600");
-        assertThat(threeLookup.lookupState()).isEqualTo(ResultInquiryLookupState.NEEDS_VERIFICATION);
+        assertThat(threeLookup.lookupState()).isEqualTo(ResultInquiryLookupState.AMBIGUOUS);
         assertThat(threeLookup.missingResultActionAvailable()).isTrue();
-        assertThat(resultInquiryService.verify(
-                threeCandidates.getId(), "6600", LocalDate.parse("1990-01-10")
-        ).lookupState()).isEqualTo(ResultInquiryLookupState.RESULT_PUBLIC);
-        assertThat(resultInquiryService.verify(
-                threeCandidates.getId(), "6600", LocalDate.parse("1991-02-20")
-        )).satisfies(verified -> {
-            assertThat(verified.lookupState()).isEqualTo(ResultInquiryLookupState.RESULT_NOT_PUBLIC);
-            assertThat(verified.participantDisplayName()).isEqualTo("Второй Три");
-        });
-        assertThat(resultInquiryService.verify(
-                threeCandidates.getId(), "6600", LocalDate.parse("1992-03-30")
-        )).satisfies(verified -> {
-            assertThat(verified.lookupState()).isEqualTo(ResultInquiryLookupState.RESULT_NOT_PUBLIC);
-            assertThat(verified.participantDisplayName()).isEqualTo("Третий Три");
-        });
+        assertThat(resultInquiryService.lookup(
+                threeCandidates.getId(), "6600", threeCandidateRace.getId()
+        ).lookupState()).isEqualTo(ResultInquiryLookupState.AMBIGUOUS);
 
         Event ambiguousThree = createOpenInquiryEvent("Ambiguous three candidates", "ambiguous-three-candidates");
         importPublishedFixture(
                 ambiguousThree.getId(), "ambiguous-three-candidates.csv",
                 ambiguousThreeCandidateBibCsv().getBytes(StandardCharsets.UTF_8)
         );
-        var ambiguous = resultInquiryService.verify(
-                ambiguousThree.getId(), "7700", LocalDate.parse("1991-02-20")
-        );
-        assertThat(ambiguous.lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
+        var ambiguous = resultInquiryService.lookup(ambiguousThree.getId(), "7700");
+        assertThat(ambiguous.lookupState()).isEqualTo(ResultInquiryLookupState.AMBIGUOUS);
         assertThat(ambiguous.participantDisplayName()).isNull();
         assertThat(ambiguous.missingResultActionAvailable()).isTrue();
     }
 
     @Test
-    void dobVerificationNeverUsesAnImplicitTieBreakerOrNullDob() {
+    void duplicateLookupNeverUsesAnImplicitTieBreakerOrDob() {
         Event sameDobEvent = createOpenInquiryEvent("Same DOB inquiry", "same-dob-inquiry");
         importPublishedFixture(
                 sameDobEvent.getId(), "same-dob-inquiry.csv",
                 sameDobInquiryBibCsv().getBytes(StandardCharsets.UTF_8)
         );
-        var unresolved = resultInquiryService.verify(
-                sameDobEvent.getId(), "2200", LocalDate.parse("1990-01-10")
-        );
-        assertThat(unresolved.lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
+        Race sameDobRace = raceRepository.findByEventIdAndSourceCode(sameDobEvent.getId(), "5 km").orElseThrow();
+        var unresolved = resultInquiryService.lookup(sameDobEvent.getId(), "2200", sameDobRace.getId());
+        assertThat(unresolved.lookupState()).isEqualTo(ResultInquiryLookupState.AMBIGUOUS);
         assertThat(unresolved.participantDisplayName()).isNull();
 
         Event nullDobEvent = createOpenInquiryEvent("Null DOB inquiry", "null-dob-inquiry");
@@ -3126,17 +3025,14 @@ class BackendIntegrationTest {
                 nullDobInquiryBibCsv().getBytes(StandardCharsets.UTF_8)
         );
         assertThat(resultInquiryService.lookup(nullDobEvent.getId(), "3300").lookupState())
-                .isEqualTo(ResultInquiryLookupState.NEEDS_VERIFICATION);
-        assertThat(resultInquiryService.verify(
-                nullDobEvent.getId(), "3300", LocalDate.parse("1980-03-15")
-        ).lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
-        assertThat(resultInquiryService.verify(
-                nullDobEvent.getId(), "3300", LocalDate.parse("1992-04-12")
-        ).lookupState()).isEqualTo(ResultInquiryLookupState.RESULT_PUBLIC);
+                .isEqualTo(ResultInquiryLookupState.AMBIGUOUS);
+        assertThat(resultInquiryService.lookup(nullDobEvent.getId(), "3300").candidates())
+                .extracting(ResultInquiryLookupDto.ResultInquiryCandidateDto::raceDisplayName)
+                .containsOnly("5 km");
     }
 
     @Test
-    void dobVerificationDoesNotBypassRaceVisibility() {
+    void raceSelectionDoesNotBypassRaceVisibility() {
         Event event = createOpenInquiryEvent("Hidden duplicate inquiry", "hidden-duplicate-inquiry");
         importPublishedFixture(
                 event.getId(), "hidden-duplicate-inquiry.csv",
@@ -3146,9 +3042,9 @@ class BackendIntegrationTest {
         race.setPublicVisible(false);
         raceRepository.saveAndFlush(race);
         assertThat(resultInquiryService.lookup(event.getId(), "1100").lookupState())
-                .isEqualTo(ResultInquiryLookupState.NEEDS_VERIFICATION);
-        var hiddenRace = resultInquiryService.verify(event.getId(), "1100", LocalDate.parse("1990-01-10"));
-        assertThat(hiddenRace.lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
+                .isEqualTo(ResultInquiryLookupState.RESULT_PUBLIC);
+        var hiddenRace = resultInquiryService.lookup(event.getId(), "1100", race.getId());
+        assertThat(hiddenRace.lookupState()).isEqualTo(ResultInquiryLookupState.NOT_FOUND);
         assertThat(hiddenRace.participantDisplayName()).isNull();
 
     }
@@ -3173,7 +3069,7 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void failedDobFallbackUsesOnlyTheEventEmailAndCannotBypassAvailability() {
+    void inquiryLookupCannotBypassAvailability() {
         Event afterDays = createOpenInquiryEvent("After-days fallback", "after-days-fallback");
         eventService.updateResultInquirySettings(afterDays.getId(), new UpdateResultInquirySettingsRequest(
                 true, ResultInquiryDeadlineMode.AFTER_EVENT_DAYS, 5, null, "event-a@example.com"
@@ -3182,12 +3078,9 @@ class BackendIntegrationTest {
                 afterDays.getId(), "after-days-fallback.csv",
                 singleInquiryBibCsv("After", "finished").getBytes(StandardCharsets.UTF_8)
         );
-        var afterDaysFailure = resultInquiryService.verify(
-                afterDays.getId(), "1100", LocalDate.parse("1980-01-01")
-        );
-        assertThat(afterDaysFailure.lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
+        var afterDaysFailure = resultInquiryService.lookup(afterDays.getId(), "1100");
+        assertThat(afterDaysFailure.lookupState()).isEqualTo(ResultInquiryLookupState.RESULT_PUBLIC);
         assertThat(afterDaysFailure.inquiryAvailability()).isEqualTo(ResultInquiryAvailability.OPEN);
-        assertThat(afterDaysFailure.contactEmail()).isEqualTo("event-a@example.com");
 
         Event fixedDate = createOpenInquiryEvent("Fixed-date fallback", "fixed-date-fallback");
         LocalDate fixedDeadline = LocalDate.now(java.time.ZoneId.of(fixedDate.getTimeZone())).plusDays(2);
@@ -3198,21 +3091,15 @@ class BackendIntegrationTest {
                 fixedDate.getId(), "fixed-date-fallback.csv",
                 singleInquiryBibCsv("Fixed", "finished").getBytes(StandardCharsets.UTF_8)
         );
-        var fixedDateFailure = resultInquiryService.verify(
-                fixedDate.getId(), "1100", LocalDate.parse("1980-01-01")
-        );
-        assertThat(fixedDateFailure.lookupState()).isEqualTo(ResultInquiryLookupState.VERIFICATION_FAILED);
+        var fixedDateFailure = resultInquiryService.lookup(fixedDate.getId(), "1100");
+        assertThat(fixedDateFailure.lookupState()).isEqualTo(ResultInquiryLookupState.RESULT_PUBLIC);
         assertThat(fixedDateFailure.inquiryAvailability()).isEqualTo(ResultInquiryAvailability.OPEN);
-        assertThat(fixedDateFailure.contactEmail()).isEqualTo("event-b@example.com");
 
         eventService.updateResultInquirySettings(afterDays.getId(), new UpdateResultInquirySettingsRequest(
                 false, ResultInquiryDeadlineMode.AFTER_EVENT_DAYS, 5, null, "event-a@example.com"
         ), ADMIN_USERNAME);
-        var disabledFailure = resultInquiryService.verify(
-                afterDays.getId(), "1100", LocalDate.parse("1980-01-01")
-        );
+        var disabledFailure = resultInquiryService.lookup(afterDays.getId(), "1100");
         assertThat(disabledFailure.inquiryAvailability()).isEqualTo(ResultInquiryAvailability.DISABLED);
-        assertThat(disabledFailure.contactEmail()).isNull();
 
         eventService.updateResultInquirySettings(fixedDate.getId(), new UpdateResultInquirySettingsRequest(
                 true,
@@ -3221,11 +3108,8 @@ class BackendIntegrationTest {
                 LocalDate.now(java.time.ZoneId.of(fixedDate.getTimeZone())).minusDays(1),
                 "event-b@example.com"
         ), ADMIN_USERNAME);
-        var closedFailure = resultInquiryService.verify(
-                fixedDate.getId(), "1100", LocalDate.parse("1980-01-01")
-        );
+        var closedFailure = resultInquiryService.lookup(fixedDate.getId(), "1100");
         assertThat(closedFailure.inquiryAvailability()).isEqualTo(ResultInquiryAvailability.CLOSED);
-        assertThat(closedFailure.contactEmail()).isNull();
 
         Event notOpen = createPublishedEvent("Not-open fallback", "not-open-fallback");
         notOpen.setStartsAt(Instant.now().plus(Duration.ofDays(2)));
@@ -3242,11 +3126,8 @@ class BackendIntegrationTest {
                 notOpen.getId(), "not-open-fallback.csv",
                 singleInquiryBibCsv("Future", "finished").getBytes(StandardCharsets.UTF_8)
         );
-        var notOpenFailure = resultInquiryService.verify(
-                notOpen.getId(), "1100", LocalDate.parse("1980-01-01")
-        );
+        var notOpenFailure = resultInquiryService.lookup(notOpen.getId(), "1100");
         assertThat(notOpenFailure.inquiryAvailability()).isEqualTo(ResultInquiryAvailability.NOT_OPEN_YET);
-        assertThat(notOpenFailure.contactEmail()).isNull();
     }
 
     @Test
@@ -3266,7 +3147,6 @@ class BackendIntegrationTest {
         String request = """
                 {
                   "bib": "0817",
-                  "birthDate": "1991-02-03",
                   "registrationId": %d,
                   "contactEmail": "runner@example.org",
                   "message": "Не вижу результат",
@@ -3286,7 +3166,7 @@ class BackendIntegrationTest {
                 .andExpect(jsonPath("$.createdAt").exists())
                 .andReturn().getResponse().getContentAsString();
         assertThat(response).doesNotContain(
-                "birthDate", "1991-02-03", "registrationId", "runner@example.org",
+                "birthDate", "registrationId", "runner@example.org",
                 "quarantine", "ImportBatch"
         );
 
@@ -3320,14 +3200,14 @@ class BackendIntegrationTest {
         long issueCount = resultIssueRequestRepository.count();
         mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request.replace("1991-02-03", "1981-02-03")))
+                        .content(request.replace("\"0817\"", "\"UNKNOWN\"")))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("IDENTITY_VERIFICATION_FAILED"));
+                .andExpect(jsonPath("$.code").value("PARTICIPANT_CONTEXT_NOT_FOUND"));
         assertThat(resultIssueRequestRepository.count()).isEqualTo(issueCount);
 
         mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request.replace("0817", "817").replace("1991-02-03", "1990-01-01")))
+                        .content(request.replace("0817", "817")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("PUBLIC_RESULT_EXISTS"));
         assertThat(resultIssueRequestRepository.count()).isEqualTo(issueCount);
@@ -3346,8 +3226,7 @@ class BackendIntegrationTest {
         resultRepository.delete(resultRepository.findByRegistrationId(registrationWithoutResult.getId()).orElseThrow());
         resultRepository.flush();
         String absentResultRequest = request
-                .replace("\"0817\"", "\"8170\"")
-                .replace("1991-02-03", "1992-03-04");
+                .replace("\"0817\"", "\"8170\"");
         mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(absentResultRequest))
@@ -3360,16 +3239,18 @@ class BackendIntegrationTest {
     }
 
     @Test
-    void missingResultIssueResolvesDuplicateBibOnlyByDob() throws Exception {
+    void missingResultIssueResolvesDuplicateBibOnlyByRace() throws Exception {
         Event event = createOpenInquiryEvent("Duplicate missing issues", "duplicate-missing-issues");
         importPublishedFixture(
                 event.getId(), "duplicate-missing-issues.csv",
                 duplicateInquiryBibCsv().getBytes(StandardCharsets.UTF_8)
         );
+        Race missingRace = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
+        Race publicRace = raceRepository.findByEventIdAndSourceCode(event.getId(), "10 km").orElseThrow();
         String firstCandidate = """
-                {"bib":"1100","birthDate":"1990-01-10","contactEmail":"runner@example.org",
+                {"bib":"1100","raceId":%d,"contactEmail":"runner@example.org",
                  "message":"Результат отсутствует"}
-                """;
+                """.formatted(missingRace.getId());
         mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
                         .contentType(MediaType.APPLICATION_JSON).content(firstCandidate))
                 .andExpect(status().isCreated());
@@ -3378,14 +3259,13 @@ class BackendIntegrationTest {
                 .isEqualTo("Первый Дубль");
 
         long createdCount = resultIssueRequestRepository.count();
+        String publicCandidate = """
+                {"bib":"1100","raceId":%d,"contactEmail":"runner@example.org",
+                 "message":"Результат отсутствует"}
+                """.formatted(publicRace.getId());
         mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(firstCandidate.replace("1990-01-10", "1980-01-10")))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("IDENTITY_VERIFICATION_FAILED"));
-        mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(firstCandidate.replace("1990-01-10", "1991-02-20")))
+                        .content(publicCandidate))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("PUBLIC_RESULT_EXISTS"));
         assertThat(resultIssueRequestRepository.count()).isEqualTo(createdCount);
@@ -3397,9 +3277,12 @@ class BackendIntegrationTest {
         );
         mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", ambiguous.getId())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(firstCandidate.replace("1100", "2200")))
+                        .content("""
+                                {"bib":"2200","contactEmail":"runner@example.org",
+                                 "message":"Результат отсутствует"}
+                                """))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("IDENTITY_VERIFICATION_FAILED"));
+                .andExpect(jsonPath("$.code").value("PARTICIPANT_CONTEXT_NOT_FOUND"));
         assertThat(resultIssueRequestRepository.count()).isEqualTo(createdCount);
     }
 
@@ -3414,7 +3297,7 @@ class BackendIntegrationTest {
                 singleInquiryBibCsv("Отключённый", "notstarted").getBytes(StandardCharsets.UTF_8)
         );
         String request = """
-                {"bib":"1100","birthDate":"1990-01-10","contactEmail":"runner@example.org",
+                {"bib":"1100","contactEmail":"runner@example.org",
                  "message":"Результат отсутствует"}
                 """;
         mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", disabled.getId())
@@ -3457,7 +3340,7 @@ class BackendIntegrationTest {
         Duration originalGunTime = result.getGunTime();
         Duration originalChipTime = result.getChipTime();
         String request = """
-                {"birthDate":"1990-01-01","correctionReason":"OFFICIAL_TIME",
+                {"correctionReason":"OFFICIAL_TIME",
                  "claimedGunTimeMs":1250,"contactEmail":"runner@example.org",
                  "message":"Официальное время указано неверно"}
                 """;
@@ -3471,7 +3354,7 @@ class BackendIntegrationTest {
                 .andExpect(jsonPath("$.status").value("NEW"))
                 .andReturn().getResponse().getContentAsString();
         assertThat(response).doesNotContain(
-                "birthDate", "1990-01-01", "runner@example.org", "registrationId",
+                "birthDate", "runner@example.org", "registrationId",
                 "observedResultStatus", "finished"
         );
 
@@ -3502,21 +3385,15 @@ class BackendIntegrationTest {
         assertThat(unchanged.getChipTime()).isEqualTo(originalChipTime);
 
         long issueCount = resultIssueRequestRepository.count();
-        mockMvc.perform(post("/api/events/{eventId}/results/{resultId}/result-issue-requests",
-                        event.getId(), result.getId())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(request.replace("1990-01-01", "1980-01-01")))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("IDENTITY_VERIFICATION_FAILED"));
         Registration nonPublicRegistration = registrationRepository
                 .findAllByRaceEventIdAndBib(event.getId(), "0817").getFirst();
         Result nonPublicResult = resultRepository.findByRegistrationId(nonPublicRegistration.getId()).orElseThrow();
         mockMvc.perform(post("/api/events/{eventId}/results/{resultId}/result-issue-requests",
                         event.getId(), nonPublicResult.getId())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(request.replace("1990-01-01", "1991-02-03")))
+                        .content(request))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("IDENTITY_VERIFICATION_FAILED"));
+                .andExpect(jsonPath("$.code").value("PARTICIPANT_CONTEXT_NOT_FOUND"));
         assertThat(resultIssueRequestRepository.count()).isEqualTo(issueCount);
 
         mockMvc.perform(post("/api/events/{eventId}/results/{resultId}/result-issue-requests",
@@ -3565,11 +3442,11 @@ class BackendIntegrationTest {
                 .findAllByRaceEventIdAndBib(event.getId(), "1100").getFirst();
         Result result = resultRepository.findByRegistrationId(registration.getId()).orElseThrow();
         String missingRequest = """
-                {"bib":"1100","birthDate":"1990-01-10","contactEmail":"runner@example.org",
+                {"bib":"1100","contactEmail":"runner@example.org",
                  "message":"Результат отсутствует"}
                 """;
         String correctionRequest = """
-                {"birthDate":"1990-01-10","correctionReason":"OTHER",
+                {"correctionReason":"OTHER",
                  "contactEmail":"another@example.org","message":"Другая проблема"}
                 """;
 
@@ -3605,10 +3482,15 @@ class BackendIntegrationTest {
                 event.getId(), "same-bib-separate-issues.csv",
                 duplicateInquiryBibCsv().getBytes(StandardCharsets.UTF_8)
         );
+        Registration firstRegistration = registrationRepository.findAllByRaceEventIdAndBib(event.getId(), "1100")
+                .stream()
+                .filter(registration -> LocalDate.parse("1990-01-10").equals(registration.getBirthDate()))
+                .findFirst()
+                .orElseThrow();
         String missingRequest = """
-                {"bib":"1100","birthDate":"1990-01-10","contactEmail":"first@example.org",
+                {"bib":"1100","raceId":%d,"contactEmail":"first@example.org",
                  "message":"Нет результата"}
-                """;
+                """.formatted(firstRegistration.getRace().getId());
         mockMvc.perform(post("/api/events/{eventId}/result-issue-requests/missing", event.getId())
                         .contentType(MediaType.APPLICATION_JSON).content(missingRequest))
                 .andExpect(status().isCreated());
@@ -3620,7 +3502,7 @@ class BackendIntegrationTest {
                 .orElseThrow();
         Result secondResult = resultRepository.findByRegistrationId(secondRegistration.getId()).orElseThrow();
         String correctionRequest = """
-                {"birthDate":"1991-02-20","correctionReason":"OTHER",
+                {"correctionReason":"OTHER",
                  "contactEmail":"second@example.org","message":"Неверный результат"}
                 """;
         mockMvc.perform(post("/api/events/{eventId}/results/{resultId}/result-issue-requests",
@@ -3642,7 +3524,7 @@ class BackendIntegrationTest {
                 singleInquiryBibCsv("Параллельный", "notstarted").getBytes(StandardCharsets.UTF_8)
         );
         String request = """
-                {"bib":"1100","birthDate":"1990-01-10","contactEmail":"runner@example.org",
+                {"bib":"1100","contactEmail":"runner@example.org",
                  "message":"Результат отсутствует"}
                 """;
         CountDownLatch ready = new CountDownLatch(2);
@@ -3719,7 +3601,7 @@ class BackendIntegrationTest {
                 firstEvent.getId(), "attachment-one.csv",
                 singleInquiryBibCsv("Первый", "notstarted").getBytes(StandardCharsets.UTF_8)
         );
-        CreatedIssueAccess firstIssue = createMissingIssueAccess(firstEvent.getId(), "1100", "1990-01-10");
+        CreatedIssueAccess firstIssue = createMissingIssueAccess(firstEvent.getId(), "1100");
         ResultIssueRequest storedIssue = resultIssueRequestRepository.findById(firstIssue.issueId()).orElseThrow();
         assertThat(storedIssue.getAttachmentUploadTokenHash())
                 .hasSize(64)
@@ -3772,7 +3654,7 @@ class BackendIntegrationTest {
                 secondEvent.getId(), "attachment-two.csv",
                 singleInquiryBibCsv("Второй", "notstarted").getBytes(StandardCharsets.UTF_8)
         );
-        CreatedIssueAccess secondIssue = createMissingIssueAccess(secondEvent.getId(), "1100", "1990-01-10");
+        CreatedIssueAccess secondIssue = createMissingIssueAccess(secondEvent.getId(), "1100");
         mockMvc.perform(post("/api/result-issues/{issueId}/attachments", secondIssue.issueId())
                         .header("X-Result-Issue-Upload-Token", firstIssue.token())
                         .contentType(MediaType.APPLICATION_JSON).content(attachmentRequest))
@@ -3842,7 +3724,7 @@ class BackendIntegrationTest {
                 event.getId(), "attachment-lifecycle.csv",
                 singleInquiryBibCsv("Файл", "notstarted").getBytes(StandardCharsets.UTF_8)
         );
-        CreatedIssueAccess issue = createMissingIssueAccess(event.getId(), "1100", "1990-01-10");
+        CreatedIssueAccess issue = createMissingIssueAccess(event.getId(), "1100");
         String createResponse = mockMvc.perform(post(
                         "/api/result-issues/{issueId}/attachments", issue.issueId())
                         .header("X-Result-Issue-Upload-Token", issue.token())
@@ -4363,7 +4245,7 @@ class BackendIntegrationTest {
         Map<String, Object> resultBefore = jdbcTemplate.queryForMap(
                 "SELECT * FROM results WHERE id=?", result.getId());
 
-        CreatedIssueAccess firstAccess = createMissingIssueAccess(event.getId(), "1100", "1990-01-10");
+        CreatedIssueAccess firstAccess = createMissingIssueAccess(event.getId(), "1100");
         ResultIssueRequest first = resultIssueRequestRepository.findById(firstAccess.issueId()).orElseThrow();
         assertThat(first.getSnapshotOrigin()).isEqualTo(ResultIssueSnapshotOrigin.CAPTURED_AT_CREATION);
         assertThat(first.getSnapshotEventName()).isEqualTo("Stage E archive");
@@ -4398,9 +4280,10 @@ class BackendIntegrationTest {
                 first, "stage-e.pdf", AttachmentUploadStatus.UPLOADED, AttachmentScanStatus.CLEAN
         );
         String attachmentStorageKey = attachment.getStorageKey();
-        assertThat(resultInquiryService.lookup(event.getId(), "1100").activeIssue()).isNull();
-        assertThat(resultInquiryService.verify(event.getId(), "1100", LocalDate.parse("1990-01-10"))
-                .activeIssue().issueId()).isEqualTo(first.getId());
+        assertThat(resultIssueRequestRepository
+                .findFirstByRegistration_IdAndQueueArchivedAtIsNullAndStatusInOrderByIdAsc(
+                        registration.getId(), ResultIssueStatus.activeStatuses()
+                )).map(ResultIssueRequest::getId).contains(first.getId());
 
         String archiveUrl = "/api/admin/events/{eventId}/result-issue-requests/{issueId}/archive";
         String archiveBody = "{\"reason\":\"MANUAL\"}";
@@ -4468,8 +4351,10 @@ class BackendIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.downloadUrl").exists());
 
-        assertThat(resultInquiryService.verify(event.getId(), "1100", LocalDate.parse("1990-01-10"))
-                .activeIssue()).isNull();
+        assertThat(resultIssueRequestRepository
+                .findFirstByRegistration_IdAndQueueArchivedAtIsNullAndStatusInOrderByIdAsc(
+                        registration.getId(), ResultIssueStatus.activeStatuses()
+                )).isEmpty();
 
         assertThat(jdbcTemplate.queryForMap("SELECT * FROM registrations WHERE id=?", registration.getId()))
                 .isEqualTo(registrationBefore);
@@ -4496,13 +4381,15 @@ class BackendIntegrationTest {
         long revisionAfterUpdate = eventRepository.findById(event.getId()).orElseThrow().getResultDataRevision();
         assertThat(revisionAfterUpdate).isGreaterThan(revision);
 
-        CreatedIssueAccess secondAccess = createMissingIssueAccess(event.getId(), "1100", "1990-01-10");
+        CreatedIssueAccess secondAccess = createMissingIssueAccess(event.getId(), "1100");
         assertThat(secondAccess.issueId()).isNotEqualTo(first.getId());
         ResultIssueRequest second = resultIssueRequestRepository.findById(secondAccess.issueId()).orElseThrow();
         assertThat(second.getSnapshotDisplayName()).isEqualTo("Текущий Участник");
         assertThat(second.getSnapshotOrigin()).isEqualTo(ResultIssueSnapshotOrigin.CAPTURED_AT_CREATION);
-        assertThat(resultInquiryService.verify(event.getId(), "1100", LocalDate.parse("1990-01-10"))
-                .activeIssue().issueId()).isEqualTo(secondAccess.issueId());
+        assertThat(resultIssueRequestRepository
+                .findFirstByRegistration_IdAndQueueArchivedAtIsNullAndStatusInOrderByIdAsc(
+                        registration.getId(), ResultIssueStatus.activeStatuses()
+                )).map(ResultIssueRequest::getId).contains(secondAccess.issueId());
 
         String statusUrl = "/api/admin/events/{eventId}/result-issue-requests/{issueId}/status";
         mockMvc.perform(put(statusUrl, event.getId(), first.getId())
@@ -8647,16 +8534,15 @@ class BackendIntegrationTest {
 
     private CreatedIssueAccess createMissingIssueAccess(
             Long eventId,
-            String bib,
-            String birthDate
+            String bib
     ) throws Exception {
         var creation = mockMvc.perform(post(
                         "/api/events/{eventId}/result-issue-requests/missing", eventId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"bib":"%s","birthDate":"%s","contactEmail":"runner@example.org",
+                                {"bib":"%s","contactEmail":"runner@example.org",
                                  "message":"Результат отсутствует"}
-                                """.formatted(bib, birthDate)))
+                                """.formatted(bib)))
                 .andReturn();
         String response = creation.getResponse().getContentAsString();
         assertThat(creation.getResponse().getStatus())
@@ -12421,7 +12307,7 @@ class BackendIntegrationTest {
     private static String duplicateInquiryBibCsv() {
         return csvHeader() + """
                 Первый,Дубль,male,1990-01-10,5 km,1100,Open,notstarted,,,,,,,,
-                Второй,Дубль,male,1991-02-20,5 km,1100,Open,finished,1000.0,900.0,1.0,1.0,1.0,1.0,1.0,1.0
+                Второй,Дубль,male,1991-02-20,10 km,1100,Open,finished,1000.0,900.0,1.0,1.0,1.0,1.0,1.0,1.0
                 """;
     }
 

@@ -2,8 +2,7 @@ package ru.sportsresults.domain;
 
 public enum ResultInquiryLookupState {
     NOT_FOUND,
-    NEEDS_VERIFICATION,
-    VERIFICATION_FAILED,
+    AMBIGUOUS,
     RESULT_PUBLIC,
     RESULT_NOT_PUBLIC
 }
