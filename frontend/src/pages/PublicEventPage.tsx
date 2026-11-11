@@ -4,6 +4,7 @@ import type { EventDetails } from '../api/types'
 import { EventInfo } from '../components/EventInfo'
 import { EventResults } from '../components/EventResults'
 import { SiteHeader } from '../components/SiteHeader'
+import { SiteFooter } from '../components/SiteFooter'
 import { formatDateRange } from '../utils/format'
 import { defaultPublicEventSection, type PublicEventSection } from '../utils/publicEventView'
 
@@ -26,13 +27,13 @@ export function PublicEventPage({ slug }: { slug: string }) {
     return () => controller.abort()
   }, [slug])
 
-  if (error) return <main><SiteHeader /><div className="state-message standalone">Мероприятие не найдено или ещё не опубликовано.</div></main>
-  if (!event || !section) return <main><SiteHeader /><div className="state-message standalone">Загружаем мероприятие…</div></main>
+  if (error) return <main className="public-app"><SiteHeader /><div className="state-message standalone">Мероприятие не найдено или ещё не опубликовано.</div><SiteFooter /></main>
+  if (!event || !section) return <main className="public-app"><SiteHeader /><div className="state-message standalone">Загружаем мероприятие…</div><SiteFooter /></main>
 
   const resultsPublished = event.races.some((race) => race.resultsPublished)
   const resultsActive = resultsPublished && section === 'results'
 
-  return <main>
+  return <main className="public-app public-event-page">
     <SiteHeader />
     <section className={`event-hero ${resultsActive ? 'event-results-hero' : 'event-detail-hero'}`}>
       <a className="back-link" href="/">← На главную</a>
@@ -53,5 +54,6 @@ export function PublicEventPage({ slug }: { slug: string }) {
     <div id="info-view" className="event-view" role={resultsPublished ? 'tabpanel' : undefined} aria-labelledby={resultsPublished ? 'info-tab' : undefined} hidden={resultsPublished && section !== 'info'}>
       <EventInfo event={event} />
     </div>
+    <SiteFooter />
   </main>
 }

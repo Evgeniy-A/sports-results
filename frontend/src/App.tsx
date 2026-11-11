@@ -7,6 +7,7 @@ import { SharedJournalPage } from './pages/SharedJournalPage'
 import { AdminApp } from './admin/AdminApp'
 import { publicCatalogMode } from './utils/publicCatalog'
 import './App.css'
+import './public.css'
 
 function App() {
   if (window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/')) {

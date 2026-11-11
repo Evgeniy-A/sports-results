@@ -3,6 +3,8 @@ import { api } from '../api/client'
 import type { EventDetails, PublicAppealEvent, ResultDetails, ResultInquiryLookup } from '../api/types'
 import { ResultInquiryPanel } from '../components/ResultInquiryPanel'
 import { ResultIssueDialog } from '../components/ResultIssueDialog'
+import { SiteHeader } from '../components/SiteHeader'
+import { SiteFooter } from '../components/SiteFooter'
 
 export function AppealPage() {
   const [events, setEvents] = useState<PublicAppealEvent[]>([])
@@ -64,10 +66,15 @@ export function AppealPage() {
     await runLookup()
   }
 
-  return <main className="appeal-page">
-    <header className="appeal-header"><a href="/">Sports Results</a><span>Обращение по результатам</span></header>
-    <section className="appeal-card">
+  return <main className="public-app appeal-page">
+    <SiteHeader activeSection="appeal" />
+    <section className="appeal-hero">
       <p className="eyebrow">Поддержка участников</p>
+      <h1>Важен каждый<br />результат</h1>
+      <p>Сообщите о неточности — команда хронометража проверит данные обращения.</p>
+    </section>
+    <section className="appeal-card">
+      <p className="eyebrow">Новое обращение</p>
       <h1>Обращение по результатам</h1>
       <p>Выберите мероприятие и город, затем найдите участника по стартовому номеру.</p>
       {loading && <p role="status">Загружаем мероприятия…</p>}
@@ -97,5 +104,6 @@ export function AppealPage() {
       result={result}
       onClose={() => setCorrectionOpen(false)}
     />}
+    <SiteFooter />
   </main>
 }

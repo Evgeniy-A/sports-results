@@ -3,6 +3,7 @@ import { api } from '../api/client'
 import type { EventFilterOptions, EventSummary, PageResponse } from '../api/types'
 import { Pagination } from '../components/Pagination'
 import { SiteHeader } from '../components/SiteHeader'
+import { SiteFooter } from '../components/SiteFooter'
 import { formatDateRange } from '../utils/format'
 import { PUBLIC_CATALOGS, type PublicCatalogMode } from '../utils/publicCatalog'
 
@@ -68,7 +69,7 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
   }
 
   return (
-    <main>
+    <main className="public-app public-catalog-page">
       <SiteHeader activeSection={mode} />
       <section className="catalog-hero">
         <div>
@@ -104,6 +105,7 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
         ))}</div>}
         <Pagination page={events.page} totalPages={events.totalPages} onChange={setPage} />
       </section>
+      <SiteFooter />
     </main>
   )
 }

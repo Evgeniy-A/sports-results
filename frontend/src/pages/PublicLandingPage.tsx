@@ -1,13 +1,24 @@
 import { SiteHeader } from '../components/SiteHeader'
+import { SiteFooter } from '../components/SiteFooter'
 
 export function PublicLandingPage() {
-  return <main>
+  return <main className="public-app public-landing-page">
     <SiteHeader />
     <section className="landing-shell">
       <div className="landing-hero">
-        <p className="eyebrow">Спортрезультаты</p>
-        <h1>Старты и результаты</h1>
-        <p>Выберите раздел: календарь предстоящих мероприятий или официальные результаты завершённых стартов.</p>
+        <p className="eyebrow">Старты и результаты</p>
+        <h1>Быстрее.<br />Выше. Точнее.</h1>
+        <p>Предстоящие старты, официальные протоколы и всё необходимое участнику — в одном спортивном пространстве.</p>
+        <div className="landing-hero-actions">
+          <a className="public-primary-action" href="/events">Календарь мероприятий <span aria-hidden="true">→</span></a>
+          <a className="public-text-action" href="/results">Найти результаты</a>
+        </div>
+      </div>
+
+      <div className="landing-performance" aria-hidden="true">
+        <span className="landing-performance-number">01</span>
+        <span className="landing-performance-line" />
+        <strong>READY<br />TO RACE</strong>
       </div>
 
       <div className="landing-choices" aria-label="Разделы сайта">
@@ -41,6 +52,13 @@ export function PublicLandingPage() {
         <span>Поиск по имени и номеру</span>
         <span>Информация участникам</span>
       </div>
+
+      <aside className="landing-appeal-cta">
+        <div><p className="eyebrow">Участникам</p><strong>Есть вопрос по результату?</strong></div>
+        <p>Найдите участника и отправьте обращение в команду хронометража.</p>
+        <a href="/appeal">Подать обращение <span aria-hidden="true">→</span></a>
+      </aside>
     </section>
+    <SiteFooter />
   </main>
 }
