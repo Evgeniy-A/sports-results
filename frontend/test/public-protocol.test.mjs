@@ -38,6 +38,25 @@ test('public status filter contains only supported statuses', () => {
   assert.doesNotMatch(page, /value="(?:notstarted|running|quarantine|unknown)"/)
 })
 
+test('participant search stays primary while gender uses three compact choices', () => {
+  assert.match(page, /className="result-primary-filters"/)
+  assert.match(page, /aria-label="Поиск по ФИО"/)
+  assert.match(page, /aria-label="Точный стартовый номер"/)
+  assert.match(page, /aria-label="Пол участника"/)
+  assert.match(page, /aria-pressed=\{gender === ''\}[\s\S]*Все участники/)
+  assert.match(page, /aria-pressed=\{gender === 'male'\}[\s\S]*Мужчины/)
+  assert.match(page, /aria-pressed=\{gender === 'female'\}[\s\S]*Женщины/)
+  assert.doesNotMatch(page, /<select aria-label="Пол"/)
+})
+
+test('secondary filters are grouped without changing their backend values', () => {
+  assert.match(page, /<details className="advanced-filters">/)
+  assert.match(page, /<summary>Расширенные фильтры<\/summary>/)
+  assert.match(page, /setClusterId\(changeEvent\.target\.value\)/)
+  assert.match(page, /selectedRace\.rules\?\.categoryEnabled/)
+  assert.match(page, /setStatus\(changeEvent\.target\.value\)/)
+})
+
 test('filter reset preserves race selection and sorting while clearing public filters', () => {
   const reset = page.match(/const resetFilters = \(\) => \{([\s\S]*?)\n  \}/)?.[1] ?? ''
   assert.doesNotMatch(reset, /setRaceId|setSportFormatId/)
@@ -115,6 +134,14 @@ test('one public protocol embeds official achievements without a second award vi
   assert.doesNotMatch(client, /\/awards|AwardStanding/)
 })
 
+test('results workspace keeps appeal visible and avoids repeating the selected race in every row', () => {
+  assert.match(page, /className="results-appeal-link" href="\/appeal"/)
+  assert.match(page, /Есть вопрос по результату\?/)
+  assert.doesNotMatch(page, /<th>Старт \/ дистанция<\/th>/)
+  assert.doesNotMatch(page, /<td>\{selectedRace\.name\}<\/td>/)
+  assert.match(page, /№ \{result\.bib \?\? '—'\} · \{selectedRace\.name\}/)
+})
+
 test('primary standing mode and selected category independently control official standing visibility', () => {
   const all = publicStandingPresentation('ALL', false, '')
   const byGender = publicStandingPresentation('BY_GENDER', false, '')
@@ -167,7 +194,8 @@ test('sex all keeps gender achievements together and distinguishes badge colors'
   assert.equal(genderAchievementClass(female), 'ranking-gender-female')
   assert.match(css, /\.ranking-gender-male[^}]*background:\s*#e8ebef/)
   assert.match(css, /\.ranking-gender-female[^}]*background:\s*#e5f0f8/)
-  assert.doesNotMatch(page, /setGender\('male'\).*setGender\('female'\)/s)
+  assert.match(page, /gender: gender \|\| undefined/)
+  assert.doesNotMatch(page, /Promise\.all[\s\S]*api\.results/)
 })
 
 test('sorting offers user fields without the technical protocol-order option', () => {

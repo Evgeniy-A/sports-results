@@ -249,7 +249,10 @@ export function EventResults({ event }: { event: EventDetails }) {
   return <section className="results-panel" aria-labelledby="protocol-title">
     <div className="section-heading protocol-heading">
       <div><p className="eyebrow">{showStandingColumn ? 'Официальные данные' : 'Результаты'}</p><h2 id="protocol-title">{showStandingColumn ? 'Протокол' : 'Результаты'}</h2></div>
-      {selectedRace && <span className="result-count">Найдено: {(inquiry?.lookupState === 'RESULT_NOT_PUBLIC' ? 1 : protocol.totalElements).toLocaleString('ru-RU')}</span>}
+      <div className="protocol-heading-actions">
+        {selectedRace && <span className="result-count">Найдено: {(inquiry?.lookupState === 'RESULT_NOT_PUBLIC' ? 1 : protocol.totalElements).toLocaleString('ru-RU')}</span>}
+        <a className="results-appeal-link" href="/appeal"><span>Есть вопрос по результату?</span><strong>Подать обращение →</strong></a>
+      </div>
     </div>
 
     <section className="protocol-selection" aria-label={showStandingColumn ? 'Выбор официального протокола' : 'Выбор таблицы результатов'}>
@@ -263,19 +266,28 @@ export function EventResults({ event }: { event: EventDetails }) {
     </section>
 
     {selectedRace && <div className="protocol-controls">
-      <section className="control-section" aria-labelledby="filters-title">
+      <section className="control-section result-search-section" aria-labelledby="filters-title">
         <div className="control-heading"><h3 id="filters-title">Фильтры</h3><button className="filter-reset" type="button" onClick={resetFilters}>Сбросить фильтры</button></div>
-        <div className="result-filters" aria-label={showStandingColumn ? 'Фильтры протокола' : 'Фильтры результатов'}>
-          {selectedRace.clusters.length >= 2 && <label><span>Стартовая волна</span><select aria-label="Стартовая волна" value={clusterId} onChange={(changeEvent) => { clearInquiryState(); setClusterId(changeEvent.target.value); resetPage() }}><option value="">Все стартовые волны</option>{selectedRace.clusters.map((cluster) => <option key={cluster.id} value={cluster.id}>{cluster.displayName}</option>)}</select></label>}
+        <div className="result-primary-filters" aria-label="Основные фильтры результатов">
           <label><span>ФИО</span><input aria-label="Поиск по ФИО" value={name} onChange={(changeEvent) => { clearInquiryState(); setName(changeEvent.target.value); resetPage() }} placeholder="Начните вводить имя" /></label>
           <label><span>Стартовый номер</span><input aria-label="Точный стартовый номер" value={bib} onChange={(changeEvent) => { clearInquiryState(); setBib(changeEvent.target.value); resetPage() }} placeholder="Например, 00123" /></label>
-          <label><span>Пол</span><select aria-label="Пол" value={gender} onChange={(changeEvent) => { clearInquiryState(); setGender(changeEvent.target.value); resetPage() }}><option value="">Все</option><option value="female">Женщины</option><option value="male">Мужчины</option></select></label>
-          {selectedRace.rules?.categoryEnabled && <label><span>Категория</span><select aria-label="Категория" value={categoryId} onChange={(changeEvent) => { clearInquiryState(); const nextCategoryId = changeEvent.target.value; const nextCategory = categories.find((category) => String(category.id) === nextCategoryId); setCategoryId(nextCategoryId); setSort(defaultPublicResultSort(nextCategory?.rankingBasis ?? selectedRace.rules?.rankingBasis)); setDirection('asc'); resetPage() }}><option value="">Все категории</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>}
-          <label><span>Статус</span><select aria-label="Статус" value={status} onChange={(changeEvent) => { clearInquiryState(); setStatus(changeEvent.target.value); resetPage() }}><option value="">Финишировавшие и дисквалифицированные</option><option value="finished">Финишировавшие</option><option value="disqualified">Дисквалифицированные</option></select></label>
+          <div className="gender-filter"><span>Участники</span><div role="group" aria-label="Пол участника">
+            <button type="button" aria-pressed={gender === ''} onClick={() => { clearInquiryState(); setGender(''); resetPage() }}>Все участники</button>
+            <button type="button" aria-pressed={gender === 'male'} onClick={() => { clearInquiryState(); setGender('male'); resetPage() }}>Мужчины</button>
+            <button type="button" aria-pressed={gender === 'female'} onClick={() => { clearInquiryState(); setGender('female'); resetPage() }}>Женщины</button>
+          </div></div>
         </div>
+        <details className="advanced-filters">
+          <summary>Расширенные фильтры</summary>
+          <div className="result-filters" aria-label={showStandingColumn ? 'Расширенные фильтры протокола' : 'Расширенные фильтры результатов'}>
+            {selectedRace.clusters.length >= 2 && <label><span>Стартовая волна</span><select aria-label="Стартовая волна" value={clusterId} onChange={(changeEvent) => { clearInquiryState(); setClusterId(changeEvent.target.value); resetPage() }}><option value="">Все стартовые волны</option>{selectedRace.clusters.map((cluster) => <option key={cluster.id} value={cluster.id}>{cluster.displayName}</option>)}</select></label>}
+            {selectedRace.rules?.categoryEnabled && <label><span>Категория</span><select aria-label="Категория" value={categoryId} onChange={(changeEvent) => { clearInquiryState(); const nextCategoryId = changeEvent.target.value; const nextCategory = categories.find((category) => String(category.id) === nextCategoryId); setCategoryId(nextCategoryId); setSort(defaultPublicResultSort(nextCategory?.rankingBasis ?? selectedRace.rules?.rankingBasis)); setDirection('asc'); resetPage() }}><option value="">Все категории</option>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>}
+            <label><span>Статус</span><select aria-label="Статус" value={status} onChange={(changeEvent) => { clearInquiryState(); setStatus(changeEvent.target.value); resetPage() }}><option value="">Финишировавшие и дисквалифицированные</option><option value="finished">Финишировавшие</option><option value="disqualified">Дисквалифицированные</option></select></label>
+          </div>
+        </details>
       </section>
       <section className="control-section sorting-section" aria-labelledby="sorting-title">
-        <h3 id="sorting-title">Сортировка</h3>
+        <h3 id="sorting-title">Сортировать по</h3>
         <div className="sorting-controls">
           <label><span>Поле</span><select aria-label="Сортировка" value={sort} onChange={(changeEvent) => { clearInquiryState(); setSort(changeEvent.target.value); resetPage() }}><option value="gunTime">Официальное время{activeRankingBasis === 'GUN_TIME' ? ' · Зачёт' : ''}</option><option value="chipTime">Чистое время{activeRankingBasis === 'CHIP_TIME' ? ' · Зачёт' : ''}</option><option value="displayName">ФИО</option><option value="bib">Стартовый номер</option></select></label>
           <button className="direction-button" type="button" onClick={() => { clearInquiryState(); setDirection(direction === 'asc' ? 'desc' : 'asc'); resetPage() }}>{direction === 'asc' ? 'По возрастанию ↑' : 'По убыванию ↓'}</button>
@@ -302,9 +314,9 @@ export function EventResults({ event }: { event: EventDetails }) {
     />}
 
     {selectedRace && !loading && !error && protocol.content.length > 0 && <>
-      <div className="table-wrap desktop-results"><table><thead><tr>{showStandingColumn && <th>{standingColumnTitle}</th>}<th>Стартовый №</th><th>Участник</th><th>Старт / дистанция</th><th>Статус</th><th><span className="time-heading">{scoringTimeHeading(activeRankingBasis, 'GUN_TIME')}</span></th><th><span className="time-heading">{scoringTimeHeading(activeRankingBasis, 'CHIP_TIME')}</span></th>{showCategoryColumn && <th>Категория</th>}</tr></thead><tbody>{protocol.content.map((result) => (
+      <div className="table-wrap desktop-results"><table><thead><tr>{showStandingColumn && <th>{standingColumnTitle}</th>}<th>Стартовый №</th><th>Участник</th><th>Статус</th><th><span className="time-heading">{scoringTimeHeading(activeRankingBasis, 'GUN_TIME')}</span></th><th><span className="time-heading">{scoringTimeHeading(activeRankingBasis, 'CHIP_TIME')}</span></th>{showCategoryColumn && <th>Категория</th>}</tr></thead><tbody>{protocol.content.map((result) => (
         <tr key={result.resultId} tabIndex={0} onClick={() => setSelectedResultId(result.resultId)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === 'Enter') setSelectedResultId(result.resultId) }}>
-          {showStandingColumn && <td className="ranking-cell"><RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /></td>}<td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td>{selectedRace.name}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${activeRankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.gunTimeMs} gapSeconds={result.gunLeaderGapSeconds} /></td><td className={`time ${activeRankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.chipTimeMs} gapSeconds={result.chipLeaderGapSeconds} /></td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
+          {showStandingColumn && <td className="ranking-cell"><RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /></td>}<td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${activeRankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.gunTimeMs} gapSeconds={result.gunLeaderGapSeconds} /></td><td className={`time ${activeRankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.chipTimeMs} gapSeconds={result.chipLeaderGapSeconds} /></td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
         </tr>
       ))}</tbody></table></div>
       <div className="mobile-results">{protocol.content.map((result) => { const useChipTime = activeRankingBasis === 'CHIP_TIME' || (activeRankingBasis === 'NONE' && sort === 'chipTime'); return <button className="result-card" type="button" key={result.resultId} onClick={() => setSelectedResultId(result.resultId)}><span><strong>{result.displayName}</strong><small>№ {result.bib ?? '—'} · {selectedRace.name}{showCategoryColumn && result.category ? ` · ${result.category.name}` : ''}</small></span><span className={`time ${showStandingColumn ? 'time-primary' : ''}`}><ResultTime value={useChipTime ? result.chipTimeMs : result.gunTimeMs} gapSeconds={useChipTime ? result.chipLeaderGapSeconds : result.gunLeaderGapSeconds} /></span>{showStandingColumn && <span className="card-achievements"><RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /></span>}</button> })}</div>

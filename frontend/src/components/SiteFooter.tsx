@@ -9,7 +9,6 @@ export function SiteFooter() {
         </div>
       </div>
       <nav aria-label="Разделы в подвале">
-        <a href="/events">Мероприятия</a>
         <a href="/results">Результаты</a>
         <a href="/appeal">Обращение</a>
       </nav>

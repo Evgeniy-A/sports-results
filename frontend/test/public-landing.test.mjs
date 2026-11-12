@@ -4,48 +4,52 @@ import test from 'node:test'
 import { PUBLIC_CATALOGS, publicCatalogMode } from '../src/utils/publicCatalog.ts'
 
 const app = await readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
-const landing = await readFile(new URL('../src/pages/PublicLandingPage.tsx', import.meta.url), 'utf8')
 const catalog = await readFile(new URL('../src/pages/EventCatalogPage.tsx', import.meta.url), 'utf8')
 const eventPage = await readFile(new URL('../src/pages/PublicEventPage.tsx', import.meta.url), 'utf8')
+const header = await readFile(new URL('../src/components/SiteHeader.tsx', import.meta.url), 'utf8')
+const footer = await readFile(new URL('../src/components/SiteFooter.tsx', import.meta.url), 'utf8')
 
-test('root renders a dedicated landing instead of the mixed event catalog', () => {
-  assert.match(app, /if \(\/\^\\\/\$\/\.test\(window\.location\.pathname\)\) return <PublicLandingPage/)
-  assert.match(landing, /Старты и результаты/)
-  assert.match(landing, /Официальные результаты/)
-  assert.match(landing, /Календарь стартов/)
-  assert.doesNotMatch(landing, /Что вы хотите посмотреть\?/)
-  assert.doesNotMatch(landing, /EventCatalogPage/)
+test('root and results render one results-first catalog', () => {
+  assert.match(app, /\/\^\\\/\$\/\.test\(window\.location\.pathname\) \|\| catalogMode === 'results'/)
+  assert.match(app, /return <EventCatalogPage mode="results" \/>/)
+  assert.doesNotMatch(app, /PublicLandingPage/)
+  assert.equal(PUBLIC_CATALOGS.results.title, 'Результаты мероприятий')
+  assert.equal(PUBLIC_CATALOGS.results.phase, 'PAST')
 })
 
-test('landing result and calendar cards link to separate sections', () => {
-  assert.match(landing, /className="landing-choice landing-choice-results" href="\/results"/)
-  assert.match(landing, /Смотреть результаты/)
-  assert.match(landing, /className="landing-choice landing-choice-calendar" href="\/events"/)
-  assert.match(landing, /Смотреть календарь/)
-})
-
-test('catalog route selection keeps calendar and result sections distinct', () => {
+test('calendar routes replace their URL with results without deleting calendar configuration', () => {
+  assert.match(app, /catalogMode === 'calendar'\) return <ResultsCatalogRedirect \/>/)
+  assert.match(app, /window\.history\.replaceState\(null, '', '\/results'\)/)
   assert.equal(publicCatalogMode('/events'), 'calendar')
-  assert.equal(publicCatalogMode('/events/'), 'calendar')
   assert.equal(publicCatalogMode('/calendar'), 'calendar')
+  assert.equal(PUBLIC_CATALOGS.calendar.phase, 'UPCOMING')
+})
+
+test('results route remains explicit while event deep links are not treated as catalog routes', () => {
   assert.equal(publicCatalogMode('/results'), 'results')
   assert.equal(publicCatalogMode('/results/'), 'results')
   assert.equal(publicCatalogMode('/events/example'), null)
 })
 
-test('calendar always queries upcoming events and never the past archive', () => {
-  assert.equal(PUBLIC_CATALOGS.calendar.phase, 'UPCOMING')
-  assert.equal(PUBLIC_CATALOGS.calendar.route, '/events')
-  assert.notEqual(PUBLIC_CATALOGS.calendar.phase, 'PAST')
-  assert.match(catalog, /phase: catalog\.phase/)
-  assert.doesNotMatch(catalog, /aria-label="Период"/)
+test('public header and footer expose only results and appeal', () => {
+  assert.match(header, /href="\/results"[^>]*>Результаты<\/a>/)
+  assert.match(header, /href="\/appeal"[^>]*>Обращение<\/a>/)
+  assert.match(footer, /href="\/results">Результаты<\/a>/)
+  assert.match(footer, /href="\/appeal">Обращение<\/a>/)
+  assert.doesNotMatch(`${header}\n${footer}`, /href="\/(?:events|calendar)"|>Мероприятия</)
 })
 
-test('results always query past events and link cards to result deep links', () => {
+test('results catalog keeps filters and compact result deep links without event images', () => {
   assert.equal(PUBLIC_CATALOGS.results.phase, 'PAST')
   assert.equal(PUBLIC_CATALOGS.results.route, '/results')
-  assert.notEqual(PUBLIC_CATALOGS.results.phase, 'UPCOMING')
+  assert.match(catalog, /aria-label="Фильтры мероприятий"/)
+  assert.match(catalog, /Год/)
+  assert.match(catalog, /Серия/)
+  assert.match(catalog, /Город/)
+  assert.match(catalog, /Точная дата/)
   assert.match(catalog, /mode === 'results' \? `\/events\/\$\{event\.slug\}\/results`/)
+  assert.match(catalog, /className="event-card-action">Результаты →/)
+  assert.doesNotMatch(catalog, /<img|heroImage|previewImage|coverImage/)
 })
 
 test('existing public event and result deep links remain ahead of catalog routing', () => {
@@ -53,5 +57,5 @@ test('existing public event and result deep links remain ahead of catalog routin
   assert.match(app, /eventMatch = window\.location\.pathname\.match/)
   assert.match(app, /if \(resultsMatch\) return <EventResultsPage/)
   assert.match(app, /if \(eventMatch\) return <EventDetailPage/)
-  assert.match(eventPage, /href="\/">← На главную<\/a>/)
+  assert.match(eventPage, /href="\/results">← Все результаты<\/a>/)
 })

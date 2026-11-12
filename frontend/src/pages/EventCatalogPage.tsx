@@ -75,8 +75,9 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
         <div>
           <p className="eyebrow">{catalog.eyebrow}</p>
           <h1>{catalog.title}</h1>
+          <p className="hero-copy">{catalog.copy}</p>
         </div>
-        <p className="hero-copy">{catalog.copy}</p>
+        {mode === 'results' && <a className="catalog-appeal-link" href="/appeal"><span>Не нашли свой результат?</span><strong>Подать обращение →</strong></a>}
       </section>
 
       <section className="catalog-panel" aria-labelledby="catalog-title">
@@ -98,9 +99,9 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
         {!loading && !error && events.content.length === 0 && <div className="state-message"><strong>{catalog.emptyTitle}</strong><br />{catalog.emptyCopy}</div>}
         {!loading && !error && events.content.length > 0 && <div className="event-grid">{events.content.map((event) => (
           <a className="event-card" href={mode === 'results' ? `/events/${event.slug}/results` : `/events/${event.slug}`} key={event.id}>
-            <div className="event-card-top"><span>{event.eventSeriesName}</span><i>{event.phase === 'UPCOMING' ? 'Предстоит' : event.phase === 'ONGOING' ? 'Сейчас' : 'Архив'} ↗</i></div>
-            <div><time>{formatDateRange(event.startsAt, event.endsAt, event.timeZone)}</time><h3>{event.name}</h3>{event.shortDescription && <small>{event.shortDescription}</small>}</div>
-            <p><span className="location-dot" />{event.venueName ?? event.location ?? 'Место уточняется'}{event.resultsPublished && <b>Результаты</b>}</p>
+            <div className="event-card-top"><span>{event.eventSeriesName}</span><i>{event.phase === 'UPCOMING' ? 'Предстоит' : event.phase === 'ONGOING' ? 'Сейчас' : 'Протокол опубликован'}</i></div>
+            <div className="event-card-main"><time>{formatDateRange(event.startsAt, event.endsAt, event.timeZone)}</time><h3>{event.name}</h3>{event.shortDescription && <small>{event.shortDescription}</small>}</div>
+            <div className="event-card-bottom"><p><span className="location-dot" />{event.venueName ?? event.location ?? 'Место уточняется'}</p>{mode === 'results' && <strong className="event-card-action">Результаты →</strong>}</div>
           </a>
         ))}</div>}
         <Pagination page={events.page} totalPages={events.totalPages} onChange={setPage} />

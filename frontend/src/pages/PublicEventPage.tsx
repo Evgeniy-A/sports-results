@@ -34,13 +34,15 @@ export function PublicEventPage({ slug }: { slug: string }) {
   const resultsActive = resultsPublished && section === 'results'
 
   return <main className="public-app public-event-page">
-    <SiteHeader />
+    <SiteHeader activeSection="results" />
     <section className={`event-hero ${resultsActive ? 'event-results-hero' : 'event-detail-hero'}`}>
-      <a className="back-link" href="/">← На главную</a>
-      <p className="eyebrow">{event.eventSeriesName}</p>
-      <h1>{event.name}</h1>
-      <div className="event-meta"><span>{formatDateRange(event.startsAt, event.endsAt, event.timeZone)}</span><span>{event.location ?? 'Место уточняется'}</span></div>
-      {!resultsActive && event.participantInfo?.shortDescription && <p className="event-lead">{event.participantInfo.shortDescription}</p>}
+      <div className="event-hero-content">
+        <a className="back-link" href="/results">← Все результаты</a>
+        <p className="eyebrow">{event.eventSeriesName}</p>
+        <h1>{event.name}</h1>
+        <div className="event-meta"><span>{formatDateRange(event.startsAt, event.endsAt, event.timeZone)}</span><span>{event.location ?? 'Место уточняется'}</span></div>
+        {!resultsActive && event.participantInfo?.shortDescription && <p className="event-lead">{event.participantInfo.shortDescription}</p>}
+      </div>
     </section>
 
     {resultsPublished && <nav className="event-view-tabs" aria-label="Разделы мероприятия" role="tablist">
