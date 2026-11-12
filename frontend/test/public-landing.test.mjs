@@ -31,12 +31,17 @@ test('results route remains explicit while event deep links are not treated as c
   assert.equal(publicCatalogMode('/events/example'), null)
 })
 
-test('public header and footer expose only results and appeal', () => {
-  assert.match(header, /href="\/results"[^>]*>Результаты<\/a>/)
-  assert.match(header, /href="\/appeal"[^>]*>Обращение<\/a>/)
-  assert.match(footer, /href="\/results">Результаты<\/a>/)
-  assert.match(footer, /href="\/appeal">Обращение<\/a>/)
+test('public header and footer keep a quiet text brand without public navigation', () => {
+  assert.match(header, /className="brand-organizer">Лига Героев<\/strong>/)
+  assert.match(header, /className="brand-title">Спортивные результаты<\/span>/)
+  assert.match(footer, /className="brand-organizer">Лига Героев<\/strong>/)
+  assert.match(footer, /className="brand-title">Спортивные результаты<\/span>/)
+  assert.doesNotMatch(header + footer, /site-navigation|brand-mark|>SR/)
   assert.doesNotMatch(`${header}\n${footer}`, /href="\/(?:events|calendar)"|>Мероприятия</)
+})
+
+test('catalog hero keeps the results message without a prominent appeal card', () => {
+  assert.doesNotMatch(catalog, /catalog-appeal-link|Не нашли свой результат/)
 })
 
 test('results catalog keeps filters and compact result deep links without event images', () => {

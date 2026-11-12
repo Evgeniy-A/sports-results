@@ -2,17 +2,11 @@ export function SiteFooter() {
   return (
     <footer className="site-footer">
       <div className="site-footer-brand">
-        <span className="brand-mark" aria-hidden="true">SR</span>
-        <div>
-          <strong>Спортрезультаты</strong>
-          <span>Старт. Финиш. Результат.</span>
-        </div>
+        <strong className="brand-organizer">Лига Героев</strong>
+        <span className="brand-divider" aria-hidden="true" />
+        <span className="brand-title">Спортивные результаты</span>
       </div>
-      <nav aria-label="Разделы в подвале">
-        <a href="/results">Результаты</a>
-        <a href="/appeal">Обращение</a>
-      </nav>
-      <p>Официальные протоколы и сервисы для участников</p>
+      <span className="footer-note"><i /> Официальные протоколы</span>
     </footer>
   )
 }
