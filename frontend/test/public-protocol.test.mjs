@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   activeRankingAchievements,
   genderAchievementClass,
+  publicStandingPresentation,
   scoringTimeHeading,
 } from '../src/utils/rankingPresentation.ts'
 
@@ -107,10 +108,41 @@ test('public results use only the flat Race-only contract and one Start selector
 })
 
 test('one public protocol embeds official achievements without a second award view', () => {
-  assert.match(page, /hasOfficialStanding \? 'Официальный зачёт' : 'Место'/)
+  assert.match(page, /showStandingColumn && <th>\{standingColumnTitle\}<\/th>/)
+  assert.match(page, /showStandingColumn && <td className="ranking-cell">/)
   assert.match(page, /RankingAchievements achievements=\{result\.rankingAchievements\} mode=\{rankingMode\}/)
   assert.doesNotMatch(page, /ProtocolTab|Наградной зачёт|api\.awards|result\.place/)
   assert.doesNotMatch(client, /\/awards|AwardStanding/)
+})
+
+test('primary standing mode and selected category independently control official standing visibility', () => {
+  const all = publicStandingPresentation('ALL', false, '')
+  const byGender = publicStandingPresentation('BY_GENDER', false, '')
+  const none = publicStandingPresentation('NONE', false, '')
+  const categoryOverview = publicStandingPresentation('NONE', true, '')
+  const selectedCategory = publicStandingPresentation('NONE', true, '42')
+
+  assert.equal(all.primaryStandingEnabled, true)
+  assert.equal(all.showStanding, true)
+  assert.equal(all.mode, 'PRIMARY')
+  assert.equal(byGender.primaryStandingEnabled, true)
+  assert.equal(byGender.showStanding, true)
+  assert.equal(none.showStanding, false)
+  assert.equal(categoryOverview.showStanding, false)
+  assert.equal(selectedCategory.primaryStandingEnabled, false)
+  assert.equal(selectedCategory.categoryStandingSelected, true)
+  assert.equal(selectedCategory.showStanding, true)
+  assert.equal(selectedCategory.mode, 'CATEGORY')
+  assert.equal(selectedCategory.title, 'Место в категории')
+  assert.doesNotMatch(page, /absolutePrizePlaces/)
+})
+
+test('no current standing removes desktop and mobile achievement containers instead of showing a fake place', () => {
+  assert.match(page, /\{showStandingColumn && <th>\{standingColumnTitle\}<\/th>\}<th>Стартовый №<\/th>/)
+  assert.match(page, /\{showStandingColumn && <td className="ranking-cell"><RankingAchievements/)
+  assert.match(page, /\{showStandingColumn && <span className="card-achievements"><RankingAchievements/)
+  assert.doesNotMatch(page, /result\.displayPosition/)
+  assert.doesNotMatch(page, /Место \{result\.displayPosition/)
 })
 
 test('achievement renderer keeps only the active standing without recalculating places', () => {
@@ -147,22 +179,25 @@ test('sorting offers user fields without the technical protocol-order option', (
   assert.match(page, /не меняется от фильтров или сортировки/)
 })
 
-test('ranking basis drives standing badge and column semantics', () => {
+test('ranking basis drives scoring time only after the current standing mode is enabled', () => {
   assert.match(types, /'CHIP_TIME' \| 'GUN_TIME' \| 'NONE'/)
   assert.equal(scoringTimeHeading('GUN_TIME', 'GUN_TIME'), '⏱ Зачёт (офиц. время)')
   assert.equal(scoringTimeHeading('GUN_TIME', 'CHIP_TIME'), 'Чистое время')
   assert.equal(scoringTimeHeading('CHIP_TIME', 'CHIP_TIME'), '⏱ Зачёт (чистое время)')
   assert.equal(scoringTimeHeading('CHIP_TIME', 'GUN_TIME'), 'Официальное время')
-  assert.match(page, /scoringTimeHeading\(rankingBasis \?\? 'NONE', 'GUN_TIME'\)/)
-  assert.match(page, /scoringTimeHeading\(rankingBasis \?\? 'NONE', 'CHIP_TIME'\)/)
-  assert.match(page, /rankingBasis !== 'NONE'/)
-  assert.match(page, /result\.displayPosition/)
-  assert.match(page, /не является официальным спортивным местом/)
+  assert.match(page, /activeRankingBasis = showStandingColumn \? \(rankingBasis \?\? 'NONE'\) : 'NONE'/)
+  assert.match(page, /scoringTimeHeading\(activeRankingBasis, 'GUN_TIME'\)/)
+  assert.match(page, /scoringTimeHeading\(activeRankingBasis, 'CHIP_TIME'\)/)
+  assert.match(page, /primaryStandingMode/)
+  assert.match(page, /categoryStandingSelected/)
 })
 
-test('NONE hides official achievements in list and result details', () => {
-  assert.match(page, /hasOfficialStanding \? <RankingAchievements[\s\S]*mode=\{rankingMode\}[\s\S]*result\.displayPosition/)
-  assert.match(details, /result\.rankingBasis !== 'NONE'/)
-  assert.match(details, /result\.rankingBasis === 'GUN_TIME'/)
-  assert.match(details, /result\.rankingBasis === 'CHIP_TIME'/)
+test('result details use the same resolved standing visibility, title, mode and basis as the list', () => {
+  assert.match(page, /showOfficialStanding=\{showStandingColumn\}/)
+  assert.match(page, /officialStandingTitle=\{standingColumnTitle\}/)
+  assert.match(page, /activeRankingBasis=\{activeRankingBasis\}/)
+  assert.match(details, /showOfficialStanding && <div className="detail-ranking">/)
+  assert.match(details, /<h3>\{officialStandingTitle\}<\/h3>/)
+  assert.match(details, /activeRankingBasis === 'GUN_TIME'/)
+  assert.match(details, /activeRankingBasis === 'CHIP_TIME'/)
 })

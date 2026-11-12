@@ -2,6 +2,31 @@ import type { RankingAchievement, RankingBasis } from '../api/types'
 
 export type RankingPresentationMode = 'PRIMARY' | 'CATEGORY'
 
+export interface PublicStandingPresentation {
+  primaryStandingEnabled: boolean
+  categoryStandingSelected: boolean
+  showStanding: boolean
+  mode: RankingPresentationMode
+  title: 'Официальный зачёт' | 'Место в категории'
+}
+
+export function publicStandingPresentation(
+  primaryStandingMode: 'ALL' | 'BY_GENDER' | 'NONE' | undefined,
+  categoryEnabled: boolean,
+  categoryId: string,
+): PublicStandingPresentation {
+  const primaryStandingEnabled = primaryStandingMode === 'ALL' || primaryStandingMode === 'BY_GENDER'
+  const categoryStandingSelected = categoryEnabled && categoryId !== ''
+
+  return {
+    primaryStandingEnabled,
+    categoryStandingSelected,
+    showStanding: primaryStandingEnabled || categoryStandingSelected,
+    mode: categoryStandingSelected ? 'CATEGORY' : 'PRIMARY',
+    title: categoryStandingSelected ? 'Место в категории' : 'Официальный зачёт',
+  }
+}
+
 export function activeRankingAchievements(
   achievements: RankingAchievement[],
   mode: RankingPresentationMode,

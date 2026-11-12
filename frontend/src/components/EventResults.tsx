@@ -4,7 +4,7 @@ import type { EventDetails, PageResponse, ResultInquiryLookup, ResultListItem } 
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { formatDuration, formatLeaderGap, statusLabel } from '../utils/format'
 import { defaultPublicResultSort, initialRaceSelection, publicResultRaces } from '../utils/publicEventView'
-import { scoringTimeHeading } from '../utils/rankingPresentation'
+import { publicStandingPresentation, scoringTimeHeading } from '../utils/rankingPresentation'
 import {
   LatestRequestGate,
   isRequestCancellation,
@@ -57,9 +57,18 @@ export function EventResults({ event }: { event: EventDetails }) {
   const rankingBasis = selectedCategory?.rankingBasis
     ?? selectedRace?.rules?.rankingBasis
     ?? protocol.content[0]?.rankingBasis
-  const hasOfficialStanding = rankingBasis !== undefined && rankingBasis !== 'NONE'
+  const {
+    categoryStandingSelected,
+    showStanding: showStandingColumn,
+    mode: rankingMode,
+    title: standingColumnTitle,
+  } = publicStandingPresentation(
+    selectedRace?.rules?.primaryStandingMode,
+    selectedRace?.rules?.categoryEnabled ?? false,
+    categoryId,
+  )
+  const activeRankingBasis = showStandingColumn ? (rankingBasis ?? 'NONE') : 'NONE'
   const hasPublicResultRows = protocol.content.length > 0
-  const rankingMode = categoryId ? 'CATEGORY' : 'PRIMARY'
 
   const clearInquiryState = () => {
     protocolRequestGate.invalidate()
@@ -239,24 +248,24 @@ export function EventResults({ event }: { event: EventDetails }) {
 
   return <section className="results-panel" aria-labelledby="protocol-title">
     <div className="section-heading protocol-heading">
-      <div><p className="eyebrow">{hasOfficialStanding ? 'Официальные данные' : 'Результаты'}</p><h2 id="protocol-title">{hasOfficialStanding ? 'Протокол' : 'Результаты'}</h2></div>
+      <div><p className="eyebrow">{showStandingColumn ? 'Официальные данные' : 'Результаты'}</p><h2 id="protocol-title">{showStandingColumn ? 'Протокол' : 'Результаты'}</h2></div>
       {selectedRace && <span className="result-count">Найдено: {(inquiry?.lookupState === 'RESULT_NOT_PUBLIC' ? 1 : protocol.totalElements).toLocaleString('ru-RU')}</span>}
     </div>
 
-    <section className="protocol-selection" aria-label={hasOfficialStanding ? 'Выбор официального протокола' : 'Выбор таблицы результатов'}>
+    <section className="protocol-selection" aria-label={showStandingColumn ? 'Выбор официального протокола' : 'Выбор таблицы результатов'}>
       {races.length > 1 && <div className="selection-group">
         <span>Старт</span>
         <div className="selection-buttons" role="group" aria-label="Старт">
           {races.map((race) => <button type="button" key={race.id} aria-pressed={String(race.id) === raceId} onClick={() => changeRace(String(race.id))}>{race.name}</button>)}
         </div>
       </div>}
-      {selectedRace && <p><span>{hasOfficialStanding ? 'Официальный протокол' : 'Таблица результатов'}</span><strong>{selectedRace.name}</strong></p>}
+      {selectedRace && <p><span>{showStandingColumn ? 'Официальный протокол' : 'Таблица результатов'}</span><strong>{selectedRace.name}</strong></p>}
     </section>
 
     {selectedRace && <div className="protocol-controls">
       <section className="control-section" aria-labelledby="filters-title">
         <div className="control-heading"><h3 id="filters-title">Фильтры</h3><button className="filter-reset" type="button" onClick={resetFilters}>Сбросить фильтры</button></div>
-        <div className="result-filters" aria-label={hasOfficialStanding ? 'Фильтры протокола' : 'Фильтры результатов'}>
+        <div className="result-filters" aria-label={showStandingColumn ? 'Фильтры протокола' : 'Фильтры результатов'}>
           {selectedRace.clusters.length >= 2 && <label><span>Стартовая волна</span><select aria-label="Стартовая волна" value={clusterId} onChange={(changeEvent) => { clearInquiryState(); setClusterId(changeEvent.target.value); resetPage() }}><option value="">Все стартовые волны</option>{selectedRace.clusters.map((cluster) => <option key={cluster.id} value={cluster.id}>{cluster.displayName}</option>)}</select></label>}
           <label><span>ФИО</span><input aria-label="Поиск по ФИО" value={name} onChange={(changeEvent) => { clearInquiryState(); setName(changeEvent.target.value); resetPage() }} placeholder="Начните вводить имя" /></label>
           <label><span>Стартовый номер</span><input aria-label="Точный стартовый номер" value={bib} onChange={(changeEvent) => { clearInquiryState(); setBib(changeEvent.target.value); resetPage() }} placeholder="Например, 00123" /></label>
@@ -268,19 +277,19 @@ export function EventResults({ event }: { event: EventDetails }) {
       <section className="control-section sorting-section" aria-labelledby="sorting-title">
         <h3 id="sorting-title">Сортировка</h3>
         <div className="sorting-controls">
-          <label><span>Поле</span><select aria-label="Сортировка" value={sort} onChange={(changeEvent) => { clearInquiryState(); setSort(changeEvent.target.value); resetPage() }}><option value="gunTime">Официальное время{rankingBasis === 'GUN_TIME' ? ' · Зачёт' : ''}</option><option value="chipTime">Чистое время{rankingBasis === 'CHIP_TIME' ? ' · Зачёт' : ''}</option><option value="displayName">ФИО</option><option value="bib">Стартовый номер</option></select></label>
+          <label><span>Поле</span><select aria-label="Сортировка" value={sort} onChange={(changeEvent) => { clearInquiryState(); setSort(changeEvent.target.value); resetPage() }}><option value="gunTime">Официальное время{activeRankingBasis === 'GUN_TIME' ? ' · Зачёт' : ''}</option><option value="chipTime">Чистое время{activeRankingBasis === 'CHIP_TIME' ? ' · Зачёт' : ''}</option><option value="displayName">ФИО</option><option value="bib">Стартовый номер</option></select></label>
           <button className="direction-button" type="button" onClick={() => { clearInquiryState(); setDirection(direction === 'asc' ? 'desc' : 'asc'); resetPage() }}>{direction === 'asc' ? 'По возрастанию ↑' : 'По убыванию ↓'}</button>
         </div>
       </section>
     </div>}
 
-    {selectedRace && (hasOfficialStanding
-      ? <div className="context-note"><strong>{rankingBasis === 'CHIP_TIME' ? 'Зачёт по чистому времени' : 'Зачёт по официальному времени'}</strong>{categoryId ? ' внутри выбранной возрастной категории' : ' внутри выбранного старта'} не меняется от фильтров или сортировки. Выбранная сортировка управляет только порядком строк.</div>
-      : <div className="context-note"><strong>Место</strong> — позиция в текущей таблице результатов. Она меняется вместе с фильтрами и сортировкой и не является официальным спортивным местом.</div>)}
+    {selectedRace && (showStandingColumn
+      ? <div className="context-note"><strong>{activeRankingBasis === 'CHIP_TIME' ? 'Зачёт по чистому времени' : 'Зачёт по официальному времени'}</strong>{categoryStandingSelected ? ' внутри выбранной возрастной категории' : ' внутри выбранного старта'} не меняется от фильтров или сортировки. Выбранная сортировка управляет только порядком строк.</div>
+      : <div className="context-note"><strong>Официальный зачёт не настроен.</strong> Фильтры и сортировка управляют только порядком строк в таблице результатов.</div>)}
     {error && <div className="state-message error" role="alert">{error}</div>}
     {!error && inquiryError && <div className="state-message" role="status">{inquiryError}</div>}
     {!error && !selectedRace && !loading && <div className="state-message">{races.length === 0 ? 'Результаты ещё не опубликованы.' : 'Выберите старт.'}</div>}
-    {selectedRace && loading && <div className="state-message" aria-live="polite">{inquiryLoading ? 'Проверяем стартовый номер…' : hasOfficialStanding ? 'Загружаем протокол…' : 'Загружаем результаты…'}</div>}
+    {selectedRace && loading && <div className="state-message" aria-live="polite">{inquiryLoading ? 'Проверяем стартовый номер…' : showStandingColumn ? 'Загружаем протокол…' : 'Загружаем результаты…'}</div>}
     {selectedRace && !loading && !error && protocol.content.length === 0 && !inquiry && <div className="state-message">По выбранным условиям результатов нет.</div>}
     {selectedRace && !loading && !error && inquiry && !hasPublicResultRows && <ResultInquiryPanel
       key={`${event.id}:${inquiry.bib}:${inquiry.lookupState}`}
@@ -293,12 +302,12 @@ export function EventResults({ event }: { event: EventDetails }) {
     />}
 
     {selectedRace && !loading && !error && protocol.content.length > 0 && <>
-      <div className="table-wrap desktop-results"><table><thead><tr><th>{hasOfficialStanding ? 'Официальный зачёт' : 'Место'}</th><th>Стартовый №</th><th>Участник</th><th>Старт / дистанция</th><th>Статус</th><th><span className="time-heading">{scoringTimeHeading(rankingBasis ?? 'NONE', 'GUN_TIME')}</span></th><th><span className="time-heading">{scoringTimeHeading(rankingBasis ?? 'NONE', 'CHIP_TIME')}</span></th>{showCategoryColumn && <th>Категория</th>}</tr></thead><tbody>{protocol.content.map((result) => (
+      <div className="table-wrap desktop-results"><table><thead><tr>{showStandingColumn && <th>{standingColumnTitle}</th>}<th>Стартовый №</th><th>Участник</th><th>Старт / дистанция</th><th>Статус</th><th><span className="time-heading">{scoringTimeHeading(activeRankingBasis, 'GUN_TIME')}</span></th><th><span className="time-heading">{scoringTimeHeading(activeRankingBasis, 'CHIP_TIME')}</span></th>{showCategoryColumn && <th>Категория</th>}</tr></thead><tbody>{protocol.content.map((result) => (
         <tr key={result.resultId} tabIndex={0} onClick={() => setSelectedResultId(result.resultId)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === 'Enter') setSelectedResultId(result.resultId) }}>
-          <td className={hasOfficialStanding ? 'ranking-cell' : 'display-place-cell'}>{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /> : <span className="display-place">{result.displayPosition ?? '—'}</span>}</td><td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td>{selectedRace.name}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${result.rankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.gunTimeMs} gapSeconds={result.gunLeaderGapSeconds} /></td><td className={`time ${result.rankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.chipTimeMs} gapSeconds={result.chipLeaderGapSeconds} /></td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
+          {showStandingColumn && <td className="ranking-cell"><RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /></td>}<td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td>{selectedRace.name}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${activeRankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.gunTimeMs} gapSeconds={result.gunLeaderGapSeconds} /></td><td className={`time ${activeRankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.chipTimeMs} gapSeconds={result.chipLeaderGapSeconds} /></td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
         </tr>
       ))}</tbody></table></div>
-      <div className="mobile-results">{protocol.content.map((result) => { const useChipTime = result.rankingBasis === 'CHIP_TIME' || (result.rankingBasis === 'NONE' && sort === 'chipTime'); return <button className="result-card" type="button" key={result.resultId} onClick={() => setSelectedResultId(result.resultId)}><span><strong>{result.displayName}</strong><small>№ {result.bib ?? '—'} · {selectedRace.name}{showCategoryColumn && result.category ? ` · ${result.category.name}` : ''}</small></span><span className={`time ${hasOfficialStanding ? 'time-primary' : ''}`}><ResultTime value={useChipTime ? result.chipTimeMs : result.gunTimeMs} gapSeconds={useChipTime ? result.chipLeaderGapSeconds : result.gunLeaderGapSeconds} /></span><span className="card-achievements">{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /> : <span className="display-place">Место {result.displayPosition ?? '—'}</span>}</span></button> })}</div>
+      <div className="mobile-results">{protocol.content.map((result) => { const useChipTime = activeRankingBasis === 'CHIP_TIME' || (activeRankingBasis === 'NONE' && sort === 'chipTime'); return <button className="result-card" type="button" key={result.resultId} onClick={() => setSelectedResultId(result.resultId)}><span><strong>{result.displayName}</strong><small>№ {result.bib ?? '—'} · {selectedRace.name}{showCategoryColumn && result.category ? ` · ${result.category.name}` : ''}</small></span><span className={`time ${showStandingColumn ? 'time-primary' : ''}`}><ResultTime value={useChipTime ? result.chipTimeMs : result.gunTimeMs} gapSeconds={useChipTime ? result.chipLeaderGapSeconds : result.gunLeaderGapSeconds} /></span>{showStandingColumn && <span className="card-achievements"><RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /></span>}</button> })}</div>
     </>}
 
     {selectedRace && <Pagination page={protocol.page} totalPages={protocol.totalPages} onChange={setPage} />}
@@ -308,6 +317,9 @@ export function EventResults({ event }: { event: EventDetails }) {
       eventTimeZone={event.timeZone}
       startName={selectedRace.name}
       categoryEnabled={showCategoryColumn}
+      showOfficialStanding={showStandingColumn}
+      officialStandingTitle={standingColumnTitle}
+      activeRankingBasis={activeRankingBasis}
       rankingMode={rankingMode}
       onClose={() => setSelectedResultId(null)}
     />}
