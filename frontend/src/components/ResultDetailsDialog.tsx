@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
-import type { CertificateAvailability, ResultDetails, ResultInquiryLookup } from '../api/types'
+import type { CertificateAvailability, RankingBasis, ResultDetails, ResultInquiryLookup } from '../api/types'
 import { formatDuration, formatGender, statusLabel } from '../utils/format'
 import { publicCategoryName } from '../utils/publicEventView'
 import { resultIssueAvailabilityMessage } from '../utils/resultIssue'
@@ -16,10 +16,24 @@ interface Props {
   startName: string
   categoryEnabled: boolean
   rankingMode: RankingPresentationMode
+  hasOfficialStanding: boolean
+  standingHeading: string
+  standingRankingBasis: RankingBasis
   onClose: () => void
 }
 
-export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startName, categoryEnabled, rankingMode, onClose }: Props) {
+export function ResultDetailsDialog({
+  resultId,
+  eventName,
+  eventTimeZone,
+  startName,
+  categoryEnabled,
+  rankingMode,
+  hasOfficialStanding,
+  standingHeading,
+  standingRankingBasis,
+  onClose,
+}: Props) {
   const dialogRef = useRef<HTMLElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
   const [result, setResult] = useState<ResultDetails | null>(null)
@@ -118,13 +132,13 @@ export function ResultDetailsDialog({ resultId, eventName, eventTimeZone, startN
           <p className="eyebrow">Карточка участника</p>
           <h2 id="result-title">{result.displayName}</h2>
           <div className="detail-badges"><span className="bib">№ {result.bib ?? '—'}</span><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></div>
-          {result.rankingBasis !== 'NONE' && <div className="detail-ranking"><h3>Официальный зачёт</h3><RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /></div>}
+          {hasOfficialStanding && <div className="detail-ranking"><h3>{standingHeading}</h3><RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /></div>}
           <dl className="detail-grid">
             <div><dt>Старт</dt><dd>{startName}</dd></div>
             <div><dt>Пол</dt><dd>{formatGender(result.gender)}</dd></div>
             {categoryName && <div><dt>Категория</dt><dd>{categoryName}</dd></div>}
-            <div><dt>Официальное время {result.rankingBasis === 'GUN_TIME' && <span className="standing-badge">Зачёт</span>}</dt><dd className={`time ${result.rankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.gunTimeMs)}</dd></div>
-            <div><dt>Чистое время {result.rankingBasis === 'CHIP_TIME' && <span className="standing-badge">Зачёт</span>}</dt><dd className={`time ${result.rankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.chipTimeMs)}</dd></div>
+            <div><dt>Официальное время {hasOfficialStanding && standingRankingBasis === 'GUN_TIME' && <span className="standing-badge">Зачёт</span>}</dt><dd className={`time ${hasOfficialStanding && standingRankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.gunTimeMs)}</dd></div>
+            <div><dt>Чистое время {hasOfficialStanding && standingRankingBasis === 'CHIP_TIME' && <span className="standing-badge">Зачёт</span>}</dt><dd className={`time ${hasOfficialStanding && standingRankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}>{formatDuration(result.chipTimeMs)}</dd></div>
           </dl>
           {result.splits.length > 0 && <div className="split-list"><h3>Контрольные точки</h3>{result.splits.map((split) => <div key={split.checkpointId}><span>{split.checkpointName}</span><strong>{formatDuration(split.elapsedTimeMs)}</strong></div>)}</div>}
           {inquiry?.inquiryAvailability === 'OPEN' && <div className="result-secondary-action">

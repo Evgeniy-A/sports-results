@@ -4,7 +4,7 @@ import type { EventDetails, PageResponse, ResultInquiryLookup, ResultListItem } 
 import { useDebouncedValue } from '../hooks/useDebouncedValue'
 import { formatDuration, formatLeaderGap, statusLabel } from '../utils/format'
 import { defaultPublicResultSort, initialRaceSelection, publicResultRaces } from '../utils/publicEventView'
-import { scoringTimeHeading } from '../utils/rankingPresentation'
+import { hasOfficialStanding as resolveOfficialStanding, officialStandingHeading, scoringTimeHeading } from '../utils/rankingPresentation'
 import {
   LatestRequestGate,
   isRequestCancellation,
@@ -57,9 +57,14 @@ export function EventResults({ event }: { event: EventDetails }) {
   const rankingBasis = selectedCategory?.rankingBasis
     ?? selectedRace?.rules?.rankingBasis
     ?? protocol.content[0]?.rankingBasis
-  const hasOfficialStanding = rankingBasis !== undefined && rankingBasis !== 'NONE'
+  const categoryStandingSelected = Boolean(categoryId) && Boolean(selectedRace?.rules?.categoryEnabled)
+  const hasOfficialStanding = resolveOfficialStanding(
+    selectedRace?.rules?.primaryStandingMode,
+    categoryStandingSelected,
+  )
+  const standingHeading = officialStandingHeading(categoryStandingSelected)
   const hasPublicResultRows = protocol.content.length > 0
-  const rankingMode = categoryId ? 'CATEGORY' : 'PRIMARY'
+  const rankingMode = categoryStandingSelected ? 'CATEGORY' : 'PRIMARY'
 
   const clearInquiryState = () => {
     protocolRequestGate.invalidate()
@@ -268,15 +273,17 @@ export function EventResults({ event }: { event: EventDetails }) {
       <section className="control-section sorting-section" aria-labelledby="sorting-title">
         <h3 id="sorting-title">Сортировка</h3>
         <div className="sorting-controls">
-          <label><span>Поле</span><select aria-label="Сортировка" value={sort} onChange={(changeEvent) => { clearInquiryState(); setSort(changeEvent.target.value); resetPage() }}><option value="gunTime">Официальное время{rankingBasis === 'GUN_TIME' ? ' · Зачёт' : ''}</option><option value="chipTime">Чистое время{rankingBasis === 'CHIP_TIME' ? ' · Зачёт' : ''}</option><option value="displayName">ФИО</option><option value="bib">Стартовый номер</option></select></label>
+          <label><span>Поле</span><select aria-label="Сортировка" value={sort} onChange={(changeEvent) => { clearInquiryState(); setSort(changeEvent.target.value); resetPage() }}><option value="gunTime">Официальное время{hasOfficialStanding && rankingBasis === 'GUN_TIME' ? ' · Зачёт' : ''}</option><option value="chipTime">Чистое время{hasOfficialStanding && rankingBasis === 'CHIP_TIME' ? ' · Зачёт' : ''}</option><option value="displayName">ФИО</option><option value="bib">Стартовый номер</option></select></label>
           <button className="direction-button" type="button" onClick={() => { clearInquiryState(); setDirection(direction === 'asc' ? 'desc' : 'asc'); resetPage() }}>{direction === 'asc' ? 'По возрастанию ↑' : 'По убыванию ↓'}</button>
         </div>
       </section>
     </div>}
 
     {selectedRace && (hasOfficialStanding
-      ? <div className="context-note"><strong>{rankingBasis === 'CHIP_TIME' ? 'Зачёт по чистому времени' : 'Зачёт по официальному времени'}</strong>{categoryId ? ' внутри выбранной возрастной категории' : ' внутри выбранного старта'} не меняется от фильтров или сортировки. Выбранная сортировка управляет только порядком строк.</div>
-      : <div className="context-note"><strong>Место</strong> — позиция в текущей таблице результатов. Она меняется вместе с фильтрами и сортировкой и не является официальным спортивным местом.</div>)}
+      ? <div className="context-note"><strong>{rankingBasis === 'CHIP_TIME' ? 'Зачёт по чистому времени' : 'Зачёт по официальному времени'}</strong>{categoryStandingSelected ? ' внутри выбранной категории' : ' внутри выбранного старта'} не меняется от фильтров или сортировки. Выбранная сортировка управляет только порядком строк.</div>
+      : selectedRace.rules?.primaryStandingMode === 'NONE' && selectedRace.rules.categoryEnabled
+        ? <div className="context-note"><strong>Общий зачёт не предусмотрен.</strong> Выберите категорию, чтобы посмотреть категорийный зачёт. Сортировка управляет только порядком строк.</div>
+        : <div className="context-note"><strong>Официальный зачёт не предусмотрен.</strong> Сортировка управляет только порядком строк.</div>)}
     {error && <div className="state-message error" role="alert">{error}</div>}
     {!error && inquiryError && <div className="state-message" role="status">{inquiryError}</div>}
     {!error && !selectedRace && !loading && <div className="state-message">{races.length === 0 ? 'Результаты ещё не опубликованы.' : 'Выберите старт.'}</div>}
@@ -293,12 +300,12 @@ export function EventResults({ event }: { event: EventDetails }) {
     />}
 
     {selectedRace && !loading && !error && protocol.content.length > 0 && <>
-      <div className="table-wrap desktop-results"><table><thead><tr><th>{hasOfficialStanding ? 'Официальный зачёт' : 'Место'}</th><th>Стартовый №</th><th>Участник</th><th>Старт / дистанция</th><th>Статус</th><th><span className="time-heading">{scoringTimeHeading(rankingBasis ?? 'NONE', 'GUN_TIME')}</span></th><th><span className="time-heading">{scoringTimeHeading(rankingBasis ?? 'NONE', 'CHIP_TIME')}</span></th>{showCategoryColumn && <th>Категория</th>}</tr></thead><tbody>{protocol.content.map((result) => (
+      <div className="table-wrap desktop-results"><table><thead><tr>{hasOfficialStanding && <th>{standingHeading}</th>}<th>Стартовый №</th><th>Участник</th><th>Старт / дистанция</th><th>Статус</th><th><span className="time-heading">{scoringTimeHeading(rankingBasis ?? 'NONE', 'GUN_TIME', hasOfficialStanding)}</span></th><th><span className="time-heading">{scoringTimeHeading(rankingBasis ?? 'NONE', 'CHIP_TIME', hasOfficialStanding)}</span></th>{showCategoryColumn && <th>Категория</th>}</tr></thead><tbody>{protocol.content.map((result) => (
         <tr key={result.resultId} tabIndex={0} onClick={() => setSelectedResultId(result.resultId)} onKeyDown={(keyboardEvent) => { if (keyboardEvent.key === 'Enter') setSelectedResultId(result.resultId) }}>
-          <td className={hasOfficialStanding ? 'ranking-cell' : 'display-place-cell'}>{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /> : <span className="display-place">{result.displayPosition ?? '—'}</span>}</td><td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td>{selectedRace.name}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${result.rankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.gunTimeMs} gapSeconds={result.gunLeaderGapSeconds} /></td><td className={`time ${result.rankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.chipTimeMs} gapSeconds={result.chipLeaderGapSeconds} /></td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
+          {hasOfficialStanding && <td className="ranking-cell"><RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /></td>}<td><span className="bib">{result.bib ?? '—'}</span></td><td className="participant">{result.displayName}</td><td>{selectedRace.name}</td><td><span className={`status status-${result.status}`}>{statusLabel(result.status)}</span></td><td className={`time ${hasOfficialStanding && rankingBasis === 'GUN_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.gunTimeMs} gapSeconds={result.gunLeaderGapSeconds} /></td><td className={`time ${hasOfficialStanding && rankingBasis === 'CHIP_TIME' ? 'time-primary' : ''}`}><ResultTime value={result.chipTimeMs} gapSeconds={result.chipLeaderGapSeconds} /></td>{showCategoryColumn && <td>{result.category?.name ?? '—'}</td>}
         </tr>
       ))}</tbody></table></div>
-      <div className="mobile-results">{protocol.content.map((result) => { const useChipTime = result.rankingBasis === 'CHIP_TIME' || (result.rankingBasis === 'NONE' && sort === 'chipTime'); return <button className="result-card" type="button" key={result.resultId} onClick={() => setSelectedResultId(result.resultId)}><span><strong>{result.displayName}</strong><small>№ {result.bib ?? '—'} · {selectedRace.name}{showCategoryColumn && result.category ? ` · ${result.category.name}` : ''}</small></span><span className={`time ${hasOfficialStanding ? 'time-primary' : ''}`}><ResultTime value={useChipTime ? result.chipTimeMs : result.gunTimeMs} gapSeconds={useChipTime ? result.chipLeaderGapSeconds : result.gunLeaderGapSeconds} /></span><span className="card-achievements">{hasOfficialStanding ? <RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /> : <span className="display-place">Место {result.displayPosition ?? '—'}</span>}</span></button> })}</div>
+      <div className="mobile-results">{protocol.content.map((result) => { const useChipTime = rankingBasis === 'CHIP_TIME' || (!hasOfficialStanding && sort === 'chipTime'); return <button className="result-card" type="button" key={result.resultId} onClick={() => setSelectedResultId(result.resultId)}><span><strong>{result.displayName}</strong><small>№ {result.bib ?? '—'} · {selectedRace.name}{showCategoryColumn && result.category ? ` · ${result.category.name}` : ''}</small></span><span className={`time ${hasOfficialStanding ? 'time-primary' : ''}`}><ResultTime value={useChipTime ? result.chipTimeMs : result.gunTimeMs} gapSeconds={useChipTime ? result.chipLeaderGapSeconds : result.gunLeaderGapSeconds} /></span>{hasOfficialStanding && <span className="card-achievements"><RankingAchievements achievements={result.rankingAchievements} mode={rankingMode} /></span>}</button> })}</div>
     </>}
 
     {selectedRace && <Pagination page={protocol.page} totalPages={protocol.totalPages} onChange={setPage} />}
@@ -309,6 +316,9 @@ export function EventResults({ event }: { event: EventDetails }) {
       startName={selectedRace.name}
       categoryEnabled={showCategoryColumn}
       rankingMode={rankingMode}
+      hasOfficialStanding={hasOfficialStanding}
+      standingHeading={standingHeading}
+      standingRankingBasis={hasOfficialStanding ? rankingBasis ?? 'NONE' : 'NONE'}
       onClose={() => setSelectedResultId(null)}
     />}
   </section>
