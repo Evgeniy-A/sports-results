@@ -1,10 +1,13 @@
+import { PublicBrandMark } from './PublicBrandMark'
+
 export function SiteFooter() {
   return (
     <footer className="site-footer">
       <div className="site-footer-brand">
-        <span className="brand-mark" aria-hidden="true">SR</span>
+        <PublicBrandMark />
+        <span className="brand-divider" aria-hidden="true" />
         <div>
-          <strong>Спортрезультаты</strong>
+          <strong>Спортивные результаты</strong>
           <span>Старт. Финиш. Результат.</span>
         </div>
       </div>

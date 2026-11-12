@@ -1,14 +1,13 @@
-export function SiteHeader({ activeSection }: { activeSection?: 'calendar' | 'results' | 'appeal' }) {
+import { PublicBrandMark } from './PublicBrandMark'
+
+export function SiteHeader() {
   return (
     <header className="site-header">
-      <a className="brand" href="/" aria-label="Спортрезультаты — каталог">
-        <span className="brand-mark">SR</span>
-        <span>Спортрезультаты</span>
+      <a className="brand" href="/" aria-label="Спортивные результаты — каталог">
+        <PublicBrandMark />
+        <span className="brand-divider" aria-hidden="true" />
+        <span className="brand-title">Спортивные результаты</span>
       </a>
-      <nav className="site-navigation" aria-label="Публичные разделы">
-        <a href="/results" aria-current={activeSection === 'results' ? 'page' : undefined}>Результаты</a>
-        <a href="/appeal" aria-current={activeSection === 'appeal' ? 'page' : undefined}>Обращение</a>
-      </nav>
       <span className="header-note"><i /> Официальные протоколы</span>
     </header>
   )

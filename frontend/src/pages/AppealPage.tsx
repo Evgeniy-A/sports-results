@@ -67,7 +67,7 @@ export function AppealPage() {
   }
 
   return <main className="public-app appeal-page">
-    <SiteHeader activeSection="appeal" />
+    <SiteHeader />
     <section className="appeal-hero">
       <p className="eyebrow">Поддержка участников</p>
       <h1>Важен каждый<br />результат</h1>
