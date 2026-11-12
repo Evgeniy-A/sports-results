@@ -32,7 +32,7 @@ test('published event exposes results and event-info tabs while retaining result
   assert.match(page, /onClick=\{\(\) => setSection\('info'\)\}/)
   assert.match(page, /hidden=\{section !== 'results'\}[\s\S]*<EventResults key=\{event\.id\} event=\{event\}/)
   assert.match(page, /className="event-hero-content"/)
-  assert.match(page, /<SiteHeader \/>/)
+  assert.match(page, /<SiteHeader activeSection="results" \/>/)
   assert.doesNotMatch(page, /<img|heroImage|previewImage|coverImage/)
 })
 

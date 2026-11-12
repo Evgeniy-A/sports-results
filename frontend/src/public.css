@@ -1,16 +1,15 @@
 /* Public participant experience. Intentionally scoped away from Admin and shared journal. */
 .public-app {
-  --public-bg: #07101f;
-  --public-bg-raised: #101127;
-  --public-panel: #f5f6fa;
+  --public-bg: #0a0b10;
+  --public-bg-raised: #11131a;
+  --public-panel: #f6f6f3;
   --public-surface: #ffffff;
-  --public-ink: #11142a;
-  --public-muted: #666b7d;
-  --public-line: #dfe2eb;
-  --public-accent: #7040ff;
-  --public-accent-blue: #347cff;
-  --public-accent-hot: #d63ba9;
-  --public-highlight: #8a72ff;
+  --public-ink: #171820;
+  --public-muted: #666a73;
+  --public-line: #dddfe4;
+  --public-accent: #ff4d65;
+  --public-accent-hot: #ff7a35;
+  --public-highlight: #dfff42;
   --public-radius: 18px;
   min-height: 100vh;
   overflow-x: clip;
@@ -27,28 +26,44 @@
 .public-app .event-view-tabs,
 .public-app .event-detail-layout,
 .public-app .site-footer {
-  width: min(100%, 1480px);
+  width: min(100%, 1320px);
 }
 
 .public-app .site-header {
-  height: 76px;
+  height: 68px;
   padding: 0 clamp(24px, 4vw, 64px);
   position: relative;
   z-index: 20;
   border-bottom: 1px solid rgba(255, 255, 255, .1);
   color: #fff;
-  background:
-    radial-gradient(circle at 18% 0%, rgba(220, 25, 65, .11), transparent 34%),
-    radial-gradient(circle at 72% 100%, rgba(121, 51, 210, .12), transparent 38%),
-    linear-gradient(110deg, #07101f 0%, #101127 62%, #160d2d 100%);
+  background: rgba(10, 11, 16, .96);
 }
 
-.public-app .brand { gap: 14px; color: #fff; font-size: 15px; letter-spacing: -.02em; }
-.public-app .public-brand-mark { width: 46px; height: 28px; flex: 0 0 auto; fill: currentColor; color: #fff; }
-.public-app .brand-divider { width: 1px; height: 30px; flex: 0 0 auto; background: rgba(255,255,255,.3); }
-.public-app .brand-title { white-space: nowrap; }
-.public-app .header-note { margin-left: auto; color: #c7c8d4; font-size: 12px; }
-.public-app .header-note i { background: var(--public-highlight); box-shadow: 0 0 0 5px rgba(138, 114, 255, .1); }
+.public-app .brand { gap: 13px; color: #fff; font-size: 15px; letter-spacing: -.02em; }
+.public-app .brand-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 4px 14px 4px 14px;
+  color: #090a0f;
+  background: linear-gradient(135deg, var(--public-highlight), #fff45e);
+  box-shadow: 0 0 24px rgba(223, 255, 66, .16);
+}
+.public-app .site-navigation { gap: 4px; margin-right: 28px; }
+.public-app .site-navigation a {
+  padding: 10px 14px;
+  border-radius: 999px;
+  color: #b9bbc4;
+  font-size: 13px;
+  letter-spacing: .01em;
+}
+.public-app .site-navigation a:hover,
+.public-app .site-navigation a[aria-current="page"] {
+  color: #fff;
+  background: rgba(255, 255, 255, .1);
+}
+.public-app .site-navigation a[aria-current="page"] { box-shadow: inset 0 -2px var(--public-accent); }
+.public-app .header-note { color: #aeb0ba; font-size: 12px; }
+.public-app .header-note i { background: var(--public-highlight); box-shadow: 0 0 0 5px rgba(223, 255, 66, .1); }
 
 .public-app .landing-shell,
 .public-app .catalog-hero,
@@ -58,9 +73,9 @@
   isolation: isolate;
   color: #fff;
   background:
-    radial-gradient(circle at 18% 18%, rgba(220, 25, 65, .16), transparent 38%),
-    radial-gradient(circle at 67% 55%, rgba(175, 30, 195, .18), transparent 42%),
-    linear-gradient(110deg, #07101f 0%, #101127 62%, #160d2d 100%);
+    linear-gradient(115deg, transparent 58%, rgba(255, 77, 101, .14) 58.2%, transparent 76%),
+    radial-gradient(circle at 86% 16%, rgba(255, 122, 53, .2), transparent 24%),
+    var(--public-bg);
 }
 .public-app .landing-shell::before,
 .public-app .catalog-hero::before,
@@ -70,9 +85,13 @@
   position: absolute;
   z-index: -1;
   inset: 0;
-  opacity: .45;
+  opacity: .18;
   pointer-events: none;
-  background: radial-gradient(circle at 46% 120%, rgba(255,255,255,.08), transparent 46%);
+  background-image:
+    linear-gradient(rgba(255,255,255,.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.08) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(90deg, #000, transparent 72%);
 }
 .public-app .eyebrow {
   color: #777b86;
@@ -83,7 +102,7 @@
 .public-app .landing-hero .eyebrow,
 .public-app .catalog-hero .eyebrow,
 .public-app .event-hero .eyebrow,
-.public-app .appeal-hero .eyebrow { color: #69a9ff; }
+.public-app .appeal-hero .eyebrow { color: var(--public-highlight); }
 
 .public-app .landing-shell {
   min-height: auto;
@@ -176,9 +195,9 @@
 .landing-appeal-cta a span { margin-left: 16px; color: var(--public-highlight); }
 
 .public-app .catalog-hero {
-  min-height: 260px;
-  padding: 58px clamp(24px, 5vw, 72px) 52px;
-  display: block;
+  min-height: 238px;
+  padding: 46px clamp(24px, 5vw, 64px) 42px;
+  align-items: center;
 }
 .public-app .catalog-hero h1,
 .public-app .event-hero h1,
@@ -187,7 +206,20 @@
   line-height: .94;
   letter-spacing: -.05em;
 }
-.public-app .hero-copy { max-width: 700px; margin: 18px 0 0; color: #d0d1dc; font-size: 16px; line-height: 1.55; }
+.public-app .hero-copy { max-width: 660px; margin: 16px 0 0; color: #adb0ba; line-height: 1.55; }
+.public-app .catalog-appeal-link {
+  min-width: 230px;
+  padding: 16px 18px;
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: 12px;
+  color: #fff;
+  background: rgba(255,255,255,.055);
+  text-decoration: none;
+}
+.public-app .catalog-appeal-link span { color: #aeb1ba; font-size: 11px; }
+.public-app .catalog-appeal-link strong { color: var(--public-highlight); font-size: 13px; }
 .public-app .catalog-panel,
 .public-app .results-panel,
 .public-app .event-detail-layout {
@@ -237,15 +269,15 @@
   position: absolute;
   left: 24px;
   top: 0;
-  background: linear-gradient(90deg, var(--public-accent-blue), var(--public-accent) 52%, var(--public-accent-hot));
+  background: linear-gradient(90deg, var(--public-accent), var(--public-accent-hot));
 }
 .public-app .event-card::after { background: var(--public-accent); opacity: .08; }
-.public-app .event-card:hover { border-color: rgba(112,64,255,.42); box-shadow: 0 14px 34px rgba(36,25,89,.1); }
-.public-app .event-card-top { color: var(--public-accent); }
+.public-app .event-card:hover { border-color: #aeb1ba; box-shadow: 0 14px 34px rgba(17,19,26,.09); }
+.public-app .event-card-top { color: #e83f58; }
 .public-app .event-card-main h3 { font-size: clamp(23px, 2.1vw, 32px); }
 .public-app .event-card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .public-app .event-card-bottom p { min-width: 0; }
-.public-app .event-card-action { flex: 0 0 auto; color: var(--public-accent); font-size: 12px; }
+.public-app .event-card-action { flex: 0 0 auto; color: #b2263b; font-size: 12px; }
 .public-app .location-dot { border-color: var(--public-accent); }
 
 .public-app .event-hero {
@@ -267,7 +299,7 @@
 .public-app .detail-section { border-color: var(--public-line); }
 .public-app .schedule-list,
 .public-app .rules-grid { border-color: var(--public-line); background: var(--public-line); }
-.public-app .schedule-list time { color: var(--public-accent); }
+.public-app .schedule-list time { color: #df354f; }
 .public-app .sport-format-title,
 .public-app .race-rule-card > h3,
 .public-app .info-block-grid h3 { color: var(--public-ink); }
@@ -282,7 +314,7 @@
 .public-app .protocol-heading-actions { display: flex; align-items: center; gap: 18px; }
 .public-app .results-appeal-link { display: grid; gap: 2px; padding-left: 18px; border-left: 1px solid #d7d9de; color: var(--public-ink); text-decoration: none; }
 .public-app .results-appeal-link span { color: var(--public-muted); font-size: 10px; }
-.public-app .results-appeal-link strong { color: var(--public-accent); font-size: 12px; }
+.public-app .results-appeal-link strong { color: #a72238; font-size: 12px; }
 .public-app .protocol-selection { padding: 14px; border-radius: 12px; box-shadow: none; }
 .public-app .selection-buttons button { min-height: 38px; padding: 7px 13px; border-radius: 999px; font-size: 12px; }
 .public-app .protocol-controls { grid-template-columns: minmax(0, 1fr) 250px; gap: 12px; margin-bottom: 16px; }
@@ -322,17 +354,17 @@
 .public-app thead th { padding-block: 11px; background: #eceef2; color: #565a64; }
 .public-app tbody tr { background: #fff; }
 .public-app tbody tr:nth-child(even) { background: #fbfbfc; }
-.public-app tbody tr:hover { background: #f4f1ff; }
+.public-app tbody tr:hover { background: #fff2f4; }
 .public-app td { padding-block: 12px; }
 .public-app .place,
 .public-app .time,
 .public-app .bib { font-variant-numeric: tabular-nums; }
 .public-app .time-primary,
-.public-app .ranking-cell strong { color: #6240d6; }
-.public-app .standing-badge { color: #4f2fbd; background: #eee9ff; }
+.public-app .ranking-cell strong { color: #c32f46; }
+.public-app .standing-badge { color: #8f1e30; background: #ffe5ea; }
 .public-app .selection-buttons button[aria-pressed="true"] { border-color: #171920; background: #171920; }
 .public-app .filter-reset,
-.public-app .context-note strong { color: #6240d6; }
+.public-app .context-note strong { color: #c52f47; }
 .public-app .pagination button[aria-current="page"] { border-color: #171920; color: #fff; background: #171920; }
 .public-app .modal-backdrop { background: rgba(4,5,8,.78); backdrop-filter: blur(8px); }
 .public-app .result-dialog,
@@ -369,30 +401,26 @@
   margin-inline: auto;
   border-top: 1px solid rgba(255,255,255,.1);
   color: #fff;
-  background:
-    radial-gradient(circle at 18% 110%, rgba(220,25,65,.16), transparent 38%),
-    radial-gradient(circle at 72% 20%, rgba(140,40,205,.15), transparent 42%),
-    linear-gradient(110deg, #07101f 0%, #101127 62%, #160d2d 100%);
+  background: #08090d;
 }
 .site-footer-brand { display: flex; align-items: center; gap: 14px; }
-.site-footer-brand .public-brand-mark { width: 46px; height: 28px; }
-.site-footer-brand .brand-divider { height: 34px; }
 .site-footer-brand div { display: grid; gap: 4px; }
 .site-footer-brand strong { letter-spacing: -.02em; }
 .site-footer-brand div span { color: #80838d; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
 .public-app .site-footer nav { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px 24px; }
 .public-app .site-footer a { color: #c3c5cc; text-decoration: none; font-size: 13px; font-weight: 750; }
-.public-app .site-footer a:hover { color: #a793ff; }
+.public-app .site-footer a:hover { color: var(--public-highlight); }
 .public-app .site-footer > p { grid-column: 1 / -1; margin: 0; padding-top: 20px; border-top: 1px solid rgba(255,255,255,.08); color: #6f727c; font-size: 11px; }
 
 .public-app :is(a, button, input, select, textarea):focus-visible {
-  outline: 3px solid rgba(112,64,255,.62);
+  outline: 3px solid rgba(223,255,66,.7);
   outline-offset: 3px;
 }
 
 @media (max-width: 1050px) {
   .public-app .site-header { padding-inline: 26px; }
   .public-app .header-note { display: none; }
+  .public-app .site-navigation { margin-right: 0; }
   .public-app .landing-shell { grid-template-columns: 1fr; }
   .landing-performance { display: none; }
   .public-app .event-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -428,24 +456,28 @@
 
 @media (max-width: 720px) {
   .public-app .site-header {
-    height: 68px;
+    height: auto;
+    min-height: 70px;
     padding: 12px 16px;
-    align-items: center;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 10px;
   }
-  .public-app .brand { min-height: 42px; gap: 10px; }
-  .public-app .public-brand-mark { width: 38px; height: 24px; }
-  .public-app .brand-divider { height: 26px; }
-  .public-app .site-header .brand-title { display: inline; font-size: 13px; }
+  .public-app .brand { min-height: 42px; }
+  .public-app .brand > span:last-child { display: none; }
+  .public-app .site-navigation { width: calc(100% - 58px); min-height: 42px; justify-content: flex-end; gap: 2px; }
+  .public-app .site-navigation a { padding: 10px 9px; font-size: 11px; }
   .public-app .landing-shell { padding: 60px 16px 40px; }
   .public-app .landing-hero h1 { font-size: clamp(52px, 17vw, 76px); }
   .public-app .landing-choices { grid-template-columns: 1fr; margin-top: 70px; }
   .public-app .landing-choice { min-height: 300px; }
   .landing-appeal-cta { grid-template-columns: 1fr; gap: 18px; padding-inline: 0; }
   .landing-appeal-cta > a { grid-column: auto; }
-  .public-app .catalog-hero { min-height: 250px; padding: 42px 16px 38px; }
+  .public-app .catalog-hero { min-height: 250px; padding: 42px 16px 34px; align-items: flex-start; flex-direction: column; gap: 22px; }
   .public-app .catalog-hero h1,
   .public-app .event-hero h1,
   .public-app .appeal-hero h1 { font-size: clamp(38px, 11vw, 56px); }
+  .public-app .catalog-appeal-link { width: 100%; min-width: 0; }
   .public-app .catalog-panel,
   .public-app .results-panel { padding: 30px 16px 58px; }
   .public-app .catalog-filters { grid-template-columns: 1fr; }
@@ -475,7 +507,7 @@
 }
 
 @media (max-width: 420px) {
-  .public-app .site-header .brand-title { font-size: 12px; }
+  .public-app .site-navigation a { padding-inline: 7px; font-size: 10px; }
   .public-app .landing-hero h1 { font-size: 49px; }
   .public-app .landing-choice { padding: 22px; }
   .public-app .landing-choice-copy strong { font-size: 31px; }

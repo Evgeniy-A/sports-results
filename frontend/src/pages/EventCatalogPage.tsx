@@ -70,13 +70,14 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
 
   return (
     <main className="public-app public-catalog-page">
-      <SiteHeader />
+      <SiteHeader activeSection={mode} />
       <section className="catalog-hero">
         <div>
           <p className="eyebrow">{catalog.eyebrow}</p>
           <h1>{catalog.title}</h1>
           <p className="hero-copy">{catalog.copy}</p>
         </div>
+        {mode === 'results' && <a className="catalog-appeal-link" href="/appeal"><span>Не нашли свой результат?</span><strong>Подать обращение →</strong></a>}
       </section>
 
       <section className="catalog-panel" aria-labelledby="catalog-title">

@@ -34,7 +34,7 @@ export function PublicEventPage({ slug }: { slug: string }) {
   const resultsActive = resultsPublished && section === 'results'
 
   return <main className="public-app public-event-page">
-    <SiteHeader />
+    <SiteHeader activeSection="results" />
     <section className={`event-hero ${resultsActive ? 'event-results-hero' : 'event-detail-hero'}`}>
       <div className="event-hero-content">
         <a className="back-link" href="/results">← Все результаты</a>
