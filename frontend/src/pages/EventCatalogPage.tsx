@@ -1,11 +1,18 @@
-import { useEffect, useState } from 'react'
-import { api } from '../api/client'
-import type { EventFilterOptions, EventSummary, PageResponse } from '../api/types'
-import { Pagination } from '../components/Pagination'
-import { SiteHeader } from '../components/SiteHeader'
-import { SiteFooter } from '../components/SiteFooter'
-import { formatDateRange } from '../utils/format'
-import { PUBLIC_CATALOGS, type PublicCatalogMode } from '../utils/publicCatalog'
+import { useEffect, useState } from "react";
+import { api } from "../api/client";
+import type {
+  EventFilterOptions,
+  EventSummary,
+  PageResponse,
+} from "../api/types";
+import { Pagination } from "../components/Pagination";
+import { SiteHeader } from "../components/SiteHeader";
+import { SiteFooter } from "../components/SiteFooter";
+import { formatDateRange } from "../utils/format";
+import {
+  PUBLIC_CATALOGS,
+  type PublicCatalogMode,
+} from "../utils/publicCatalog";
 
 const EMPTY_PAGE: PageResponse<EventSummary> = {
   content: [],
@@ -13,51 +20,51 @@ const EMPTY_PAGE: PageResponse<EventSummary> = {
   size: 12,
   totalElements: 0,
   totalPages: 0,
-  sort: 'startsAt',
-  direction: 'desc',
-}
+  sort: "startsAt",
+  direction: "desc",
+};
 
 export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
-  const catalog = PUBLIC_CATALOGS[mode]
+  const catalog = PUBLIC_CATALOGS[mode];
 
   const [options, setOptions] = useState<EventFilterOptions>({
     years: [],
     eventSeries: [],
     cities: [],
-  })
+  });
 
-  const [events, setEvents] = useState(EMPTY_PAGE)
-  const [year, setYear] = useState('')
-  const [seriesId, setSeriesId] = useState('')
-  const [city, setCity] = useState('')
-  const [date, setDate] = useState('')
-  const [page, setPage] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
+  const [events, setEvents] = useState(EMPTY_PAGE);
+  const [year, setYear] = useState("");
+  const [seriesId, setSeriesId] = useState("");
+  const [city, setCity] = useState("");
+  const [date, setDate] = useState("");
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
-    const controller = new AbortController()
+    const controller = new AbortController();
 
     api
       .eventFilterOptions({}, controller.signal)
       .then((loaded) => {
-        setOptions(loaded)
+        setOptions(loaded);
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
-          console.error('Event filter options request failed', reason)
+          console.error("Event filter options request failed", reason);
         }
-      })
+      });
 
-    return () => controller.abort()
-  }, [])
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
-    const controller = new AbortController()
+    const controller = new AbortController();
 
     // oxlint-disable-next-line react/set-state-in-effect -- loading state starts with the external request.
-    setLoading(true)
-    setError(false)
+    setLoading(true);
+    setError(false);
 
     api
       .events(
@@ -75,33 +82,31 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
       .then(setEvents)
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) {
-          console.error('Event catalog request failed', reason)
-          setError(true)
+          console.error("Event catalog request failed", reason);
+          setError(true);
         }
       })
       .finally(() => {
         if (!controller.signal.aborted) {
-          setLoading(false)
+          setLoading(false);
         }
-      })
+      });
 
-    return () => controller.abort()
-  }, [year, seriesId, city, date, catalog.phase, page])
+    return () => controller.abort();
+  }, [year, seriesId, city, date, catalog.phase, page]);
 
-  const update =
-    (setter: (value: string) => void) =>
-    (value: string) => {
-      setter(value)
-      setPage(0)
-    }
+  const update = (setter: (value: string) => void) => (value: string) => {
+    setter(value);
+    setPage(0);
+  };
 
   const clearFilters = () => {
-    setYear('')
-    setSeriesId('')
-    setCity('')
-    setDate('')
-    setPage(0)
-  }
+    setYear("");
+    setSeriesId("");
+    setCity("");
+    setDate("");
+    setPage(0);
+  };
 
   return (
     <main className="public-app public-catalog-page">
@@ -121,7 +126,7 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
           </div>
 
           <span className="result-count">
-            Найдено: {events.totalElements.toLocaleString('ru-RU')}
+            Найдено: {events.totalElements.toLocaleString("ru-RU")}
           </span>
         </div>
 
@@ -133,7 +138,7 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
               value={year}
               onChange={(event) => update(setYear)(event.target.value)}
             >
-              <option value="">Все годы</option>
+              <option value="">Все</option>
 
               {options.years.map((option) => (
                 <option key={option} value={option}>
@@ -144,13 +149,13 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
           </label>
 
           <label>
-            <span>Серия</span>
+            <span>Мероприятие</span>
             <select
-              aria-label="Серия"
+              aria-label="Мероприятие"
               value={seriesId}
               onChange={(event) => update(setSeriesId)(event.target.value)}
             >
-              <option value="">Все серии</option>
+              <option value="">Все мероприятия</option>
 
               {options.eventSeries.map((option) => (
                 <option key={option.id} value={option.id}>
@@ -224,7 +229,7 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
               <a
                 className="event-card"
                 href={
-                  mode === 'results'
+                  mode === "results"
                     ? `/events/${event.slug}/results`
                     : `/events/${event.slug}`
                 }
@@ -253,9 +258,7 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
                 <div className="event-card-bottom">
                   <p>
                     <span className="location-dot" />
-                    {event.venueName ??
-                      event.location ??
-                      'Место уточняется'}
+                    {event.venueName ?? event.location ?? "Место уточняется"}
                   </p>
                 </div>
               </a>
@@ -272,5 +275,5 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
 
       <SiteFooter />
     </main>
-  )
+  );
 }
