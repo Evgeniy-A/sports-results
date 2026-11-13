@@ -1,14 +1,16 @@
 /* Public participant experience. Intentionally scoped away from Admin and shared journal. */
 .public-app {
-  --public-bg: #060a14;
-  --public-bg-soft: #090f1d;
-  --public-bg-raised: #0b1220;
-  --public-panel: #080e1b;
-  --public-surface: #0d1424;
-  --public-surface-raised: #121a2c;
-  --public-ink: #f5f7fb;
-  --public-text-soft: #bcc4d6;
-  --public-muted: #858fa5;
+--public-bg: #070b14;
+--public-bg-soft: #0a101d;
+--public-bg-raised: #0d1524;
+
+--public-panel: #0b1220;
+--public-surface: #111827;
+--public-surface-raised: #172033;
+
+--public-ink: #f7f8fb;
+--public-text-soft: #d0d6e2;
+--public-muted: #9aa4b8;
   --public-line: rgba(255, 255, 255, .085);
   --public-line-strong: rgba(255, 255, 255, .15);
   --public-accent: #8b4cff;
@@ -247,7 +249,7 @@
   background: rgba(7, 12, 24, .72);
   color: var(--public-ink);
 }
-.public-app :is(select, input, textarea)::placeholder { color: #68738a; opacity: 1; }
+.public-app :is(select, input, textarea)::placeholder { color: #8f9ab0; opacity: 1; }
 .public-app select option { color: var(--public-ink); background: var(--public-surface); }
 .public-app .direction-button,
 .public-app .secondary-button,
@@ -351,7 +353,13 @@
 .public-app .result-primary-filters { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(150px, .55fr); gap: 10px; }
 .public-app .result-primary-filters label { display: grid; gap: 6px; min-width: 0; }
 .public-app .result-primary-filters label > span,
-.public-app .gender-filter > span { color: var(--public-muted); font-size: 9px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+.public-app .gender-filter > span {
+  color: #aeb8cb;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
 .public-app .gender-filter { grid-column: 1 / -1; display: grid; gap: 7px; }
 .public-app .gender-filter > div { display: flex; flex-wrap: wrap; gap: 7px; }
 .public-app .gender-filter button { min-height: 36px; padding: 7px 13px; border: 1px solid var(--public-line-strong); border-radius: 999px; color: var(--public-text-soft); background: rgba(255, 255, 255, .025); font-size: 11px; font-weight: 750; }
