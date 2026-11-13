@@ -674,3 +674,17 @@
   font-size: 12px;
   line-height: 1.5;
 }
+
+.public-app .result-search-field {
+  grid-column: 1 / -1;
+}
+
+.public-app .result-primary-filters .result-search-field {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.public-app .result-primary-filters .result-search-field input {
+  width: 100%;
+  box-sizing: border-box;
+}
