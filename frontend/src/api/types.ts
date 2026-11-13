@@ -236,6 +236,7 @@ export interface PageResponse<T> {
 
 export interface ResultQuery {
   raceId: number
+  query?: string
   name?: string
   bib?: string
   gender?: string
