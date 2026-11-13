@@ -124,10 +124,6 @@ export function EventCatalogPage({ mode }: { mode: PublicCatalogMode }) {
           <div>
             <h2 id="catalog-title">{catalog.sectionTitle}</h2>
           </div>
-
-          <span className="result-count">
-            Найдено: {events.totalElements.toLocaleString("ru-RU")}
-          </span>
         </div>
 
         <div className="catalog-filters" aria-label="Фильтры мероприятий">
