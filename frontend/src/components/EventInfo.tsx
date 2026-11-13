@@ -52,7 +52,7 @@ export function EventInfo({ event }: { event: EventDetails }) {
     </section>}
 
     {event.races.length > 0 && <section className="detail-section">
-      <p className="eyebrow">Спортивная программа</p><h2>Старты и правила</h2>
+      <h2>Старты и правила</h2>
       <div className="race-rule-list">{event.races.map((race) => <article className="race-rule-card" key={race.id}>
           <h3>{race.name}</h3>{!race.resultsPublished && <p className="muted-copy">Результаты ещё не опубликованы.</p>}
           {race.clusters.length > 0 && <div className="cluster-list"><strong>Стартовые волны:</strong>{race.clusters.map((cluster) => <span key={cluster.id}>{cluster.displayName}{cluster.startsAt ? ` · ${formatLocalScheduleTime(cluster.startsAt)}` : ''}</span>)}</div>}
