@@ -459,14 +459,13 @@ export function EventResults({ event }: { event: EventDetails }) {
                 </div>
               </div>
             </div>
-            <details className="advanced-filters">
-              <summary>Расширенные фильтры</summary>
+            <div className="advanced-filters">
               <div
                 className="result-filters"
                 aria-label={
                   showStandingColumn
-                    ? "Расширенные фильтры протокола"
-                    : "Расширенные фильтры результатов"
+                    ? "Фильтры протокола"
+                    : "Фильтры результатов"
                 }
               >
                 {selectedRace.clusters.length >= 2 && (
@@ -490,6 +489,7 @@ export function EventResults({ event }: { event: EventDetails }) {
                     </select>
                   </label>
                 )}
+
                 {selectedRace.rules?.categoryEnabled && (
                   <label>
                     <span>Категория</span>
@@ -502,6 +502,7 @@ export function EventResults({ event }: { event: EventDetails }) {
                         const nextCategory = categories.find(
                           (category) => String(category.id) === nextCategoryId,
                         );
+
                         setCategoryId(nextCategoryId);
                         setSort(
                           defaultPublicResultSort(
@@ -522,6 +523,7 @@ export function EventResults({ event }: { event: EventDetails }) {
                     </select>
                   </label>
                 )}
+
                 <label>
                   <span>Статус</span>
                   <select
@@ -541,7 +543,7 @@ export function EventResults({ event }: { event: EventDetails }) {
                   </select>
                 </label>
               </div>
-            </details>
+            </div>
           </section>
           <section
             className="control-section sorting-section"
