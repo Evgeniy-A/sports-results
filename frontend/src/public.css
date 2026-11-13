@@ -348,7 +348,7 @@
 .public-app .results-appeal-link strong { color: #b979ff; font-size: 12px; }
 .public-app .protocol-selection { padding: 14px; border-radius: 12px; box-shadow: none; }
 .public-app .selection-buttons button { min-height: 38px; padding: 7px 13px; border-radius: 999px; font-size: 12px; }
-.public-app .protocol-controls { grid-template-columns: minmax(0, 1fr) 250px; gap: 12px; margin-bottom: 16px; }
+.public-app .protocol-controls { grid-template-columns: minmax(0, 1fr) 290px; gap: 12px; margin-bottom: 16px; }
 .public-app .control-section { padding: 14px; border-radius: 12px; }
 .public-app .result-primary-filters { display: grid; grid-template-columns: minmax(190px, 1fr) minmax(150px, .55fr); gap: 10px; }
 .public-app .result-primary-filters label { display: grid; gap: 6px; min-width: 0; }
