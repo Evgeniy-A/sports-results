@@ -692,3 +692,7 @@
 .public-app .advanced-filters .result-filters > label:last-child {
   grid-column: 1 / -1;
 }
+
+.public-app .standing-highlight {
+  color: #5aaeff;
+}

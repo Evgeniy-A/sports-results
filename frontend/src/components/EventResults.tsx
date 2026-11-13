@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
-import type {
-  EventDetails,
-  PageResponse,
-  ResultInquiryLookup,
-  ResultListItem,
-} from "../api/types";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { formatDuration, formatLeaderGap, statusLabel } from "../utils/format";
 import {
@@ -13,10 +7,7 @@ import {
   initialRaceSelection,
   publicResultRaces,
 } from "../utils/publicEventView";
-import {
-  publicStandingPresentation,
-  scoringTimeHeading,
-} from "../utils/rankingPresentation";
+import { publicStandingPresentation } from "../utils/rankingPresentation";
 import {
   LatestRequestGate,
   isRequestCancellation,
@@ -28,6 +19,13 @@ import { Pagination } from "./Pagination";
 import { RankingAchievements } from "./RankingAchievements";
 import { ResultDetailsDialog } from "./ResultDetailsDialog";
 import { ResultInquiryPanel } from "./ResultInquiryPanel";
+import type {
+  EventDetails,
+  PageResponse,
+  RankingBasis,
+  ResultInquiryLookup,
+  ResultListItem,
+} from "../api/types";
 
 const EMPTY_PAGE: PageResponse<ResultListItem> = {
   content: [],
@@ -43,6 +41,25 @@ function inquiryBibCandidate(value: string): string {
   const normalized = value.trim();
   if (!normalized || /\s/.test(normalized) || !/\d/.test(normalized)) return "";
   return normalized;
+}
+
+function ScoringTimeHeading({
+  basis,
+  column,
+}: {
+  basis: RankingBasis;
+  column: "GUN_TIME" | "CHIP_TIME";
+}) {
+  if (basis !== column) {
+    return column === "GUN_TIME" ? "Официальное время" : "Чистое время";
+  }
+
+  return (
+    <>
+      <span className="standing-highlight">⏱ Зачёт</span>
+      {column === "GUN_TIME" ? " (офиц. время)" : " (чистое время)"}
+    </>
+  );
 }
 
 export function EventResults({ event }: { event: EventDetails }) {
@@ -673,12 +690,18 @@ export function EventResults({ event }: { event: EventDetails }) {
                   <th>Статус</th>
                   <th>
                     <span className="time-heading">
-                      {scoringTimeHeading(activeRankingBasis, "GUN_TIME")}
+                      <ScoringTimeHeading
+                        basis={activeRankingBasis}
+                        column="GUN_TIME"
+                      />
                     </span>
                   </th>
                   <th>
                     <span className="time-heading">
-                      {scoringTimeHeading(activeRankingBasis, "CHIP_TIME")}
+                      <ScoringTimeHeading
+                        basis={activeRankingBasis}
+                        column="CHIP_TIME"
+                      />
                     </span>
                   </th>
                   {showCategoryColumn && <th>Категория</th>}
