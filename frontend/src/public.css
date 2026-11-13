@@ -636,3 +636,41 @@
   background: linear-gradient(90deg, #5f5bbf 0%, #8066cf 100%);
   box-shadow: 0 5px 14px rgba(91, 78, 170, 0.12);
 }
+
+/* Читаемость мелкого текста */
+.public-app .result-primary-filters label > span,
+.public-app .gender-filter > span {
+  font-size: 11px;
+}
+
+.public-app .selection-buttons button,
+.public-app .gender-filter button,
+.public-app .advanced-filters summary,
+.public-app .filter-reset,
+.public-app .sorting-section h3 {
+  font-size: 12px;
+}
+
+.public-app .result-primary-filters input,
+.public-app .sorting-controls select {
+  font-size: 14px;
+}
+
+.public-app thead th {
+  font-size: 11px;
+}
+
+.public-app td {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.public-app .participant {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.public-app .context-note {
+  font-size: 12px;
+  line-height: 1.5;
+}
