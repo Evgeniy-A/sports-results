@@ -153,6 +153,14 @@ public class ResultSearchRepositoryImpl implements ResultSearchRepository {
         if (hasText(criteria.bib())) {
             predicates.add(builder.equal(registration.get("bib"), criteria.bib().strip()));
         }
+        if (hasText(criteria.query())) {
+            String normalized = criteria.query().strip();
+            String pattern = "%" + escapeLike(normalized.toLowerCase(Locale.ROOT)) + "%";
+            predicates.add(builder.or(
+                    builder.like(registration.get("searchText"), pattern, '\\'),
+                    builder.equal(registration.get("bib"), normalized)
+            ));
+        }
         if (hasText(criteria.gender())) {
             predicates.add(builder.equal(
                     builder.lower(registration.get("gender")),

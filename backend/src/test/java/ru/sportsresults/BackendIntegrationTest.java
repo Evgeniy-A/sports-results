@@ -5247,6 +5247,126 @@ class BackendIntegrationTest {
     }
 
     @Test
+    void unifiedPublicQuerySearchesNamesExactBibsAndTeamDisplayNamesWithExistingFilters() throws Exception {
+        Event event = createPublishedEvent("Unified search", "unified-search");
+        assertThat(importPublishedFixture(
+                event.getId(), "unified-search.csv", unifiedSearchCsv().getBytes(StandardCharsets.UTF_8)
+        ).status()).isEqualTo(ImportBatchStatus.SUCCEEDED);
+        Race fiveKm = raceRepository.findByEventIdAndSourceCode(event.getId(), "5 km").orElseThrow();
+        Race teamRelay = raceRepository.findByEventIdAndSourceCode(event.getId(), "Team relay").orElseThrow();
+        Category women = categoryRepository.findAllByRaceIdOrderByDisplayOrderAsc(fiveKm.getId()).stream()
+                .filter(category -> category.getDisplayName().equals("Women"))
+                .findFirst().orElseThrow();
+
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("query", "Иванов"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2));
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("query", "иванов"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2));
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("query", "Иван"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2));
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("query", "   "))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(3));
+
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("query", " 00123 "))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].bib").value("00123"));
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("query", "123"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].bib").value("123"));
+
+        for (String literal : List.of("%", "_", "\\")) {
+            mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                            .param("raceId", fiveKm.getId().toString())
+                            .param("query", literal))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.totalElements").value(0));
+        }
+
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("query", "Иванов")
+                        .param("gender", "male"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].bib").value("00123"));
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("query", "Иванова")
+                        .param("categoryId", women.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].bib").value("123"));
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("query", "Петрова")
+                        .param("status", "disqualified"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].status").value("disqualified"));
+
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("name", "Ирина")
+                        .param("query", "Иванов"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].bib").value("123"));
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("bib", "00123")
+                        .param("query", "Иванов"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].bib").value("00123"));
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("bib", "00123"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1));
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", fiveKm.getId().toString())
+                        .param("name", "Иванов"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(2));
+
+        Registration team = registrationRepository.findAllByRaceIdAndBib(teamRelay.getId(), "TEAM-01")
+                .getFirst();
+        assertThat(team.getDisplayName()).isEqualTo("Северный Ветер");
+        team.setEntryKind(RegistrationEntryKind.TEAM);
+        registrationRepository.saveAndFlush(team);
+        mockMvc.perform(get("/api/events/{eventId}/results", event.getId())
+                        .param("raceId", teamRelay.getId().toString())
+                        .param("query", "северный"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].displayName").value("Северный Ветер"));
+
+        mockMvc.perform(get("/api/events/{eventId}/result-inquiry", event.getId())
+                        .param("bib", "00123")
+                        .param("raceId", fiveKm.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bib").value("00123"));
+    }
+
+    @Test
     void searchesNamesByPartsOrderCasePaginationAndCombinedFilters() {
         Event event = createPublishedEvent("Search", "search");
         importPublishedFixture(event.getId(), "search.csv", searchCsv().getBytes(StandardCharsets.UTF_8));
@@ -12249,6 +12369,15 @@ class BackendIntegrationTest {
                 Иван,Иванов,male,,5 km,103,Men,finished,1200.0,1100.0,3.0,1.0,1.0,3.0,1.0,1.0
                 Иван,Сидоров,male,,10 km,201,Men,finished,2000.0,1900.0,1.0,1.0,1.0,1.0,1.0,1.0
                 Ивана,Иванова,female,,10 km,202,Women,finished,2100.0,2000.0,2.0,1.0,1.0,2.0,1.0,1.0
+                """;
+    }
+
+    private static String unifiedSearchCsv() {
+        return csvHeader() + """
+                Иван,Иванов,male,,5 km,00123,Men,finished,1000.0,900.0,1.0,1.0,1.0,1.0,1.0,1.0
+                Ирина,Иванова,female,,5 km,123,Women,finished,1100.0,1000.0,2.0,1.0,1.0,2.0,1.0,1.0
+                Марина,Петрова,female,,5 km,200,Women,disqualified,1200.0,1100.0,,,,,,
+                Северный Ветер,,,,Team relay,TEAM-01,Open,finished,2000.0,1900.0,1.0,,,1.0,,
                 """;
     }
 

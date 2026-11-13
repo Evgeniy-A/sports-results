@@ -9,6 +9,7 @@ public record ResultSearchCriteria(
         Long raceId,
         String name,
         String bib,
+        String query,
         String gender,
         Long categoryId,
         Long clusterId,

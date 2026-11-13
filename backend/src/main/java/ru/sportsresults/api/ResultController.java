@@ -20,12 +20,17 @@ public class ResultController {
         this.resultQueryService = resultQueryService;
     }
 
+    /**
+     * The unified query matches searchable participant/team text or an exact BIB.
+     * Legacy name and bib parameters remain independent AND filters when supplied together with query.
+     */
     @GetMapping("/events/{eventId}/results")
     public PageResponse<ResultListItemDto> searchResults(
             @PathVariable Long eventId,
             @RequestParam Long raceId,
             @RequestParam(required = false) String name,
             @RequestParam(required = false) String bib,
+            @RequestParam(required = false) String query,
             @RequestParam(required = false) String gender,
             @RequestParam(required = false) Long categoryId,
             @RequestParam(required = false) Long clusterId,
@@ -40,6 +45,7 @@ public class ResultController {
                 raceId,
                 name,
                 bib,
+                query,
                 gender,
                 categoryId,
                 clusterId,

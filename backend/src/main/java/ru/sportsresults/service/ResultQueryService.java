@@ -77,6 +77,7 @@ public class ResultQueryService {
             Long raceId,
             String name,
             String bib,
+            String query,
             String gender,
             Long categoryId,
             Long clusterId,
@@ -107,7 +108,7 @@ public class ResultQueryService {
                 : publicCategoryProtocolRepository.findExcludedPrimaryPrizeWinnerIds(eventId, raceId, categoryId);
 
         ResultSearchCriteria criteria = new ResultSearchCriteria(
-                eventId, raceId, name, bib, gender, categoryId, clusterId, publicStatus,
+                eventId, raceId, name, bib, query, gender, categoryId, clusterId, publicStatus,
                 officialBasis, true, excludedResultIds
         );
         Page<ResultListProjection> resultPage = resultRepository.search(
@@ -146,6 +147,26 @@ public class ResultQueryService {
                 resultPage.getTotalPages(),
                 apiSortName(sortField),
                 sortDirection.name().toLowerCase(Locale.ROOT)
+        );
+    }
+
+    public PageResponse<ResultListItemDto> search(
+            Long eventId,
+            Long raceId,
+            String name,
+            String bib,
+            String gender,
+            Long categoryId,
+            Long clusterId,
+            String status,
+            int page,
+            int size,
+            String sort,
+            String direction
+    ) {
+        return search(
+                eventId, raceId, name, bib, null, gender, categoryId, clusterId, status,
+                page, size, sort, direction
         );
     }
 
@@ -202,7 +223,7 @@ public class ResultQueryService {
         Sort.Direction sortDirection = parseDirection(direction);
         Page<ResultListProjection> resultPage = resultRepository.search(
                 new ResultSearchCriteria(
-                        eventId, raceId, name, bib, gender, categoryId, clusterId, status,
+                        eventId, raceId, name, bib, null, gender, categoryId, clusterId, status,
                         rankingBasis, false, List.of()
                 ),
                 page,
