@@ -501,7 +501,7 @@
 .site-footer-brand .brand-title { color: var(--public-text-soft); }
 
 .public-app :is(a, button, input, select, textarea):focus-visible {
-  outline: 3px solid rgba(139, 76, 255, .62);
+  outline: 3px solid rgba(126, 111, 207, 0.55);
   outline-offset: 3px;
 }
 
@@ -610,4 +610,21 @@
 
 @media (prefers-reduced-motion: reduce) {
   .public-app *, .public-app *::before, .public-app *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}
+
+/* Единый мягкий фиолетовый стиль для всех активных кнопок */
+.public-app .direction-button,
+.public-app .secondary-button,
+.public-app .appeal-bib-form button,
+.public-app .issue-submit,
+.public-app .gender-filter button[aria-pressed="true"],
+.public-app .selection-buttons button[aria-pressed="true"],
+.public-app .pagination button[aria-current="page"],
+.public-app .result-secondary-action button,
+.public-app .certificate-dialog-actions button,
+.public-app .certificate-step {
+  border-color: rgba(126, 111, 207, 0.4);
+  color: #fff;
+  background: linear-gradient(90deg, #5f5bbf 0%, #8066cf 100%);
+  box-shadow: 0 5px 14px rgba(91, 78, 170, 0.12);
 }
