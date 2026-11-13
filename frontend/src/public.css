@@ -253,10 +253,10 @@
 .public-app .secondary-button,
 .public-app .appeal-bib-form button,
 .public-app .issue-submit {
-  border-color: rgba(132, 107, 224, 0.5);
+  border-color: rgba(126, 111, 207, 0.4);
   color: #fff;
-  background: linear-gradient(90deg, #655bd4 0%, #8b63df 100%);
-  box-shadow: 0 6px 18px rgba(105, 88, 205, 0.16);
+  background: linear-gradient(90deg, #5f5bbf 0%, #8066cf 100%);
+  box-shadow: 0 5px 14px rgba(91, 78, 170, 0.12);
 }
 .public-app .catalog-filters { padding: 13px; margin-bottom: 22px; border-radius: 12px; box-shadow: none; }
 .public-app .event-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
