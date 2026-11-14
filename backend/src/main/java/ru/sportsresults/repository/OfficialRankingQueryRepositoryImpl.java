@@ -80,7 +80,7 @@ public class OfficialRankingQueryRepositoryImpl implements OfficialRankingQueryR
                     AND primary_ranked.primary_place IS NOT NULL
                     AND primary_ranked.primary_place <= category_ranked.absolute_prize_places
                 )
-            ), category_award_ranked AS (
+            ), category_award_ranked AS MATERIALIZED (
                 SELECT category_award_eligible.*,
                        rank() OVER (
                            PARTITION BY race_id, category_id ORDER BY category_ranking_time_ms
@@ -99,21 +99,19 @@ public class OfficialRankingQueryRepositoryImpl implements OfficialRankingQueryR
                 FROM primary_ranked
                 WHERE primary_place IS NOT NULL
                 UNION ALL
-                SELECT result_id,
-                       category_place AS place,
+                SELECT category_ranked.result_id,
+                       category_ranked.category_place AS place,
                        'CATEGORY' AS achievement_type,
-                       category_id,
-                       category_source_name,
-                       category_display_name,
+                       category_ranked.category_id,
+                       category_ranked.category_source_name,
+                       category_ranked.category_display_name,
                        NULL::varchar AS gender,
-                       category_prize_places > 0
-                           AND EXISTS (
-                               SELECT 1
-                               FROM category_award_ranked awarded
-                               WHERE awarded.result_id = category_ranked.result_id
-                                 AND awarded.category_award_place <= category_ranked.category_prize_places
-                           ) AS prize
+                       category_ranked.category_prize_places > 0
+                           AND awarded.result_id IS NOT NULL
+                           AND awarded.category_award_place <= category_ranked.category_prize_places AS prize
                 FROM category_ranked
+                LEFT JOIN category_award_ranked awarded
+                       ON awarded.result_id = category_ranked.result_id
             )
             SELECT result_id, place, achievement_type, category_id,
                    category_source_name, category_display_name, gender, prize
